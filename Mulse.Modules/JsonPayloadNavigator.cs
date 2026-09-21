@@ -113,6 +113,30 @@ internal static class JsonPayloadNavigator
         current[segments[^1]] = value?.DeepClone();
     }
 
+    public static void RemoveNode(JsonObject root, string targetPath)
+    {
+        var normalized = NormalizePath(targetPath);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        var segments = normalized.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        JsonObject current = root;
+
+        for (var index = 0; index < segments.Length - 1; index++)
+        {
+            if (current[segments[index]] is not JsonObject next)
+            {
+                return;
+            }
+
+            current = next;
+        }
+
+        current.Remove(segments[^1]);
+    }
+
     private static IReadOnlyList<JsonNode?> SelectNodes(JsonNode? node, string path)
     {
         if (node is null)

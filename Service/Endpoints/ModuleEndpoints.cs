@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using Mulse.Modules;
 using Service.Models;
 
 namespace Service.Endpoints;
@@ -19,14 +20,18 @@ public static class ModuleEndpoints
                         module.Descriptor.Description,
                         module.PackageId,
                         module.PackageSourceKind,
-                        module.AssemblyPath))
+                        module.AssemblyPath,
+                        MapSettings(module.Descriptor.Settings),
+                        MapFormats(module.Descriptor.Recommendation),
+                        MapProtocols(module.Descriptor.Recommendation),
+                        MapCapabilities(module.Descriptor.Recommendation)))
                     .ToArray();
 
                 return TypedResults.Ok(response);
             })
             .WithName("GetModules")
             .WithSummary("List available modules")
-            .WithDescription("Returns every registered source, transform, event, and storage module available to configured flows, including the package that currently supplies each module.")
+            .WithDescription("Returns every registered input, orchestration augment, and output module available to configured flows, including the package that currently supplies each module and the settings needed to configure it.")
             .WithTags("Modules")
             .Produces<ModuleResponse[]>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
@@ -168,5 +173,34 @@ public static class ModuleEndpoints
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
         return app;
+    }
+
+    private static IReadOnlyList<ModuleSettingResponse> MapSettings(IReadOnlyList<ModuleSettingDescriptor> settings)
+    {
+        return settings
+            .Select(static setting => new ModuleSettingResponse(
+                setting.Key,
+                setting.Label,
+                setting.Description,
+                setting.IsRequired,
+                setting.InputKind.ToString(),
+                setting.DefaultValue,
+                setting.Options?.Select(static option => new ModuleSettingOptionResponse(option.Value, option.Label)).ToArray() ?? []))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> MapFormats(ModuleRecommendationProfile? recommendation)
+    {
+        return recommendation?.SupportedFormats.Select(static format => format.ToString()).ToArray() ?? [];
+    }
+
+    private static IReadOnlyList<string> MapProtocols(ModuleRecommendationProfile? recommendation)
+    {
+        return recommendation?.Protocols.Select(static protocol => protocol.ToString()).ToArray() ?? [];
+    }
+
+    private static IReadOnlyList<string> MapCapabilities(ModuleRecommendationProfile? recommendation)
+    {
+        return recommendation?.Capabilities.Select(static capability => capability.ToString()).ToArray() ?? [];
     }
 }

@@ -5,11 +5,17 @@ namespace Mulse.SamplePlugin;
 
 public sealed class SamplePluginTransformModule(TimeProvider timeProvider) : IOrchestrationAugmentModule
 {
+    private static readonly ModuleRecommendationProfile Recommendation = new(
+        [ModuleDataFormat.Json],
+        [ModuleProtocol.Plugin],
+        [ModuleCapability.Transformation, ModuleCapability.Envelope]);
+
     public ModuleDescriptor Descriptor { get; } = new(
         "sample-plugin-augment",
         "Sample plugin augment",
         ModuleKind.OrchestrationAugment,
-        "Demonstrates a hot-loadable external orchestration augment plugin by wrapping payloads with plugin-specific metadata.");
+        "Demonstrates a hot-loadable external orchestration augment plugin by wrapping payloads with plugin-specific metadata.",
+        recommendation: Recommendation);
 
     public Task<IntegrationBatch> AugmentAsync(
         FlowExecutionContext context,

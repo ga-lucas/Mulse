@@ -12,13 +12,17 @@
         "interval": "00:05:00",
         "runOnStartup": false
       },
-      "input": {
-        "module": "file-system",
+      "fetch": {
+        "module": "file-system-fetch",
         "settings": {
           "path": "SampleData\\Inbox",
           "searchPattern": "*.json",
           "recursive": "false"
         }
+      },
+      "parse": {
+        "module": "json-parse",
+        "settings": {}
       },
       "augments": [
         {
@@ -29,18 +33,32 @@
           }
         }
       ],
-      "outputs": [
+      "deliveries": [
         {
-          "module": "logging-event",
-          "settings": {
-            "previewLength": "400"
+          "render": {
+            "module": "json-render",
+            "settings": {
+              "indented": "true"
+            }
+          },
+          "deliver": {
+            "module": "logging-deliver",
+            "settings": {
+              "previewLength": "400"
+            }
           }
         },
         {
-          "module": "file-system-storage",
-          "settings": {
-            "path": "SampleData\\Outbox",
-            "extension": ".json"
+          "render": {
+            "module": "json-render",
+            "settings": {}
+          },
+          "deliver": {
+            "module": "file-system-deliver",
+            "settings": {
+              "path": "SampleData\\Outbox",
+              "extension": ".json"
+            }
           }
         }
       ]

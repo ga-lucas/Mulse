@@ -2,7 +2,9 @@ namespace Mulse.Modules;
 
 public enum ModuleKind
 {
-    Input,
+    Fetch,
+    Parse,
     OrchestrationAugment,
-    Output
+    Render,
+    Deliver
 }

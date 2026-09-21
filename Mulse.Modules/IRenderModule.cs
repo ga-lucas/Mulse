@@ -1,9 +1,10 @@
 namespace Mulse.Modules;
 
-public interface IInputModule : IModule
+public interface IRenderModule : IModule
 {
-    Task<IntegrationBatch> ReadAsync(
+    Task<IntegrationBatch> RenderAsync(
         FlowExecutionContext context,
+        IntegrationBatch batch,
         ModuleStepDefinition step,
         CancellationToken cancellationToken);
 }

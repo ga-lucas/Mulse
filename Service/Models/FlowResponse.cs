@@ -9,9 +9,12 @@ public sealed record FlowResponse(
     PipelineTriggerMode TriggerMode,
     TimeSpan? Interval,
     bool RunOnStartup,
-    string InputModule,
+    string FetchModule,
+    string ParseModule,
     IReadOnlyList<string> AugmentModules,
-    IReadOnlyList<string> OutputModules,
-    ModuleStepResponse Input,
+    IReadOnlyList<string> RenderModules,
+    IReadOnlyList<string> DeliverModules,
+    ModuleStepResponse Fetch,
+    ModuleStepResponse Parse,
     IReadOnlyList<ModuleStepResponse> Augments,
-    IReadOnlyList<ModuleStepResponse> Outputs);
+    IReadOnlyList<DeliveryRouteResponse> Deliveries);

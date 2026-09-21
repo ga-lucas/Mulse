@@ -19,6 +19,23 @@ Content-Type: application/json
 ### Reload a runtime module package
 POST {{baseUrl}}/api/module-packages/Mulse.SamplePlugin/reload
 
+### Analyze a BizTalk solution for migration
+POST {{baseUrl}}/api/biztalk-import/analyze
+Content-Type: application/json
+
+{
+  "sourcePath": "C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.sln"
+}
+
+### Import one generated BizTalk draft flow
+POST {{baseUrl}}/api/biztalk-import/flows
+Content-Type: application/json
+
+{
+  "sourcePath": "C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.sln",
+  "suggestedFlowId": "shs-spacetrax2-interfaces-core-schemas-services-patientregistration-flow"
+}
+
 ### Analyze sample data for the visual flow designer
 POST {{baseUrl}}/api/flow-designer/analyze
 Content-Type: application/json
@@ -27,6 +44,208 @@ Content-Type: application/json
   "fileName": "customer-order.json",
   "contentType": "application/json",
   "textContent": "{\"orderId\":\"SO-1001\",\"customer\":\"Contoso\",\"priority\":\"High\",\"items\":[{\"sku\":\"MRI-CONSUMABLE-01\",\"quantity\":4}]}"
+}
+
+### Create a push-triggered file watcher flow
+POST {{baseUrl}}/api/flows
+Content-Type: application/json
+
+{
+  "id": "watcher-push-flow",
+  "enabled": true,
+  "trigger": {
+    "mode": "Push",
+    "runOnStartup": false
+  },
+  "fetch": {
+    "module": "file-system-watcher-fetch",
+    "settings": {
+      "path": "SampleData\\WatchInbox",
+      "searchPattern": "*.json",
+      "recursive": "false",
+      "includeExistingOnFirstRun": "true",
+      "includeChanged": "true",
+      "settleSeconds": "2"
+    }
+  },
+  "parse": {
+    "module": "json-parse",
+    "settings": {}
+  },
+  "augments": [],
+  "deliveries": [
+    {
+      "render": {
+        "module": "json-render",
+        "settings": {
+          "indented": "true"
+        }
+      },
+      "deliver": {
+        "module": "logging-deliver",
+        "settings": {
+          "previewLength": "400"
+        }
+      }
+    }
+  ]
+}
+
+### Create a flow with a decision augment and conditional deliveries
+POST {{baseUrl}}/api/flows
+Content-Type: application/json
+
+{
+  "id": "decision-routing-flow",
+  "enabled": true,
+  "trigger": {
+    "mode": "OnDemand",
+    "runOnStartup": false
+  },
+  "fetch": {
+    "module": "file-system-fetch",
+    "settings": {
+      "path": "SampleData\\Inbox",
+      "searchPattern": "*.json"
+    }
+  },
+  "parse": {
+    "module": "json-parse",
+    "settings": {}
+  },
+  "augments": [
+    {
+      "module": "decision-augment",
+      "settings": {
+        "decisionJson": "[{\"name\":\"high-priority-route\",\"conditions\":[{\"source\":\"Payload\",\"path\":\"$.priority\",\"operator\":\"Equals\",\"value\":\"High\"}],\"actions\":[{\"kind\":\"SetMetadata\",\"target\":\"targetRoute\",\"value\":\"priority-api\"}]},{\"name\":\"default-route\",\"conditions\":[{\"source\":\"Payload\",\"path\":\"$.priority\",\"operator\":\"NotEquals\",\"value\":\"High\"}],\"actions\":[{\"kind\":\"SetMetadata\",\"target\":\"targetRoute\",\"value\":\"xml-archive\"}]}]"
+      }
+    }
+  ],
+  "deliveries": [
+    {
+      "render": {
+        "module": "json-render",
+        "settings": {
+          "conditionJson": "[{\"source\":\"Metadata\",\"path\":\"targetRoute\",\"operator\":\"Equals\",\"value\":\"priority-api\"}]"
+        }
+      },
+      "deliver": {
+        "module": "http-deliver",
+        "settings": {
+          "url": "https://api.example.test/orders/high-priority",
+          "method": "POST"
+        }
+      }
+    },
+    {
+      "render": {
+        "module": "xml-render",
+        "settings": {
+          "conditionJson": "[{\"source\":\"Metadata\",\"path\":\"targetRoute\",\"operator\":\"Equals\",\"value\":\"xml-archive\"}]"
+        }
+      },
+      "deliver": {
+        "module": "file-system-deliver",
+        "settings": {
+          "path": "SampleData\\Outbox",
+          "extension": ".xml"
+        }
+      }
+    }
+  ]
+}
+
+### Create a flow from the WYSIWYG designer
+POST {{baseUrl}}/api/flow-designer/flows
+Content-Type: application/json
+
+{
+  "id": "designer-http-xml-flow",
+  "enabled": true,
+  "trigger": {
+    "mode": "Interval",
+    "interval": "00:05:00",
+    "runOnStartup": false
+  },
+  "fetch": {
+    "module": "sftp-fetch",
+    "settings": {
+      "host": "sftp.example.test",
+      "port": "22",
+      "username": "integration-user",
+      "password": "replace-me",
+      "remotePath": "/orders/inbox",
+      "searchPattern": "*.json"
+    }
+  },
+  "parse": {
+    "module": "json-parse",
+    "settings": {}
+  },
+  "augments": [
+    {
+      "module": "sql-server-lookup-augment",
+      "settings": {
+        "connectionString": "Server=tcp:sql.example.test,1433;Database=Orders;User ID=integration-user;Password=replace-me;TrustServerCertificate=True",
+        "idPaths": "$.customerId",
+        "queryText": "select value as CustomerId from string_split(@ids, ',')"
+      }
+    },
+    {
+      "module": "conditional-join-map-augment",
+      "settings": {
+        "joinMode": "LeftJoin"
+      }
+    }
+  ],
+  "deliveries": [
+    {
+      "render": {
+        "module": "json-render",
+        "settings": {
+          "indented": "false"
+        }
+      },
+      "deliver": {
+        "module": "http-deliver",
+        "settings": {
+          "url": "https://api.example.test/orders",
+          "method": "POST",
+          "contentType": "application/json"
+        }
+      }
+    },
+    {
+      "render": {
+        "module": "xml-render",
+        "settings": {
+          "rootElement": "IntegrationOrder",
+          "itemElement": "Item"
+        }
+      },
+      "deliver": {
+        "module": "file-system-deliver",
+        "settings": {
+          "path": "SampleData\\Outbox",
+          "extension": ".xml"
+        }
+      }
+    }
+  ],
+  "mappings": [
+    {
+      "sourceKind": "Source",
+      "sourcePath": "$.orderId",
+      "targetField": "order.id",
+      "condition": "Always"
+    },
+    {
+      "sourceKind": "Lookup",
+      "sourcePath": "CustomerId",
+      "targetField": "customer.id",
+      "condition": "WhenLookupFound"
+    }
+  ]
 }
 
 ### List configured flows
@@ -46,13 +265,17 @@ Content-Type: application/json
     "mode": "OnDemand",
     "runOnStartup": false
   },
-  "input": {
-    "module": "file-system",
+  "fetch": {
+    "module": "file-system-fetch",
     "settings": {
       "path": "SampleData\\Inbox",
       "searchPattern": "*.json",
       "recursive": "false"
     }
+  },
+  "parse": {
+    "module": "json-parse",
+    "settings": {}
   },
   "augments": [
     {
@@ -62,18 +285,32 @@ Content-Type: application/json
       }
     }
   ],
-  "outputs": [
+  "deliveries": [
     {
-      "module": "logging-event",
-      "settings": {
-        "previewLength": "400"
+      "render": {
+        "module": "json-render",
+        "settings": {
+          "indented": "true"
+        }
+      },
+      "deliver": {
+        "module": "logging-deliver",
+        "settings": {
+          "previewLength": "400"
+        }
       }
     },
     {
-      "module": "file-system-storage",
-      "settings": {
-        "path": "SampleData\\Outbox",
-        "extension": ".json"
+      "render": {
+        "module": "json-render",
+        "settings": {}
+      },
+      "deliver": {
+        "module": "file-system-deliver",
+        "settings": {
+          "path": "SampleData\\Outbox",
+          "extension": ".json"
+        }
       }
     }
   ]
@@ -91,13 +328,17 @@ Content-Type: application/json
     "interval": "00:10:00",
     "runOnStartup": true
   },
-  "input": {
-    "module": "file-system",
+  "fetch": {
+    "module": "file-system-fetch",
     "settings": {
       "path": "SampleData\\Inbox",
       "searchPattern": "*.json",
       "recursive": "false"
     }
+  },
+  "parse": {
+    "module": "json-parse",
+    "settings": {}
   },
   "augments": [
     {
@@ -107,18 +348,32 @@ Content-Type: application/json
       }
     }
   ],
-  "outputs": [
+  "deliveries": [
     {
-      "module": "logging-event",
-      "settings": {
-        "previewLength": "400"
+      "render": {
+        "module": "json-render",
+        "settings": {
+          "indented": "true"
+        }
+      },
+      "deliver": {
+        "module": "logging-deliver",
+        "settings": {
+          "previewLength": "400"
+        }
       }
     },
     {
-      "module": "file-system-storage",
-      "settings": {
-        "path": "SampleData\\Outbox",
-        "extension": ".json"
+      "render": {
+        "module": "json-render",
+        "settings": {}
+      },
+      "deliver": {
+        "module": "file-system-deliver",
+        "settings": {
+          "path": "SampleData\\Outbox",
+          "extension": ".json"
+        }
       }
     }
   ]

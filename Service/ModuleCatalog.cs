@@ -39,8 +39,30 @@ public sealed class ModuleCatalog : IModuleCatalog
             sourceFileLastWriteTimeUtc: File.Exists(builtInAssemblyPath)
                 ? File.GetLastWriteTimeUtc(builtInAssemblyPath)
                 : DateTime.UtcNow);
+        var compatibilityAssemblyPath = typeof(Mulse.CompatibilityPack.CompatibilityPackInstaller).Assembly.Location;
+        var compatibilityPackage = CreatePackageFromInstaller(
+            packageId: "builtin.compatibility",
+            sourceKind: RuntimePackageSourceKind.BuiltIn,
+            sourceAssemblyPath: compatibilityAssemblyPath,
+            installerFactory: static () => [new Mulse.CompatibilityPack.CompatibilityPackInstaller()],
+            loadContext: null,
+            sourceFileLastWriteTimeUtc: File.Exists(compatibilityAssemblyPath)
+                ? File.GetLastWriteTimeUtc(compatibilityAssemblyPath)
+                : DateTime.UtcNow);
+        var hl7AssemblyPath = typeof(Mulse.Hl7.Hl7ModuleInstaller).Assembly.Location;
+        var hl7Package = CreatePackageFromInstaller(
+            packageId: "builtin.hl7",
+            sourceKind: RuntimePackageSourceKind.BuiltIn,
+            sourceAssemblyPath: hl7AssemblyPath,
+            installerFactory: static () => [new Mulse.Hl7.Hl7ModuleInstaller()],
+            loadContext: null,
+            sourceFileLastWriteTimeUtc: File.Exists(hl7AssemblyPath)
+                ? File.GetLastWriteTimeUtc(hl7AssemblyPath)
+                : DateTime.UtcNow);
 
         AddOrReplacePackage(builtInPackage, replaceExisting: true, previousPackage: out _);
+        AddOrReplacePackage(compatibilityPackage, replaceExisting: true, previousPackage: out _);
+        AddOrReplacePackage(hl7Package, replaceExisting: true, previousPackage: out _);
     }
 
     public IReadOnlyList<ModuleCatalogEntry> GetAll()
@@ -83,9 +105,14 @@ public sealed class ModuleCatalog : IModuleCatalog
         }
     }
 
-    public ValueTask<ModuleLease<IInputModule>> LeaseInputAsync(string moduleId, CancellationToken cancellationToken)
+    public ValueTask<ModuleLease<IFetchModule>> LeaseFetchAsync(string moduleId, CancellationToken cancellationToken)
     {
-        return LeaseAsync<IInputModule>(moduleId, ModuleKind.Input, cancellationToken);
+        return LeaseAsync<IFetchModule>(moduleId, ModuleKind.Fetch, cancellationToken);
+    }
+
+    public ValueTask<ModuleLease<IParseModule>> LeaseParseAsync(string moduleId, CancellationToken cancellationToken)
+    {
+        return LeaseAsync<IParseModule>(moduleId, ModuleKind.Parse, cancellationToken);
     }
 
     public ValueTask<ModuleLease<IOrchestrationAugmentModule>> LeaseOrchestrationAugmentAsync(string moduleId, CancellationToken cancellationToken)
@@ -93,9 +120,14 @@ public sealed class ModuleCatalog : IModuleCatalog
         return LeaseAsync<IOrchestrationAugmentModule>(moduleId, ModuleKind.OrchestrationAugment, cancellationToken);
     }
 
-    public ValueTask<ModuleLease<IOutputModule>> LeaseOutputAsync(string moduleId, CancellationToken cancellationToken)
+    public ValueTask<ModuleLease<IRenderModule>> LeaseRenderAsync(string moduleId, CancellationToken cancellationToken)
     {
-        return LeaseAsync<IOutputModule>(moduleId, ModuleKind.Output, cancellationToken);
+        return LeaseAsync<IRenderModule>(moduleId, ModuleKind.Render, cancellationToken);
+    }
+
+    public ValueTask<ModuleLease<IDeliverModule>> LeaseDeliverAsync(string moduleId, CancellationToken cancellationToken)
+    {
+        return LeaseAsync<IDeliverModule>(moduleId, ModuleKind.Deliver, cancellationToken);
     }
 
     public async Task SynchronizeAsync(CancellationToken cancellationToken)

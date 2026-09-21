@@ -6,4 +6,4 @@ public sealed record FlowRunResponse(
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt,
     int PayloadCount,
-    IReadOnlyList<string> OutputModules);
+    IReadOnlyList<string> DeliverModules);

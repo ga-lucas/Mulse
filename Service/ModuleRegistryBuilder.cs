@@ -8,9 +8,14 @@ internal sealed class ModuleRegistryBuilder : IModuleRegistryBuilder
 
     public IReadOnlyList<(ModuleKind Kind, Type ImplementationType)> Registrations => _registrations;
 
-    public void AddInput<TModule>() where TModule : class, IInputModule
+    public void AddFetch<TModule>() where TModule : class, IFetchModule
     {
-        _registrations.Add((ModuleKind.Input, typeof(TModule)));
+        _registrations.Add((ModuleKind.Fetch, typeof(TModule)));
+    }
+
+    public void AddParse<TModule>() where TModule : class, IParseModule
+    {
+        _registrations.Add((ModuleKind.Parse, typeof(TModule)));
     }
 
     public void AddOrchestrationAugment<TModule>() where TModule : class, IOrchestrationAugmentModule
@@ -18,8 +23,13 @@ internal sealed class ModuleRegistryBuilder : IModuleRegistryBuilder
         _registrations.Add((ModuleKind.OrchestrationAugment, typeof(TModule)));
     }
 
-    public void AddOutput<TModule>() where TModule : class, IOutputModule
+    public void AddRender<TModule>() where TModule : class, IRenderModule
     {
-        _registrations.Add((ModuleKind.Output, typeof(TModule)));
+        _registrations.Add((ModuleKind.Render, typeof(TModule)));
+    }
+
+    public void AddDeliver<TModule>() where TModule : class, IDeliverModule
+    {
+        _registrations.Add((ModuleKind.Deliver, typeof(TModule)));
     }
 }

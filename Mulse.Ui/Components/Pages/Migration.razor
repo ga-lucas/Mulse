@@ -1,0 +1,513 @@
+@page "/migration"
+@inject IMulseApiClient ApiClient
+
+<PageTitle>BizTalk migration</PageTitle>
+
+<div class="migration-shell">
+    <header class="migration-hero">
+        <div>
+            <p class="eyebrow">Guided migration</p>
+            <h1>BizTalk import workspace</h1>
+            <p class="lede">Point Mulse at a BizTalk solution, project, or directory. The API inventories the migration surface, imports bindings, generates draft flows, and highlights the config and secret work needed before cutover.</p>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_statusMessage))
+    {
+        <div class="status-banner success">@_statusMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <div class="status-banner error">@_errorMessage</div>
+    }
+
+    <section class="migration-grid">
+        <article class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>1. Load a BizTalk source</h2>
+                    <p>Enter a solution, project, or directory path that the local Mulse API process can read.</p>
+                </div>
+            </div>
+
+            <label class="field-label" for="source-path">Source path</label>
+            <input id="source-path" class="mapping-input" @bind="_sourcePath" @bind:event="oninput" placeholder="C:\Users\...\MyBizTalkApp.sln" />
+
+            <div class="action-row">
+                <button class="run-button" @onclick="AnalyzeAsync" disabled="@_isAnalyzing">Load solution</button>
+                <button class="secondary-button" @onclick="ClearAsync" disabled="@_isAnalyzing || _isImporting">Clear</button>
+            </div>
+        </article>
+
+        @if (_analysis is not null)
+        {
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>2. Migration summary</h2>
+                        <p>Mulse found the key BizTalk assets needed to start an assisted migration workspace.</p>
+                    </div>
+                </div>
+
+                <dl class="summary-grid summary-metadata">
+                    <div>
+                        <dt>Source</dt>
+                        <dd>@_analysis.DisplayName (@_analysis.SourceType)</dd>
+                    </div>
+                    <div>
+                        <dt>BizTalk projects</dt>
+                        <dd>@_analysis.BizTalkProjectCount</dd>
+                    </div>
+                    <div>
+                        <dt>Binding files</dt>
+                        <dd>@_analysis.BindingFiles.Count</dd>
+                    </div>
+                    <div>
+                        <dt>Custom assemblies</dt>
+                        <dd>@_analysis.CustomAssemblyCount</dd>
+                    </div>
+                    <div>
+                        <dt>Orchestrations</dt>
+                        <dd>@_analysis.OrchestrationCount</dd>
+                    </div>
+                    <div>
+                        <dt>Maps</dt>
+                        <dd>@_analysis.MapCount</dd>
+                    </div>
+                    <div>
+                        <dt>Schemas</dt>
+                        <dd>@_analysis.SchemaCount</dd>
+                    </div>
+                    <div>
+                        <dt>Pipelines</dt>
+                        <dd>@_analysis.PipelineCount</dd>
+                    </div>
+                    <div>
+                        <dt>Root directory</dt>
+                        <dd class="path-value">@_analysis.RootDirectory</dd>
+                    </div>
+                </dl>
+
+                @if (_analysis.Warnings.Count > 0)
+                {
+                    <div class="warning-panel">
+                        <h3>Current migration limits</h3>
+                        <ul>
+                            @foreach (var warning in _analysis.Warnings)
+                            {
+                                <li>@warning</li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </article>
+
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>3. Imported BizTalk bindings</h2>
+                        <p>Binding files are now parsed into receive and send port metadata so the draft flow modules can be pre-populated.</p>
+                    </div>
+                </div>
+
+                @if (_analysis.BindingFiles.Count == 0)
+                {
+                    <p>No binding files were discovered under the selected source.</p>
+                }
+                else
+                {
+                    <div class="card-grid">
+                        @foreach (var binding in _analysis.BindingFiles)
+                        {
+                            <section class="flow-card">
+                                <h3>@binding.Name</h3>
+                                <p><strong>Path:</strong> <span class="path-value">@binding.FilePath</span></p>
+                                <p><strong>Receive ports:</strong> @binding.ReceivePortCount</p>
+                                <p><strong>Send ports:</strong> @binding.SendPortCount</p>
+
+                                @if (binding.ReceivePorts.Count > 0)
+                                {
+                                    <h4>Receive locations</h4>
+                                    <table class="module-table artifact-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Port</th>
+                                                <th>Location</th>
+                                                <th>Transport</th>
+                                                <th>Fetch module</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var port in binding.ReceivePorts)
+                                            {
+                                                @foreach (var location in port.ReceiveLocations)
+                                                {
+                                                    <tr>
+                                                        <td>@port.Name</td>
+                                                        <td>@location.Name</td>
+                                                        <td>@location.TransportType</td>
+                                                        <td>@location.SuggestedFetchModule</td>
+                                                    </tr>
+                                                }
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+
+                                @if (binding.SendPorts.Count > 0)
+                                {
+                                    <h4>Send ports</h4>
+                                    <table class="module-table artifact-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Transport</th>
+                                                <th>Render</th>
+                                                <th>Deliver</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var sendPort in binding.SendPorts)
+                                            {
+                                                <tr>
+                                                    <td>@sendPort.Name</td>
+                                                    <td>@sendPort.TransportType</td>
+                                                    <td>@sendPort.SuggestedRenderModule</td>
+                                                    <td>@sendPort.SuggestedDeliverModule</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+                            </section>
+                        }
+                    </div>
+                }
+            </article>
+
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>4. Draft Mulse flow candidates</h2>
+                        <p>Each candidate now includes an importable disabled draft flow with binding-derived settings and config or secret follow-up work.</p>
+                    </div>
+                </div>
+
+                @if (_analysis.FlowCandidates.Count == 0)
+                {
+                    <p>No flow candidates were generated.</p>
+                }
+                else
+                {
+                    <div class="card-grid">
+                        @foreach (var candidate in _analysis.FlowCandidates)
+                        {
+                            <section class="flow-card">
+                                <div class="flow-card-header">
+                                    <div>
+                                        <h3>@candidate.SourceProject</h3>
+                                        <p><strong>Suggested flow id:</strong> @candidate.SuggestedFlowId</p>
+                                    </div>
+                                </div>
+
+                                <p>@candidate.Summary</p>
+                                <p><strong>Fetch:</strong> @candidate.FetchGuidance</p>
+                                <p><strong>Parse:</strong> @candidate.ParseGuidance</p>
+                                <p><strong>Related bindings:</strong> @FormatList(candidate.RelatedBindingFiles)</p>
+                                <p><strong>Source artifacts:</strong> @FormatList(candidate.SourceArtifacts)</p>
+
+                                <div class="action-row">
+                                    <button class="run-button" @onclick="() => ImportDraftFlowAsync(candidate)" disabled="@(_isAnalyzing || _isImporting)">
+                                        @(_importingFlowId == candidate.SuggestedFlowId ? "Importing draft..." : "Import draft flow")
+                                    </button>
+                                </div>
+
+                                <div class="detail-grid">
+                                    <div>
+                                        <h4>Augment guidance</h4>
+                                        <ul>
+                                            @foreach (var item in candidate.AugmentGuidance)
+                                            {
+                                                <li>@item</li>
+                                            }
+                                        </ul>
+                                    </div>
+                                    <div>
+                                        <h4>Delivery guidance</h4>
+                                        <ul>
+                                            @foreach (var item in candidate.DeliveryGuidance)
+                                            {
+                                                <li>@item</li>
+                                            }
+                                        </ul>
+                                    </div>
+                                </div>
+
+                                <h4>Generated draft flow</h4>
+                                <p><strong>Enabled:</strong> @candidate.DraftFlow.Enabled</p>
+                                <p><strong>Trigger:</strong> @candidate.DraftFlow.Trigger.Mode</p>
+                                <p><strong>Fetch module:</strong> @candidate.DraftFlow.Fetch.Module</p>
+                                <p><strong>Parse module:</strong> @candidate.DraftFlow.Parse.Module</p>
+                                <p><strong>Augments:</strong> @FormatStepList(candidate.DraftFlow.Augments)</p>
+                                <p><strong>Delivery routes:</strong> @candidate.DraftFlow.Deliveries.Count</p>
+
+                                <h4>Step settings</h4>
+                                <table class="module-table artifact-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Step</th>
+                                            <th>Module</th>
+                                            <th>Settings</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>Fetch</td>
+                                            <td>@candidate.DraftFlow.Fetch.Module</td>
+                                            <td class="path-value">@FormatSettings(candidate.DraftFlow.Fetch.Settings)</td>
+                                        </tr>
+                                        <tr>
+                                            <td>Parse</td>
+                                            <td>@candidate.DraftFlow.Parse.Module</td>
+                                            <td class="path-value">@FormatSettings(candidate.DraftFlow.Parse.Settings)</td>
+                                        </tr>
+                                        @foreach (var augment in candidate.DraftFlow.Augments.Select((step, index) => new { Step = step, Index = index }))
+                                        {
+                                            <tr>
+                                                <td>Augment @(@augment.Index + 1)</td>
+                                                <td>@augment.Step.Module</td>
+                                                <td class="path-value">@FormatSettings(augment.Step.Settings)</td>
+                                            </tr>
+                                        }
+                                        @foreach (var delivery in candidate.DraftFlow.Deliveries.Select((route, index) => new { Route = route, Index = index }))
+                                        {
+                                            <tr>
+                                                <td>Render @(@delivery.Index + 1)</td>
+                                                <td>@delivery.Route.Render.Module</td>
+                                                <td class="path-value">@FormatSettings(@delivery.Route.Render.Settings)</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Deliver @(@delivery.Index + 1)</td>
+                                                <td>@delivery.Route.Deliver.Module</td>
+                                                <td class="path-value">@FormatSettings(@delivery.Route.Deliver.Settings)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+
+                                <h4>Config and secret follow-up</h4>
+                                @if (candidate.DraftFlow.ConfigurationRequirements.Count == 0)
+                                {
+                                    <p>No extra config or secret references were generated.</p>
+                                }
+                                else
+                                {
+                                    <table class="module-table artifact-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Kind</th>
+                                                <th>Setting</th>
+                                                <th>Reference</th>
+                                                <th>Applied</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var requirement in candidate.DraftFlow.ConfigurationRequirements)
+                                            {
+                                                <tr>
+                                                    <td>@requirement.Kind</td>
+                                                    <td class="path-value">@requirement.SettingPath</td>
+                                                    <td class="path-value">@requirement.ReferenceName</td>
+                                                    <td>@(requirement.AppliedToDraft ? "Placeholder in draft" : "Recommendation only")</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+
+                                @if (candidate.DraftFlow.Warnings.Count > 0)
+                                {
+                                    <h4>Draft warnings</h4>
+                                    <ul>
+                                        @foreach (var warning in candidate.DraftFlow.Warnings)
+                                        {
+                                            <li>@warning</li>
+                                        }
+                                    </ul>
+                                }
+
+                                <h4>Open questions</h4>
+                                <ul>
+                                    @foreach (var question in candidate.OpenQuestions)
+                                    {
+                                        <li>@question</li>
+                                    }
+                                </ul>
+                            </section>
+                        }
+                    </div>
+                }
+            </article>
+
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>5. Custom assembly migration</h2>
+                        <p>The importer assumes custom assemblies should become native Mulse modules by stage responsibility, not long-lived wrappers.</p>
+                    </div>
+                </div>
+
+                @if (_analysis.CustomAssemblies.Count == 0)
+                {
+                    <p>No custom assemblies were detected in the selected source.</p>
+                }
+                else
+                {
+                    <div class="card-grid">
+                        @foreach (var assembly in _analysis.CustomAssemblies)
+                        {
+                            <section class="flow-card">
+                                <h3>@assembly.Name</h3>
+                                <p><strong>Suggested module kind:</strong> @assembly.SuggestedModuleKind</p>
+                                <p><strong>Source files:</strong> @assembly.SourceFileCount</p>
+                                <p><strong>Migration:</strong> @assembly.MigrationApproach</p>
+                                <p><strong>Used by:</strong> @FormatList(assembly.UsedByProjects)</p>
+                                <p><strong>Path:</strong> <span class="path-value">@assembly.ProjectPath</span></p>
+                            </section>
+                        }
+                    </div>
+                }
+            </article>
+
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>6. BizTalk project inventory</h2>
+                        <p>Use this inventory to decide which projects become separate flows, shared modules, or schema packages.</p>
+                    </div>
+                </div>
+
+                <div class="card-grid">
+                    @foreach (var project in _analysis.BizTalkProjects)
+                    {
+                        <section class="flow-card">
+                            <h3>@project.Name</h3>
+                            <dl class="summary-grid summary-metadata compact-metadata">
+                                <div>
+                                    <dt>Orchestrations</dt>
+                                    <dd>@project.OrchestrationCount</dd>
+                                </div>
+                                <div>
+                                    <dt>Maps</dt>
+                                    <dd>@project.MapCount</dd>
+                                </div>
+                                <div>
+                                    <dt>Schemas</dt>
+                                    <dd>@project.SchemaCount</dd>
+                                </div>
+                                <div>
+                                    <dt>Pipelines</dt>
+                                    <dd>@project.PipelineCount</dd>
+                                </div>
+                            </dl>
+                            <p><strong>Custom references:</strong> @FormatList(project.ReferencedCustomAssemblies)</p>
+                            <p><strong>Path:</strong> <span class="path-value">@project.ProjectPath</span></p>
+
+                            <table class="module-table artifact-table">
+                                <thead>
+                                    <tr>
+                                        <th>Kind</th>
+                                        <th>Name</th>
+                                        <th>Relative path</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var artifact in project.Artifacts)
+                                    {
+                                        <tr>
+                                            <td>@artifact.Kind</td>
+                                            <td>@artifact.Name</td>
+                                            <td class="path-value">@artifact.RelativePath</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </section>
+                    }
+                </div>
+            </article>
+        }
+    </section>
+</div>
+
+@code {
+    private string _sourcePath = string.Empty;
+    private bool _isAnalyzing;
+    private string? _importingFlowId;
+    private bool _isImporting => !string.IsNullOrWhiteSpace(_importingFlowId);
+    private string? _statusMessage;
+    private string? _errorMessage;
+    private BizTalkSolutionAnalysisViewModel? _analysis;
+
+    private async Task AnalyzeAsync()
+    {
+        _isAnalyzing = true;
+        _statusMessage = null;
+        _errorMessage = null;
+
+        try
+        {
+            _analysis = await ApiClient.AnalyzeBizTalkSolutionAsync(new AnalyzeBizTalkSolutionRequestViewModel(_sourcePath), CancellationToken.None);
+            _statusMessage = $"Loaded {_analysis.BizTalkProjectCount} BizTalk project(s), {_analysis.BindingFiles.Count} binding file(s), and {_analysis.FlowCandidates.Count} draft flow candidate(s).";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to analyze BizTalk source: {exception.Message}";
+        }
+        finally
+        {
+            _isAnalyzing = false;
+        }
+    }
+
+    private async Task ImportDraftFlowAsync(BizTalkFlowCandidateViewModel candidate)
+    {
+        _importingFlowId = candidate.SuggestedFlowId;
+        _statusMessage = null;
+        _errorMessage = null;
+
+        try
+        {
+            var created = await ApiClient.ImportBizTalkDraftFlowAsync(new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId), CancellationToken.None);
+            _statusMessage = $"Imported draft flow '{created.Id}'. The flow was created disabled so settings, config references, and secrets can be reviewed before execution.";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to import draft flow '{candidate.SuggestedFlowId}': {exception.Message}";
+        }
+        finally
+        {
+            _importingFlowId = null;
+        }
+    }
+
+    private Task ClearAsync()
+    {
+        _sourcePath = string.Empty;
+        _statusMessage = null;
+        _errorMessage = null;
+        _analysis = null;
+        _importingFlowId = null;
+        return Task.CompletedTask;
+    }
+
+    private static string FormatList(IReadOnlyList<string> values)
+        => values.Count == 0 ? "None" : string.Join(", ", values);
+
+    private static string FormatStepList(IReadOnlyList<BizTalkDraftStepViewModel> steps)
+        => steps.Count == 0 ? "None" : string.Join(", ", steps.Select(static step => step.Module));
+
+    private static string FormatSettings(IReadOnlyDictionary<string, string> settings)
+        => settings.Count == 0 ? "None" : string.Join(" | ", settings.Select(static entry => $"{entry.Key}={entry.Value}"));
+}

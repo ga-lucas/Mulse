@@ -16,13 +16,17 @@ public sealed record CreateFlowRequest
     [Required]
     public required FlowTriggerRequest Trigger { get; init; }
 
-    /// <summary>The input step that starts the flow.</summary>
+    /// <summary>The fetch step that acquires raw source content.</summary>
     [Required]
-    public required FlowStepRequest Input { get; init; }
+    public required FlowStepRequest Fetch { get; init; }
 
-    /// <summary>The orchestration augment steps executed after the input step.</summary>
+    /// <summary>The parse step that converts raw content into the working payload shape.</summary>
+    [Required]
+    public required FlowStepRequest Parse { get; init; }
+
+    /// <summary>The orchestration augment steps executed after parsing.</summary>
     public IReadOnlyList<FlowStepRequest> Augments { get; init; } = [];
 
-    /// <summary>The output steps executed at the end of the flow.</summary>
-    public IReadOnlyList<FlowStepRequest> Outputs { get; init; } = [];
+    /// <summary>The delivery routes executed after augmentation.</summary>
+    public IReadOnlyList<DeliveryRouteRequest> Deliveries { get; init; } = [];
 }

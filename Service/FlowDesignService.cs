@@ -1,15 +1,17 @@
 using System.Text.Json;
-using System.Xml.Linq;
+using System.Text.Json.Serialization;
 using Mulse.Modules;
 using Service.Models;
+using System.Xml.Linq;
 
 namespace Service;
 
-public sealed class FlowDesignService(IModuleCatalog moduleCatalog) : IFlowDesignService
+public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinitionService flowDefinitionService) : IFlowDesignService
 {
     private const int MaxFields = 48;
     private const int MaxSampleLength = 200;
     private const int MaxPreviewLength = 1200;
+    private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
 
     public Task<FlowDesignResponse> AnalyzeAsync(AnalyzeFlowDesignRequest request, CancellationToken cancellationToken)
     {
@@ -36,20 +38,47 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog) : IFlowDesig
             .ToArray();
 
         var availableModules = moduleCatalog.GetAll();
-        var inputModules = CreateSuggestions(availableModules, ModuleKind.Input, format);
-        var orchestrationAugmentModules = CreateSuggestions(availableModules, ModuleKind.OrchestrationAugment, format);
-        var outputModules = CreateSuggestions(availableModules, ModuleKind.Output, format);
-
         var response = new FlowDesignResponse(
             format,
             request.FileName,
             text.Length <= MaxPreviewLength ? text : text[..MaxPreviewLength],
-            inputModules,
-            orchestrationAugmentModules,
-            outputModules,
+            CreateSuggestions(availableModules, ModuleKind.Fetch, format),
+            CreateSuggestions(availableModules, ModuleKind.Parse, format),
+            CreateSuggestions(availableModules, ModuleKind.OrchestrationAugment, format),
+            CreateSuggestions(availableModules, ModuleKind.Render, format),
+            CreateSuggestions(availableModules, ModuleKind.Deliver, format),
             fields);
 
         return Task.FromResult(response);
+    }
+
+    public async Task<PipelineDefinition> CreateFlowAsync(CreateDesignedFlowRequest request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (request.Deliveries.Count == 0)
+        {
+            throw new ArgumentException("At least one delivery route is required.", nameof(request));
+        }
+
+        var pipeline = new PipelineDefinition
+        {
+            Id = request.Id,
+            Enabled = request.Enabled,
+            Trigger = new PipelineTriggerOptions
+            {
+                Mode = request.Trigger.Mode,
+                Interval = request.Trigger.Interval,
+                RunOnStartup = request.Trigger.RunOnStartup
+            },
+            Fetch = MapStep(request.Fetch),
+            Parse = MapStep(request.Parse),
+            Augments = request.Augments.Select(MapStep).ToList(),
+            Deliveries = request.Deliveries.Select(MapDelivery).ToList()
+        };
+
+        ApplyDesignerMappings(pipeline.Augments, request.Mappings);
+        return await flowDefinitionService.CreateAsync(pipeline, cancellationToken).ConfigureAwait(false);
     }
 
     private static DetectedDataFormat DetectFormat(string text, string? fileName, string? contentType)
@@ -213,25 +242,131 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog) : IFlowDesig
     {
         return modules
             .Where(module => module.Descriptor.Kind == kind)
-            .Select(module => new ModuleSuggestionResponse(
-                module.Descriptor.Id,
-                module.Descriptor.DisplayName,
-                module.Descriptor.Kind,
-                module.Descriptor.Description,
-                IsRecommended(module.Descriptor, kind, format)))
-            .OrderByDescending(static module => module.IsRecommended)
-            .ThenBy(static module => module.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(module =>
+            {
+                var score = GetRecommendationScore(module.Descriptor, kind, format);
+                return new RankedModuleSuggestion(
+                    new ModuleSuggestionResponse(
+                        module.Descriptor.Id,
+                        module.Descriptor.DisplayName,
+                        module.Descriptor.Kind,
+                        module.Descriptor.Description,
+                        score > 0,
+                        MapSettings(module.Descriptor.Settings),
+                        MapFormats(module.Descriptor.Recommendation),
+                        MapProtocols(module.Descriptor.Recommendation),
+                        MapCapabilities(module.Descriptor.Recommendation)),
+                    score);
+            })
+            .OrderByDescending(static module => module.Score)
+            .ThenByDescending(static module => module.Response.IsRecommended)
+            .ThenBy(static module => module.Response.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(static module => module.Response)
             .ToArray();
     }
 
-    private static bool IsRecommended(ModuleDescriptor descriptor, ModuleKind kind, DetectedDataFormat format)
+    private static IReadOnlyList<ModuleSettingResponse> MapSettings(IReadOnlyList<ModuleSettingDescriptor> settings)
+    {
+        return settings
+            .Select(static setting => new ModuleSettingResponse(
+                setting.Key,
+                setting.Label,
+                setting.Description,
+                setting.IsRequired,
+                setting.InputKind.ToString(),
+                setting.DefaultValue,
+                setting.Options?.Select(static option => new ModuleSettingOptionResponse(option.Value, option.Label)).ToArray() ?? []))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> MapFormats(ModuleRecommendationProfile? recommendation)
+    {
+        return recommendation?.SupportedFormats.Select(static format => format.ToString()).ToArray() ?? [];
+    }
+
+    private static IReadOnlyList<string> MapProtocols(ModuleRecommendationProfile? recommendation)
+    {
+        return recommendation?.Protocols.Select(static protocol => protocol.ToString()).ToArray() ?? [];
+    }
+
+    private static IReadOnlyList<string> MapCapabilities(ModuleRecommendationProfile? recommendation)
+    {
+        return recommendation?.Capabilities.Select(static capability => capability.ToString()).ToArray() ?? [];
+    }
+
+    private static int GetRecommendationScore(ModuleDescriptor descriptor, ModuleKind kind, DetectedDataFormat format)
+    {
+        var recommendation = descriptor.Recommendation;
+        if (recommendation is null)
+        {
+            return 0;
+        }
+
+        var moduleFormat = MapFormat(format);
+        if (recommendation.SupportedFormats.Count > 0 && !recommendation.SupportedFormats.Contains(moduleFormat))
+        {
+            return 0;
+        }
+
+        var score = recommendation.SupportedFormats.Count > 0 ? 4 : 1;
+        score += recommendation.Capabilities.Sum(capability => GetCapabilityWeight(kind, capability));
+        score += recommendation.Protocols.Count(protocol => GetPreferredProtocols(kind).Contains(protocol)) * 2;
+        score += recommendation.Capabilities.Count(capability => GetFormatSpecificCapabilities(moduleFormat).Contains(capability));
+        return score;
+    }
+
+    private static ModuleDataFormat MapFormat(DetectedDataFormat format)
+    {
+        return format switch
+        {
+            DetectedDataFormat.Json => ModuleDataFormat.Json,
+            DetectedDataFormat.Xml => ModuleDataFormat.Xml,
+            DetectedDataFormat.Csv => ModuleDataFormat.Csv,
+            _ => ModuleDataFormat.Text
+        };
+    }
+
+    private static int GetCapabilityWeight(ModuleKind kind, ModuleCapability capability)
+    {
+        return (kind, capability) switch
+        {
+            (ModuleKind.Fetch, ModuleCapability.Ingestion) => 5,
+            (ModuleKind.Fetch, ModuleCapability.Polling) => 3,
+            (ModuleKind.Parse, ModuleCapability.Parsing) => 5,
+            (ModuleKind.OrchestrationAugment, ModuleCapability.Lookup) => 5,
+            (ModuleKind.OrchestrationAugment, ModuleCapability.Mapping) => 5,
+            (ModuleKind.OrchestrationAugment, ModuleCapability.Enrichment) => 4,
+            (ModuleKind.OrchestrationAugment, ModuleCapability.Decision) => 3,
+            (ModuleKind.OrchestrationAugment, ModuleCapability.Transformation) => 2,
+            (ModuleKind.OrchestrationAugment, ModuleCapability.Envelope) => 1,
+            (ModuleKind.Render, ModuleCapability.Serialization) => 5,
+            (ModuleKind.Deliver, ModuleCapability.Delivery) => 5,
+            (ModuleKind.Deliver, ModuleCapability.Storage) => 3,
+            (ModuleKind.Deliver, ModuleCapability.Logging) => 1,
+            _ => 0
+        };
+    }
+
+    private static IReadOnlySet<ModuleProtocol> GetPreferredProtocols(ModuleKind kind)
     {
         return kind switch
         {
-            ModuleKind.Input => descriptor.Id.Contains("file-system", StringComparison.OrdinalIgnoreCase),
-            ModuleKind.OrchestrationAugment when format == DetectedDataFormat.Json => descriptor.Id.Contains("json", StringComparison.OrdinalIgnoreCase) || descriptor.Id.Contains("augment", StringComparison.OrdinalIgnoreCase),
-            ModuleKind.Output => descriptor.Id.Contains("storage", StringComparison.OrdinalIgnoreCase) || descriptor.Id.Contains("logging", StringComparison.OrdinalIgnoreCase),
-            _ => false
+            ModuleKind.Fetch => new HashSet<ModuleProtocol> { ModuleProtocol.FileSystem, ModuleProtocol.Sftp },
+            ModuleKind.Parse => new HashSet<ModuleProtocol>(),
+            ModuleKind.OrchestrationAugment => new HashSet<ModuleProtocol> { ModuleProtocol.SqlServer, ModuleProtocol.Plugin },
+            ModuleKind.Render => new HashSet<ModuleProtocol>(),
+            ModuleKind.Deliver => new HashSet<ModuleProtocol> { ModuleProtocol.Http, ModuleProtocol.FileSystem },
+            _ => new HashSet<ModuleProtocol>()
+        };
+    }
+
+    private static IReadOnlySet<ModuleCapability> GetFormatSpecificCapabilities(ModuleDataFormat format)
+    {
+        return format switch
+        {
+            ModuleDataFormat.Json => new HashSet<ModuleCapability> { ModuleCapability.Envelope, ModuleCapability.Mapping, ModuleCapability.Transformation },
+            ModuleDataFormat.Xml => new HashSet<ModuleCapability> { ModuleCapability.Serialization },
+            _ => new HashSet<ModuleCapability>()
         };
     }
 
@@ -269,5 +404,64 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog) : IFlowDesig
         return normalized[..MaxSampleLength];
     }
 
+    private static ModuleStepDefinition MapStep(FlowStepRequest step)
+    {
+        return new ModuleStepDefinition
+        {
+            Module = step.Module,
+            Settings = new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase)
+        };
+    }
+
+    private static DeliveryRouteDefinition MapDelivery(DeliveryRouteRequest route)
+    {
+        return new DeliveryRouteDefinition
+        {
+            Render = MapStep(route.Render),
+            Deliver = MapStep(route.Deliver)
+        };
+    }
+
+    private static JsonSerializerOptions CreateSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
+
+    private static void ApplyDesignerMappings(IReadOnlyList<ModuleStepDefinition> augments, IReadOnlyList<FlowDesignFieldMappingRequest> mappings)
+    {
+        if (mappings.Count == 0)
+        {
+            return;
+        }
+
+        var mappingSteps = augments
+            .Where(static step => string.Equals(step.Module, "conditional-join-map-augment", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        if (mappingSteps.Length == 0)
+        {
+            throw new ArgumentException("Designer mappings require the conditional-join-map-augment module to be configured.", nameof(mappings));
+        }
+
+        var mappingDefinitions = mappings.Select(static mapping => new WorkflowFieldMappingDefinition
+        {
+            SourceKind = mapping.SourceKind,
+            SourcePath = mapping.SourcePath,
+            TargetField = mapping.TargetField,
+            Condition = mapping.Condition,
+            LiteralValue = mapping.LiteralValue
+        }).ToArray();
+
+        var mappingJson = JsonSerializer.Serialize(mappingDefinitions, SerializerOptions);
+        foreach (var mappingStep in mappingSteps)
+        {
+            mappingStep.Settings["mappingJson"] = mappingJson;
+        }
+    }
+
     private sealed record FieldSample(string Path, string SampleValue);
+
+    private sealed record RankedModuleSuggestion(ModuleSuggestionResponse Response, int Score);
 }

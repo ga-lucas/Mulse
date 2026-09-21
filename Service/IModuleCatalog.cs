@@ -8,11 +8,15 @@ public interface IModuleCatalog
 
     IReadOnlyList<ModulePackageInfo> GetPackages();
 
-    ValueTask<ModuleLease<IInputModule>> LeaseInputAsync(string moduleId, CancellationToken cancellationToken);
+    ValueTask<ModuleLease<IFetchModule>> LeaseFetchAsync(string moduleId, CancellationToken cancellationToken);
+
+    ValueTask<ModuleLease<IParseModule>> LeaseParseAsync(string moduleId, CancellationToken cancellationToken);
 
     ValueTask<ModuleLease<IOrchestrationAugmentModule>> LeaseOrchestrationAugmentAsync(string moduleId, CancellationToken cancellationToken);
 
-    ValueTask<ModuleLease<IOutputModule>> LeaseOutputAsync(string moduleId, CancellationToken cancellationToken);
+    ValueTask<ModuleLease<IRenderModule>> LeaseRenderAsync(string moduleId, CancellationToken cancellationToken);
+
+    ValueTask<ModuleLease<IDeliverModule>> LeaseDeliverAsync(string moduleId, CancellationToken cancellationToken);
 
     Task SynchronizeAsync(CancellationToken cancellationToken);
 

@@ -5,4 +5,8 @@ public sealed record ModuleSuggestionViewModel(
     string DisplayName,
     string Kind,
     string Description,
-    bool IsRecommended);
+    bool IsRecommended,
+    IReadOnlyList<ModuleSettingViewModel> Settings,
+    IReadOnlyList<string> SupportedFormats,
+    IReadOnlyList<string> Protocols,
+    IReadOnlyList<string> Capabilities);

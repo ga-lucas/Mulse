@@ -30,6 +30,24 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<FlowDesignAnalysisViewModel>(response, cancellationToken, "flow design analysis response").ConfigureAwait(false);
     }
 
+    public async Task<BizTalkSolutionAnalysisViewModel> AnalyzeBizTalkSolutionAsync(AnalyzeBizTalkSolutionRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/biztalk-import/analyze", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<BizTalkSolutionAnalysisViewModel>(response, cancellationToken, "BizTalk migration analysis response").ConfigureAwait(false);
+    }
+
+    public async Task<FlowViewModel> ImportBizTalkDraftFlowAsync(CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/biztalk-import/flows", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<FlowViewModel>(response, cancellationToken, "imported BizTalk flow response").ConfigureAwait(false);
+    }
+
+    public async Task<FlowViewModel> CreateDesignedFlowAsync(CreateDesignedFlowRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/flow-designer/flows", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<FlowViewModel>(response, cancellationToken, "created flow response").ConfigureAwait(false);
+    }
+
     public async Task<FlowRunViewModel> RunFlowAsync(string flowId, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PostAsync($"/api/flows/{Uri.EscapeDataString(flowId)}/run", content: null, cancellationToken).ConfigureAwait(false);

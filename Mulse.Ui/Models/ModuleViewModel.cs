@@ -4,4 +4,8 @@ public sealed record ModuleViewModel(
     string Id,
     string DisplayName,
     string Kind,
-    string Description);
+    string Description,
+    IReadOnlyList<ModuleSettingViewModel> Settings,
+    IReadOnlyList<string> SupportedFormats,
+    IReadOnlyList<string> Protocols,
+    IReadOnlyList<string> Capabilities);

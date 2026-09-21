@@ -6,6 +6,12 @@ public sealed record FlowViewModel(
     string TriggerMode,
     TimeSpan? Interval,
     bool RunOnStartup,
-    string InputModule,
+    string FetchModule,
+    string ParseModule,
     IReadOnlyList<string> AugmentModules,
-    IReadOnlyList<string> OutputModules);
+    IReadOnlyList<string> RenderModules,
+    IReadOnlyList<string> DeliverModules,
+    FlowStepViewModel Fetch,
+    FlowStepViewModel Parse,
+    IReadOnlyList<FlowStepViewModel> Augments,
+    IReadOnlyList<DeliveryRouteViewModel> Deliveries);

@@ -4,5 +4,6 @@ public enum PipelineTriggerMode
 {
     Disabled,
     OnDemand,
-    Interval
+    Interval,
+    Push
 }

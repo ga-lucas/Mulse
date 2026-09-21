@@ -19,5 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Mulse.ServiceDefaults\Mulse.ServiceDefaults.csproj" />
     <ProjectReference Include="..\Mulse.Modules\Mulse.Modules.csproj" />
+    <ProjectReference Include="..\Mulse.CompatibilityPack\Mulse.CompatibilityPack.csproj" />
+    <ProjectReference Include="..\Mulse.Hl7\Mulse.Hl7.csproj" />
   </ItemGroup>
 </Project>

@@ -1,10 +1,9 @@
 namespace Mulse.Modules;
 
-public interface IOutputModule : IModule
+public interface IFetchModule : IModule
 {
-    Task WriteAsync(
+    Task<IntegrationBatch> FetchAsync(
         FlowExecutionContext context,
-        IntegrationBatch batch,
         ModuleStepDefinition step,
         CancellationToken cancellationToken);
 }

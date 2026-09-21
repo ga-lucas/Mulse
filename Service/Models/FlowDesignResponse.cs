@@ -5,7 +5,9 @@ public sealed record FlowDesignResponse(
     DetectedDataFormat DetectedFormat,
     string? FileName,
     string Preview,
-    IReadOnlyList<ModuleSuggestionResponse> InputModules,
+    IReadOnlyList<ModuleSuggestionResponse> FetchModules,
+    IReadOnlyList<ModuleSuggestionResponse> ParseModules,
     IReadOnlyList<ModuleSuggestionResponse> OrchestrationAugmentModules,
-    IReadOnlyList<ModuleSuggestionResponse> OutputModules,
+    IReadOnlyList<ModuleSuggestionResponse> RenderModules,
+    IReadOnlyList<ModuleSuggestionResponse> DeliverModules,
     IReadOnlyList<FieldMappingSuggestionResponse> Fields);

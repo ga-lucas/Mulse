@@ -50,7 +50,8 @@
                                 <div class="flow-card-header">
                                     <div>
                                         <h3>@flow.Id</h3>
-                                        <p><strong>Input:</strong> @flow.InputModule</p>
+                                        <p><strong>Fetch:</strong> @flow.FetchModule</p>
+                                        <p><strong>Parse:</strong> @flow.ParseModule</p>
                                     </div>
                                     <button class="run-button" @onclick="() => RunFlowAsync(flow.Id)" disabled="@_isRunningFlow">
                                         Run flow
@@ -70,12 +71,13 @@
                                         <dd>@(flow.Interval?.ToString() ?? "n/a")</dd>
                                     </div>
                                     <div>
-                                        <dt>Outputs</dt>
-                                        <dd>@(flow.OutputModules.Count == 0 ? "None" : flow.OutputModules.Count.ToString())</dd>
+                                        <dt>Deliveries</dt>
+                                        <dd>@(flow.Deliveries.Count == 0 ? "None" : flow.Deliveries.Count.ToString())</dd>
                                     </div>
                                 </dl>
                                 <p><strong>Augments:</strong> @FormatModules(flow.AugmentModules)</p>
-                                <p><strong>Outputs:</strong> @FormatModules(flow.OutputModules)</p>
+                                <p><strong>Renders:</strong> @FormatModules(flow.RenderModules)</p>
+                                <p><strong>Delivers:</strong> @FormatModules(flow.DeliverModules)</p>
                             </section>
                         }
                     </div>
@@ -134,7 +136,7 @@
                 <div class="panel-header">
                     <div>
                         <h2>Available modules</h2>
-                        <p>All data ingress, processing, eventing, and storage stay in the module layer.</p>
+                        <p>All data ingress, orchestration augmentation, and output delivery stay in the module layer.</p>
                     </div>
                 </div>
 
@@ -217,7 +219,7 @@
         try
         {
             var result = await ApiClient.RunFlowAsync(flowId, CancellationToken.None);
-            _lastRunMessage = $"Ran {result.FlowId} with {result.PayloadCount} payload(s).";
+            _lastRunMessage = $"Ran {result.FlowId} with {result.PayloadCount} payload(s) across {result.DeliverModules.Count} delivery route(s).";
         }
         catch (Exception exception)
         {

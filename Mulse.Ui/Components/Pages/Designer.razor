@@ -9,7 +9,7 @@
         <div>
             <p class="eyebrow">Sample-driven design</p>
             <h1>Flow designer</h1>
-            <p class="lede">Upload, drag onto the file input, or paste a sample payload. Mulse inspects the structure, suggests modules, and lets you map fields visually before you build the real flow.</p>
+            <p class="lede">Upload, drag onto the file input, or paste a sample payload. Mulse inspects the structure, suggests modules, and lets you configure a runnable SFTP + SQL Server + HTTP + XML workflow visually.</p>
         </div>
     </header>
 
@@ -47,7 +47,7 @@
 
             <div class="action-row">
                 <button class="run-button" @onclick="AnalyzeAsync" disabled="@_isAnalyzing">Analyze sample</button>
-                <button class="secondary-button" @onclick="ClearAsync" disabled="@_isAnalyzing">Clear</button>
+                <button class="secondary-button" @onclick="ClearAsync" disabled="@(_isAnalyzing || _isCreatingFlow)">Clear</button>
             </div>
         </article>
 
@@ -56,8 +56,8 @@
             <article class="panel">
                 <div class="panel-header">
                     <div>
-                        <h2>2. Review suggestions</h2>
-                        <p>Mulse detected <strong>@_analysis.DetectedFormat</strong> and ranked compatible modules automatically.</p>
+                        <h2>2. Workflow shape</h2>
+                        <p>Mulse detected <strong>@_analysis.DetectedFormat</strong> and preselected a hot-loadable workflow for scheduled SFTP ingest, SQL enrichment, API delivery, and XML export.</p>
                     </div>
                 </div>
 
@@ -65,35 +65,131 @@
                     <pre>@_analysis.Preview</pre>
                 </div>
 
+                <div class="summary-grid">
+                    <div>
+                        <label class="field-label" for="flow-id">Flow id</label>
+                        <input id="flow-id" class="mapping-input" @bind="_flowId" @bind:event="oninput" />
+                    </div>
+                    <div>
+                        <label class="field-label" for="trigger-mode">Trigger mode</label>
+                        <select id="trigger-mode" class="selector" @bind="_triggerMode">
+                            <option value="OnDemand">On demand</option>
+                            <option value="Interval">Interval</option>
+                            <option value="Push">Push</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="field-label" for="interval">Interval</label>
+                        <input id="interval" class="mapping-input" @bind="_intervalText" @bind:event="oninput" placeholder="00:05:00" disabled="@(_triggerMode != "Interval")" />
+                    </div>
+                    <div>
+                        <label class="field-label checkbox-row">
+                            <input type="checkbox" checked="@_runOnStartup" @onchange="HandleRunOnStartupChanged" />
+                            <span>Run on startup</span>
+                        </label>
+                        <label class="field-label checkbox-row">
+                            <input type="checkbox" checked="@_flowEnabled" @onchange="HandleFlowEnabledChanged" />
+                            <span>Flow enabled</span>
+                        </label>
+                    </div>
+                </div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>3. Choose modules</h2>
+                        <p>Each stage remains module-owned. The service layer only orchestrates the configured steps.</p>
+                    </div>
+                </div>
+
                 <div class="suggestion-grid">
                     <section>
-                        <h3>Input module</h3>
-                        <select class="selector" @bind="_selectedInputModuleId">
-                            @foreach (var module in _analysis.InputModules)
+                        <h3>Fetch: remote file ingest</h3>
+                        <select class="selector" value="@_selectedFetchModuleId" @onchange="HandleFetchModuleChanged">
+                            @foreach (var module in _analysis.FetchModules)
                             {
                                 <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
                             }
                         </select>
+                        @RenderSettingsEditor(SelectedFetchModule, _fetchSettings)
                     </section>
 
                     <section>
-                        <h3>Orchestration augment</h3>
-                        <select class="selector" @bind="_selectedAugmentModuleId">
+                        <h3>Parse: payload normalization</h3>
+                        <select class="selector" value="@_selectedParseModuleId" @onchange="HandleParseModuleChanged">
+                            @foreach (var module in _analysis.ParseModules)
+                            {
+                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                            }
+                        </select>
+                        @RenderSettingsEditor(SelectedParseModule, _parseSettings)
+                    </section>
+
+                    <section>
+                        <h3>Augment: SQL lookup</h3>
+                        <select class="selector" value="@_selectedLookupAugmentModuleId" @onchange="HandleLookupAugmentModuleChanged">
                             @foreach (var module in _analysis.OrchestrationAugmentModules)
                             {
                                 <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
                             }
                         </select>
+                        @RenderSettingsEditor(SelectedLookupAugmentModule, _lookupAugmentSettings)
                     </section>
 
                     <section>
-                        <h3>Output module</h3>
-                        <select class="selector" @bind="_selectedOutputModuleId">
-                            @foreach (var module in _analysis.OutputModules)
+                        <h3>Augment: conditional join/map</h3>
+                        <select class="selector" value="@_selectedMappingAugmentModuleId" @onchange="HandleMappingAugmentModuleChanged">
+                            @foreach (var module in _analysis.OrchestrationAugmentModules)
                             {
                                 <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
                             }
                         </select>
+                        @RenderSettingsEditor(SelectedMappingAugmentModule, _mappingAugmentSettings, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "mappingJson" })
+                    </section>
+
+                    <section>
+                        <h3>Delivery route: remote API render</h3>
+                        <select class="selector" value="@_selectedApiRenderModuleId" @onchange="HandleApiRenderModuleChanged">
+                            @foreach (var module in _analysis.RenderModules)
+                            {
+                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                            }
+                        </select>
+                        @RenderSettingsEditor(SelectedApiRenderModule, _apiRenderSettings)
+                    </section>
+
+                    <section>
+                        <h3>Delivery route: remote API dispatch</h3>
+                        <select class="selector" value="@_selectedApiDeliverModuleId" @onchange="HandleApiDeliverModuleChanged">
+                            @foreach (var module in _analysis.DeliverModules)
+                            {
+                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                            }
+                        </select>
+                        @RenderSettingsEditor(SelectedApiDeliverModule, _apiDeliverSettings)
+                    </section>
+
+                    <section>
+                        <h3>Delivery route: XML render</h3>
+                        <select class="selector" value="@_selectedXmlRenderModuleId" @onchange="HandleXmlRenderModuleChanged">
+                            @foreach (var module in _analysis.RenderModules)
+                            {
+                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                            }
+                        </select>
+                        @RenderSettingsEditor(SelectedXmlRenderModule, _xmlRenderSettings)
+                    </section>
+
+                    <section>
+                        <h3>Delivery route: XML/file dispatch</h3>
+                        <select class="selector" value="@_selectedXmlDeliverModuleId" @onchange="HandleXmlDeliverModuleChanged">
+                            @foreach (var module in _analysis.DeliverModules)
+                            {
+                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                            }
+                        </select>
+                        @RenderSettingsEditor(SelectedXmlDeliverModule, _xmlDeliverSettings)
                     </section>
                 </div>
             </article>
@@ -101,25 +197,42 @@
             <article class="panel">
                 <div class="panel-header">
                     <div>
-                        <h2>3. Map fields visually</h2>
-                        <p>Adjust how each inferred source field should participate in merge, orchestration, or output stages.</p>
+                        <h2>4. Map fields visually</h2>
+                        <p>Configure how source fields and SQL lookup columns land in the working payload that the render and delivery routes receive.</p>
                     </div>
+                </div>
+
+                <div class="action-row">
+                    <button class="secondary-button" @onclick="AddMappingRow">Add mapping row</button>
                 </div>
 
                 <table class="mapping-table">
                     <thead>
                         <tr>
-                            <th>Source field</th>
+                            <th>Source kind</th>
+                            <th>Source field / column</th>
                             <th>Sample value</th>
                             <th>Purpose</th>
+                            <th>Condition</th>
                             <th>Target field</th>
+                            <th>Literal value</th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach (var field in _mappingRows)
                         {
                             <tr>
-                                <td><code>@field.SourcePath</code></td>
+                                <td>
+                                    <select class="selector compact" @bind="field.SourceKind">
+                                        @foreach (var sourceKind in SourceKindOptions)
+                                        {
+                                            <option value="@sourceKind">@sourceKind</option>
+                                        }
+                                    </select>
+                                </td>
+                                <td>
+                                    <input class="mapping-input" @bind="field.SourcePath" @bind:event="oninput" />
+                                </td>
                                 <td>@field.SampleValue</td>
                                 <td>
                                     <select class="selector compact" @bind="field.Purpose">
@@ -130,7 +243,18 @@
                                     </select>
                                 </td>
                                 <td>
+                                    <select class="selector compact" @bind="field.Condition">
+                                        @foreach (var condition in ConditionOptions)
+                                        {
+                                            <option value="@condition">@condition</option>
+                                        }
+                                    </select>
+                                </td>
+                                <td>
                                     <input class="mapping-input" @bind="field.TargetField" @bind:event="oninput" />
+                                </td>
+                                <td>
+                                    <input class="mapping-input" @bind="field.LiteralValue" @bind:event="oninput" disabled="@(field.SourceKind != "Literal")" />
                                 </td>
                             </tr>
                         }
@@ -141,8 +265,8 @@
             <article class="panel">
                 <div class="panel-header">
                     <div>
-                        <h2>4. Draft summary</h2>
-                        <p>Use this to guide creation of the real runtime flow and module configuration.</p>
+                        <h2>5. Create the runnable flow</h2>
+                        <p>The designer persists a runtime flow that uses your selected modules and field mappings.</p>
                     </div>
                 </div>
 
@@ -150,9 +274,12 @@
                     <div>
                         <h3>Selected modules</h3>
                         <ul>
-                            <li><strong>Input:</strong> @_selectedInputModuleId</li>
-                            <li><strong>Orchestration augment:</strong> @_selectedAugmentModuleId</li>
-                            <li><strong>Output:</strong> @_selectedOutputModuleId</li>
+                            <li><strong>Fetch:</strong> @_selectedFetchModuleId</li>
+                            <li><strong>Parse:</strong> @_selectedParseModuleId</li>
+                            <li><strong>Lookup augment:</strong> @_selectedLookupAugmentModuleId</li>
+                            <li><strong>Join/map augment:</strong> @_selectedMappingAugmentModuleId</li>
+                            <li><strong>API route:</strong> @_selectedApiRenderModuleId -> @_selectedApiDeliverModuleId</li>
+                            <li><strong>XML route:</strong> @_selectedXmlRenderModuleId -> @_selectedXmlDeliverModuleId</li>
                         </ul>
                     </div>
                     <div>
@@ -161,8 +288,13 @@
                             <li><strong>Merge:</strong> @_mappingRows.Count(row => row.Purpose == "Merge")</li>
                             <li><strong>Orchestration:</strong> @_mappingRows.Count(row => row.Purpose == "Orchestration")</li>
                             <li><strong>Output:</strong> @_mappingRows.Count(row => row.Purpose == "Output")</li>
+                            <li><strong>Total rows:</strong> @_mappingRows.Count</li>
                         </ul>
                     </div>
+                </div>
+
+                <div class="action-row">
+                    <button class="run-button" @onclick="CreateFlowAsync" disabled="@_isCreatingFlow">Create flow</button>
                 </div>
             </article>
         }
@@ -171,18 +303,48 @@
 
 @code {
     private static readonly string[] PurposeOptions = ["Merge", "Orchestration", "Output"];
+    private static readonly string[] SourceKindOptions = ["Source", "Lookup", "Literal"];
+    private static readonly string[] ConditionOptions = ["Always", "WhenLookupFound", "WhenLookupMissing"];
 
     private string _sampleText = string.Empty;
     private string? _fileName;
     private string? _contentType;
     private bool _isAnalyzing;
+    private bool _isCreatingFlow;
+    private bool _flowEnabled = true;
+    private bool _runOnStartup;
+    private string _flowId = "sftp-sql-http-xml-flow";
+    private string _triggerMode = "Interval";
+    private string _intervalText = "00:05:00";
     private string? _statusMessage;
     private string? _errorMessage;
     private FlowDesignAnalysisViewModel? _analysis;
     private List<FieldMappingRow> _mappingRows = [];
-    private string? _selectedInputModuleId;
-    private string? _selectedAugmentModuleId;
-    private string? _selectedOutputModuleId;
+    private string? _selectedFetchModuleId;
+    private string? _selectedParseModuleId;
+    private string? _selectedLookupAugmentModuleId;
+    private string? _selectedMappingAugmentModuleId;
+    private string? _selectedApiRenderModuleId;
+    private string? _selectedApiDeliverModuleId;
+    private string? _selectedXmlRenderModuleId;
+    private string? _selectedXmlDeliverModuleId;
+    private readonly Dictionary<string, string> _fetchSettings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _parseSettings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _lookupAugmentSettings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _mappingAugmentSettings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _apiRenderSettings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _apiDeliverSettings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _xmlRenderSettings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _xmlDeliverSettings = new(StringComparer.OrdinalIgnoreCase);
+
+    private ModuleSuggestionViewModel? SelectedFetchModule => FindModule(_analysis?.FetchModules, _selectedFetchModuleId);
+    private ModuleSuggestionViewModel? SelectedParseModule => FindModule(_analysis?.ParseModules, _selectedParseModuleId);
+    private ModuleSuggestionViewModel? SelectedLookupAugmentModule => FindModule(_analysis?.OrchestrationAugmentModules, _selectedLookupAugmentModuleId);
+    private ModuleSuggestionViewModel? SelectedMappingAugmentModule => FindModule(_analysis?.OrchestrationAugmentModules, _selectedMappingAugmentModuleId);
+    private ModuleSuggestionViewModel? SelectedApiRenderModule => FindModule(_analysis?.RenderModules, _selectedApiRenderModuleId);
+    private ModuleSuggestionViewModel? SelectedApiDeliverModule => FindModule(_analysis?.DeliverModules, _selectedApiDeliverModuleId);
+    private ModuleSuggestionViewModel? SelectedXmlRenderModule => FindModule(_analysis?.RenderModules, _selectedXmlRenderModuleId);
+    private ModuleSuggestionViewModel? SelectedXmlDeliverModule => FindModule(_analysis?.DeliverModules, _selectedXmlDeliverModuleId);
 
     private async Task HandleFileSelectedAsync(InputFileChangeEventArgs args)
     {
@@ -217,18 +379,38 @@
                 _contentType,
                 _sampleText), CancellationToken.None);
 
-            _selectedInputModuleId = ChooseModule(_analysis.InputModules);
-            _selectedAugmentModuleId = ChooseModule(_analysis.OrchestrationAugmentModules);
-            _selectedOutputModuleId = ChooseModule(_analysis.OutputModules);
+            _selectedFetchModuleId = ChooseModule(_analysis.FetchModules, requiredProtocol: "Sftp");
+            _selectedParseModuleId = ChooseModule(_analysis.ParseModules, requiredCapability: "Parsing", requiredFormat: _analysis.DetectedFormat);
+            _selectedLookupAugmentModuleId = ChooseModule(_analysis.OrchestrationAugmentModules, requiredCapability: "Lookup");
+            _selectedMappingAugmentModuleId = ChooseModule(_analysis.OrchestrationAugmentModules, _selectedLookupAugmentModuleId, requiredCapability: "Mapping");
+            _selectedApiRenderModuleId = ChooseModule(_analysis.RenderModules, requiredCapability: "Serialization", requiredFormat: "Json");
+            _selectedApiDeliverModuleId = ChooseModule(_analysis.DeliverModules, requiredCapability: "Delivery", requiredProtocol: "Http");
+            _selectedXmlRenderModuleId = ChooseModule(_analysis.RenderModules, _selectedApiRenderModuleId, requiredCapability: "Serialization", requiredFormat: "Xml");
+            _selectedXmlDeliverModuleId = ChooseModule(_analysis.DeliverModules, _selectedApiDeliverModuleId, requiredCapability: "Delivery", requiredProtocol: "FileSystem");
+
+            InitializeSettings(_fetchSettings, SelectedFetchModule);
+            InitializeSettings(_parseSettings, SelectedParseModule);
+            InitializeSettings(_lookupAugmentSettings, SelectedLookupAugmentModule);
+            InitializeSettings(_mappingAugmentSettings, SelectedMappingAugmentModule);
+            InitializeSettings(_apiRenderSettings, SelectedApiRenderModule);
+            InitializeSettings(_apiDeliverSettings, SelectedApiDeliverModule);
+            InitializeSettings(_xmlRenderSettings, SelectedXmlRenderModule);
+            InitializeSettings(_xmlDeliverSettings, SelectedXmlDeliverModule);
+
             _mappingRows = _analysis.Fields
                 .Select(field => new FieldMappingRow
                 {
+                    SourceKind = "Source",
                     SourcePath = field.SourcePath,
                     SampleValue = field.SampleValue,
                     Purpose = field.RecommendedPurpose,
-                    TargetField = field.SuggestedTargetField
+                    Condition = "Always",
+                    TargetField = field.SuggestedTargetField,
+                    LiteralValue = string.Empty
                 })
                 .ToList();
+
+            _flowId = CreateDefaultFlowId(_fileName, _analysis.DetectedFormat);
             _statusMessage = $"Analyzed {_analysis.Fields.Count} field(s) from {_analysis.DetectedFormat} sample data.";
         }
         catch (Exception exception)
@@ -241,6 +423,80 @@
         }
     }
 
+    private async Task CreateFlowAsync()
+    {
+        _isCreatingFlow = true;
+        _statusMessage = null;
+        _errorMessage = null;
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_selectedFetchModuleId)
+                || string.IsNullOrWhiteSpace(_selectedParseModuleId)
+                || string.IsNullOrWhiteSpace(_selectedLookupAugmentModuleId)
+                || string.IsNullOrWhiteSpace(_selectedMappingAugmentModuleId)
+                || string.IsNullOrWhiteSpace(_selectedApiRenderModuleId)
+                || string.IsNullOrWhiteSpace(_selectedApiDeliverModuleId)
+                || string.IsNullOrWhiteSpace(_selectedXmlRenderModuleId)
+                || string.IsNullOrWhiteSpace(_selectedXmlDeliverModuleId))
+            {
+                throw new InvalidOperationException("Select fetch, parse, augment, and delivery route modules before creating the flow.");
+            }
+
+            TimeSpan? interval = null;
+            if (string.Equals(_triggerMode, "Interval", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TimeSpan.TryParse(_intervalText, out var parsedInterval))
+                {
+                    throw new InvalidOperationException("Enter a valid interval such as 00:05:00.");
+                }
+
+                interval = parsedInterval;
+            }
+
+            var mappingRows = _mappingRows
+                .Where(row => !string.IsNullOrWhiteSpace(row.TargetField))
+                .Select(row => new FlowDesignFieldMappingRequestViewModel(
+                    row.SourceKind,
+                    row.SourcePath,
+                    row.TargetField,
+                    row.Condition,
+                    row.LiteralValue))
+                .ToArray();
+
+            var request = new CreateDesignedFlowRequestViewModel(
+                _flowId,
+                _flowEnabled,
+                new FlowTriggerRequestViewModel(_triggerMode, interval, _runOnStartup),
+                new FlowStepRequestViewModel(_selectedFetchModuleId, CreateSettingsCopy(_fetchSettings)),
+                new FlowStepRequestViewModel(_selectedParseModuleId, CreateSettingsCopy(_parseSettings)),
+                [
+                    new FlowStepRequestViewModel(_selectedLookupAugmentModuleId, CreateSettingsCopy(_lookupAugmentSettings)),
+                    new FlowStepRequestViewModel(_selectedMappingAugmentModuleId, CreateSettingsCopy(_mappingAugmentSettings))
+                ],
+                [
+                    new DeliveryRouteRequestViewModel(
+                        new FlowStepRequestViewModel(_selectedApiRenderModuleId, CreateSettingsCopy(_apiRenderSettings)),
+                        new FlowStepRequestViewModel(_selectedApiDeliverModuleId, CreateSettingsCopy(_apiDeliverSettings))),
+                    new DeliveryRouteRequestViewModel(
+                        new FlowStepRequestViewModel(_selectedXmlRenderModuleId, CreateSettingsCopy(_xmlRenderSettings)),
+                        new FlowStepRequestViewModel(_selectedXmlDeliverModuleId, CreateSettingsCopy(_xmlDeliverSettings)))
+                ],
+                mappingRows);
+
+            var created = await ApiClient.CreateDesignedFlowAsync(request, CancellationToken.None);
+            _statusMessage = $"Created flow {created.Id} with {request.Augments.Count} augment(s) and {request.Deliveries.Count} delivery route(s).";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to create flow: {exception.Message}";
+        }
+        finally
+        {
+            _isCreatingFlow = false;
+        }
+    }
+
     private Task ClearAsync()
     {
         _sampleText = string.Empty;
@@ -248,28 +504,297 @@
         _contentType = null;
         _analysis = null;
         _mappingRows = [];
-        _selectedInputModuleId = null;
-        _selectedAugmentModuleId = null;
-        _selectedOutputModuleId = null;
+        _selectedFetchModuleId = null;
+        _selectedParseModuleId = null;
+        _selectedLookupAugmentModuleId = null;
+        _selectedMappingAugmentModuleId = null;
+        _selectedApiRenderModuleId = null;
+        _selectedApiDeliverModuleId = null;
+        _selectedXmlRenderModuleId = null;
+        _selectedXmlDeliverModuleId = null;
+        _fetchSettings.Clear();
+        _parseSettings.Clear();
+        _lookupAugmentSettings.Clear();
+        _mappingAugmentSettings.Clear();
+        _apiRenderSettings.Clear();
+        _apiDeliverSettings.Clear();
+        _xmlRenderSettings.Clear();
+        _xmlDeliverSettings.Clear();
         _statusMessage = null;
         _errorMessage = null;
         return Task.CompletedTask;
     }
 
-    private static string? ChooseModule(IReadOnlyList<ModuleSuggestionViewModel> modules)
+    private void AddMappingRow()
     {
-        return modules.FirstOrDefault(static module => module.IsRecommended)?.Id
+        _mappingRows.Add(new FieldMappingRow
+        {
+            SourceKind = "Lookup",
+            SourcePath = string.Empty,
+            SampleValue = string.Empty,
+            Purpose = "Output",
+            Condition = "Always",
+            TargetField = string.Empty,
+            LiteralValue = string.Empty
+        });
+    }
+
+    private void HandleFetchModuleChanged(ChangeEventArgs args)
+    {
+        _selectedFetchModuleId = args.Value?.ToString();
+        InitializeSettings(_fetchSettings, SelectedFetchModule);
+    }
+
+    private void HandleParseModuleChanged(ChangeEventArgs args)
+    {
+        _selectedParseModuleId = args.Value?.ToString();
+        InitializeSettings(_parseSettings, SelectedParseModule);
+    }
+
+    private void HandleLookupAugmentModuleChanged(ChangeEventArgs args)
+    {
+        _selectedLookupAugmentModuleId = args.Value?.ToString();
+        InitializeSettings(_lookupAugmentSettings, SelectedLookupAugmentModule);
+    }
+
+    private void HandleMappingAugmentModuleChanged(ChangeEventArgs args)
+    {
+        _selectedMappingAugmentModuleId = args.Value?.ToString();
+        InitializeSettings(_mappingAugmentSettings, SelectedMappingAugmentModule);
+    }
+
+    private void HandleApiRenderModuleChanged(ChangeEventArgs args)
+    {
+        _selectedApiRenderModuleId = args.Value?.ToString();
+        InitializeSettings(_apiRenderSettings, SelectedApiRenderModule);
+    }
+
+    private void HandleApiDeliverModuleChanged(ChangeEventArgs args)
+    {
+        _selectedApiDeliverModuleId = args.Value?.ToString();
+        InitializeSettings(_apiDeliverSettings, SelectedApiDeliverModule);
+    }
+
+    private void HandleXmlRenderModuleChanged(ChangeEventArgs args)
+    {
+        _selectedXmlRenderModuleId = args.Value?.ToString();
+        InitializeSettings(_xmlRenderSettings, SelectedXmlRenderModule);
+    }
+
+    private void HandleXmlDeliverModuleChanged(ChangeEventArgs args)
+    {
+        _selectedXmlDeliverModuleId = args.Value?.ToString();
+        InitializeSettings(_xmlDeliverSettings, SelectedXmlDeliverModule);
+    }
+
+    private void HandleRunOnStartupChanged(ChangeEventArgs args)
+    {
+        _runOnStartup = GetBooleanValue(args);
+    }
+
+    private void HandleFlowEnabledChanged(ChangeEventArgs args)
+    {
+        _flowEnabled = GetBooleanValue(args);
+    }
+
+    private void InitializeSettings(Dictionary<string, string> settings, ModuleSuggestionViewModel? module)
+    {
+        settings.Clear();
+        if (module is null)
+        {
+            return;
+        }
+
+        foreach (var setting in module.Settings)
+        {
+            settings[setting.Key] = setting.DefaultValue ?? string.Empty;
+        }
+    }
+
+    private static Dictionary<string, string> CreateSettingsCopy(Dictionary<string, string> settings)
+    {
+        return settings
+            .Where(static entry => !string.IsNullOrWhiteSpace(entry.Value))
+            .ToDictionary(static entry => entry.Key, static entry => entry.Value, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static ModuleSuggestionViewModel? FindModule(IReadOnlyList<ModuleSuggestionViewModel>? modules, string? moduleId)
+    {
+        if (modules is null || string.IsNullOrWhiteSpace(moduleId))
+        {
+            return null;
+        }
+
+        return modules.FirstOrDefault(module => string.Equals(module.Id, moduleId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? ChooseModule(
+        IReadOnlyList<ModuleSuggestionViewModel> modules,
+        string? excludedId = null,
+        string? requiredCapability = null,
+        string? requiredProtocol = null,
+        string? requiredFormat = null)
+    {
+        static bool Matches(ModuleSuggestionViewModel module, string? excludedId, string? requiredCapability, string? requiredProtocol, string? requiredFormat)
+        {
+            return !string.Equals(module.Id, excludedId, StringComparison.OrdinalIgnoreCase)
+                && (requiredCapability is null || module.Capabilities.Contains(requiredCapability, StringComparer.OrdinalIgnoreCase))
+                && (requiredProtocol is null || module.Protocols.Contains(requiredProtocol, StringComparer.OrdinalIgnoreCase))
+                && (requiredFormat is null || module.SupportedFormats.Contains(requiredFormat, StringComparer.OrdinalIgnoreCase));
+        }
+
+        return modules.FirstOrDefault(module => module.IsRecommended && Matches(module, excludedId, requiredCapability, requiredProtocol, requiredFormat))?.Id
+            ?? modules.FirstOrDefault(module => Matches(module, excludedId, requiredCapability, requiredProtocol, requiredFormat))?.Id
+            ?? modules.FirstOrDefault(module => module.IsRecommended && !string.Equals(module.Id, excludedId, StringComparison.OrdinalIgnoreCase))?.Id
+            ?? modules.FirstOrDefault(module => !string.Equals(module.Id, excludedId, StringComparison.OrdinalIgnoreCase))?.Id
             ?? modules.FirstOrDefault()?.Id;
+    }
+
+    private static string CreateDefaultFlowId(string? fileName, string detectedFormat)
+    {
+        var seed = Path.GetFileNameWithoutExtension(fileName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(seed))
+        {
+            seed = detectedFormat;
+        }
+
+        var characters = seed
+            .ToLowerInvariant()
+            .Select(static character => char.IsLetterOrDigit(character) ? character : '-')
+            .ToArray();
+        var normalized = string.Join(string.Empty, characters).Trim('-');
+        return string.IsNullOrWhiteSpace(normalized) ? "flow-designer-workflow" : $"{normalized}-workflow";
+    }
+
+    private RenderFragment RenderSettingsEditor(ModuleSuggestionViewModel? module, Dictionary<string, string> settings, ISet<string>? hiddenKeys = null) => builder =>
+    {
+        if (module is null || module.Settings.Count == 0)
+        {
+            return;
+        }
+
+        var visibleSettings = module.Settings
+            .Where(setting => hiddenKeys is null || !hiddenKeys.Contains(setting.Key))
+            .ToArray();
+        if (visibleSettings.Length == 0)
+        {
+            return;
+        }
+
+        var sequence = 0;
+        builder.OpenElement(sequence++, "div");
+        builder.AddAttribute(sequence++, "class", "settings-grid");
+
+        foreach (var setting in visibleSettings)
+        {
+            builder.OpenElement(sequence++, "div");
+            builder.AddAttribute(sequence++, "class", "setting-row");
+
+            builder.OpenElement(sequence++, "label");
+            builder.AddAttribute(sequence++, "class", "field-label");
+            builder.AddContent(sequence++, setting.Label);
+            if (setting.IsRequired)
+            {
+                builder.AddContent(sequence++, " *");
+            }
+            builder.CloseElement();
+
+            switch (setting.InputKind)
+            {
+                case "TextArea":
+                    builder.OpenElement(sequence++, "textarea");
+                    builder.AddAttribute(sequence++, "class", "sample-textarea");
+                    builder.AddAttribute(sequence++, "value", GetSettingValue(settings, setting));
+                    builder.AddAttribute(sequence++, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString())));
+                    builder.CloseElement();
+                    break;
+                case "Boolean":
+                    builder.OpenElement(sequence++, "label");
+                    builder.AddAttribute(sequence++, "class", "field-label checkbox-row");
+                    builder.OpenElement(sequence++, "input");
+                    builder.AddAttribute(sequence++, "type", "checkbox");
+                    builder.AddAttribute(sequence++, "checked", string.Equals(GetSettingValue(settings, setting), "true", StringComparison.OrdinalIgnoreCase));
+                    builder.AddAttribute(sequence++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetBooleanSettingValue(settings, setting.Key, GetBooleanValue(args))));
+                    builder.CloseElement();
+                    builder.OpenElement(sequence++, "span");
+                    builder.AddContent(sequence++, setting.Description);
+                    builder.CloseElement();
+                    builder.CloseElement();
+                    break;
+                case "Select":
+                    builder.OpenElement(sequence++, "select");
+                    builder.AddAttribute(sequence++, "class", "selector");
+                    builder.AddAttribute(sequence++, "value", GetSettingValue(settings, setting));
+                    builder.AddAttribute(sequence++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString())));
+                    foreach (var option in setting.Options)
+                    {
+                        builder.OpenElement(sequence++, "option");
+                        builder.AddAttribute(sequence++, "value", option.Value);
+                        builder.AddContent(sequence++, option.Label);
+                        builder.CloseElement();
+                    }
+                    builder.CloseElement();
+                    break;
+                default:
+                    builder.OpenElement(sequence++, "input");
+                    builder.AddAttribute(sequence++, "class", "mapping-input");
+                    builder.AddAttribute(sequence++, "type", setting.InputKind == "Password" ? "password" : setting.InputKind == "Number" ? "number" : "text");
+                    builder.AddAttribute(sequence++, "value", GetSettingValue(settings, setting));
+                    builder.AddAttribute(sequence++, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString())));
+                    builder.CloseElement();
+                    break;
+            }
+
+            if (!string.Equals(setting.InputKind, "Boolean", StringComparison.Ordinal))
+            {
+                builder.OpenElement(sequence++, "div");
+                builder.AddAttribute(sequence++, "class", "module-description");
+                builder.AddContent(sequence++, setting.Description);
+                builder.CloseElement();
+            }
+
+            builder.CloseElement();
+        }
+
+        builder.CloseElement();
+    };
+
+    private static string GetSettingValue(Dictionary<string, string> settings, ModuleSettingViewModel setting)
+    {
+        return settings.TryGetValue(setting.Key, out var value)
+            ? value
+            : setting.DefaultValue ?? string.Empty;
+    }
+
+    private void SetSettingValue(Dictionary<string, string> settings, string key, string? value)
+    {
+        settings[key] = value ?? string.Empty;
+    }
+
+    private static bool GetBooleanValue(ChangeEventArgs args)
+    {
+        return args.Value is bool booleanValue && booleanValue;
+    }
+
+    private void SetBooleanSettingValue(Dictionary<string, string> settings, string key, bool value)
+    {
+        settings[key] = value.ToString().ToLowerInvariant();
     }
 
     private sealed class FieldMappingRow
     {
-        public string SourcePath { get; init; } = string.Empty;
+        public string SourceKind { get; set; } = "Source";
+
+        public string SourcePath { get; set; } = string.Empty;
 
         public string SampleValue { get; init; } = string.Empty;
 
         public string Purpose { get; set; } = "Output";
 
+        public string Condition { get; set; } = "Always";
+
         public string TargetField { get; set; } = string.Empty;
+
+        public string LiteralValue { get; set; } = string.Empty;
     }
 }

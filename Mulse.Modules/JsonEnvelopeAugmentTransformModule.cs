@@ -4,11 +4,16 @@ namespace Mulse.Modules;
 
 public sealed class JsonEnvelopeAugmentTransformModule(TimeProvider timeProvider) : IOrchestrationAugmentModule
 {
+    private static readonly ModuleRecommendationProfile Recommendation = new(
+        [ModuleDataFormat.Json],
+        capabilities: [ModuleCapability.Transformation, ModuleCapability.Envelope]);
+
     public ModuleDescriptor Descriptor { get; } = new(
         "json-envelope-augment",
         "JSON orchestration augment",
         ModuleKind.OrchestrationAugment,
-        "Wraps payloads in a JSON envelope with metadata and arbitrary configuration-driven augmentation fields.");
+        "Wraps payloads in a JSON envelope with metadata and arbitrary configuration-driven augmentation fields.",
+        recommendation: Recommendation);
 
     public Task<IntegrationBatch> AugmentAsync(
         FlowExecutionContext context,

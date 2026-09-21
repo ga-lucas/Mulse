@@ -12,13 +12,13 @@ public static class FlowEndpoints
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var response = flowDefinitionService.GetAll()
-                    .Select(MapFlow)
+                    .Select(FlowMappings.MapFlow)
                     .ToArray();
                 return TypedResults.Ok(response);
             })
             .WithName("GetFlows")
             .WithSummary("List configured flows")
-            .WithDescription("Returns the current integration flows loaded from the runtime configuration store, including input, orchestration augment, and output module references.")
+            .WithDescription("Returns the current integration flows loaded from the runtime configuration store, including fetch, parse, orchestration augment, render, and deliver module references.")
             .WithTags("Flows")
             .Produces<FlowResponse[]>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
@@ -27,7 +27,7 @@ public static class FlowEndpoints
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var flow = flowDefinitionService.GetAll().FirstOrDefault(candidate => string.Equals(candidate.Id, flowId, StringComparison.OrdinalIgnoreCase));
-                return flow is null ? TypedResults.NotFound() : TypedResults.Ok(MapFlow(flow));
+                return flow is null ? TypedResults.NotFound() : TypedResults.Ok(FlowMappings.MapFlow(flow));
             })
             .WithName("GetFlowById")
             .WithSummary("Get a configured flow")
@@ -38,8 +38,8 @@ public static class FlowEndpoints
 
         app.MapPost("/api/flows", async Task<Created<FlowResponse>> (CreateFlowRequest request, IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>
             {
-                var created = await flowDefinitionService.CreateAsync(MapPipeline(request), cancellationToken).ConfigureAwait(false);
-                return TypedResults.Created($"/api/flows/{created.Id}", MapFlow(created));
+                var created = await flowDefinitionService.CreateAsync(FlowMappings.MapPipeline(request), cancellationToken).ConfigureAwait(false);
+                return TypedResults.Created($"/api/flows/{created.Id}", FlowMappings.MapFlow(created));
             })
             .WithName("CreateFlow")
             .WithSummary("Create a runtime-configurable flow")
@@ -52,8 +52,8 @@ public static class FlowEndpoints
 
         app.MapPut("/api/flows/{flowId}", async Task<Ok<FlowResponse>> (string flowId, UpdateFlowRequest request, IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>
             {
-                var updated = await flowDefinitionService.UpdateAsync(flowId, MapPipeline(request), cancellationToken).ConfigureAwait(false);
-                return TypedResults.Ok(MapFlow(updated));
+                var updated = await flowDefinitionService.UpdateAsync(flowId, FlowMappings.MapPipeline(request), cancellationToken).ConfigureAwait(false);
+                return TypedResults.Ok(FlowMappings.MapFlow(updated));
             })
             .WithName("UpdateFlow")
             .WithSummary("Update a runtime-configurable flow")
@@ -86,7 +86,7 @@ public static class FlowEndpoints
                     result.StartedAt,
                     result.CompletedAt,
                     result.PayloadCount,
-                    result.OutputModules));
+                    result.DeliverModules));
             })
             .WithName("RunFlow")
             .WithSummary("Run a configured flow")
@@ -101,69 +101,4 @@ public static class FlowEndpoints
         return app;
     }
 
-    private static FlowResponse MapFlow(PipelineDefinition flow)
-    {
-        return new FlowResponse(
-            flow.Id,
-            flow.Enabled,
-            flow.Trigger.Mode,
-            flow.Trigger.Interval,
-            flow.Trigger.RunOnStartup,
-            flow.Input.Module,
-            flow.Augments.Select(static step => step.Module).ToArray(),
-            flow.Outputs.Select(static step => step.Module).ToArray(),
-            MapStep(flow.Input),
-            flow.Augments.Select(MapStep).ToArray(),
-            flow.Outputs.Select(MapStep).ToArray());
     }
-
-    private static PipelineDefinition MapPipeline(CreateFlowRequest request)
-    {
-        return new PipelineDefinition
-        {
-            Id = request.Id,
-            Enabled = request.Enabled,
-            Trigger = new PipelineTriggerOptions
-            {
-                Mode = request.Trigger.Mode,
-                Interval = request.Trigger.Interval,
-                RunOnStartup = request.Trigger.RunOnStartup
-            },
-            Input = MapStep(request.Input),
-            Augments = request.Augments.Select(MapStep).ToList(),
-            Outputs = request.Outputs.Select(MapStep).ToList()
-        };
-    }
-
-    private static PipelineDefinition MapPipeline(UpdateFlowRequest request)
-    {
-        return new PipelineDefinition
-        {
-            Id = request.Id,
-            Enabled = request.Enabled,
-            Trigger = new PipelineTriggerOptions
-            {
-                Mode = request.Trigger.Mode,
-                Interval = request.Trigger.Interval,
-                RunOnStartup = request.Trigger.RunOnStartup
-            },
-            Input = MapStep(request.Input),
-            Augments = request.Augments.Select(MapStep).ToList(),
-            Outputs = request.Outputs.Select(MapStep).ToList()
-        };
-    }
-
-    private static ModuleStepResponse MapStep(ModuleStepDefinition step)
-    {
-        return new ModuleStepResponse(step.Module, new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase));
-    }
-
-    private static ModuleStepDefinition MapStep(FlowStepRequest step)
-    {
-        return new ModuleStepDefinition
-        {
-            Module = step.Module,
-            Settings = new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase)
-        };
-    }
-}

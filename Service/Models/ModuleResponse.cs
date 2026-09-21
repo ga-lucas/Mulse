@@ -10,4 +10,8 @@ public sealed record ModuleResponse(
     string Description,
     string PackageId,
     RuntimePackageSourceKind PackageSourceKind,
-    string AssemblyPath);
+    string AssemblyPath,
+    IReadOnlyList<ModuleSettingResponse> Settings,
+    IReadOnlyList<string> SupportedFormats,
+    IReadOnlyList<string> Protocols,
+    IReadOnlyList<string> Capabilities);

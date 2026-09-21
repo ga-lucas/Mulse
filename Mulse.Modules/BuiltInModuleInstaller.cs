@@ -4,9 +4,17 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
 {
     public void Install(IModuleRegistryBuilder builder)
     {
-        builder.AddInput<FileSystemSourceModule>();
+        builder.AddFetch<FileSystemFetchModule>();
+        builder.AddFetch<SftpFetchModule>();
+        builder.AddParse<JsonParseModule>();
         builder.AddOrchestrationAugment<JsonEnvelopeAugmentTransformModule>();
-        builder.AddOutput<LoggingEventModule>();
-        builder.AddOutput<FileSystemStorageModule>();
+        builder.AddOrchestrationAugment<DecisionAugmentModule>();
+        builder.AddOrchestrationAugment<SqlServerLookupAugmentModule>();
+        builder.AddOrchestrationAugment<ConditionalJoinMapAugmentModule>();
+        builder.AddRender<JsonRenderModule>();
+        builder.AddRender<XmlRenderModule>();
+        builder.AddDeliver<LoggingDeliverModule>();
+        builder.AddDeliver<FileSystemDeliverModule>();
+        builder.AddDeliver<HttpDeliverModule>();
     }
 }

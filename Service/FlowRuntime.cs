@@ -9,6 +9,7 @@ public sealed class FlowRuntime(
     TimeProvider timeProvider,
     ILogger<FlowRuntime> logger) : IFlowRuntime
 {
+    private const string ConditionJsonSetting = "conditionJson";
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _flowLocks = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyList<PipelineDefinition> GetConfiguredFlows()
@@ -31,24 +32,50 @@ public sealed class FlowRuntime(
                 Guid.CreateVersion7().ToString(),
                 startedAt);
 
-            await using var input = await moduleCatalog.LeaseInputAsync(pipeline.Input.Module, cancellationToken).ConfigureAwait(false);
-            var batch = await input.Module
-                .ReadAsync(context, pipeline.Input, cancellationToken)
+            await using var fetch = await moduleCatalog.LeaseFetchAsync(pipeline.Fetch.Module, cancellationToken).ConfigureAwait(false);
+            var batch = await fetch.Module
+                .FetchAsync(context, pipeline.Fetch, cancellationToken)
                 .ConfigureAwait(false);
+
+            await using var parse = await moduleCatalog.LeaseParseAsync(pipeline.Parse.Module, cancellationToken).ConfigureAwait(false);
+            batch = await ProcessConditionalStepAsync(
+                batch,
+                pipeline.Parse,
+                applicableBatch => parse.Module.ParseAsync(context, applicableBatch, pipeline.Parse, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
 
             foreach (var augment in pipeline.Augments)
             {
                 await using var augmentModule = await moduleCatalog.LeaseOrchestrationAugmentAsync(augment.Module, cancellationToken).ConfigureAwait(false);
-                batch = await augmentModule.Module
-                    .AugmentAsync(context, batch, augment, cancellationToken)
-                    .ConfigureAwait(false);
+                batch = await ProcessConditionalStepAsync(
+                    batch,
+                    augment,
+                    applicableBatch => augmentModule.Module.AugmentAsync(context, applicableBatch, augment, cancellationToken),
+                    cancellationToken).ConfigureAwait(false);
             }
 
-            foreach (var output in pipeline.Outputs)
+            foreach (var delivery in pipeline.Deliveries)
             {
-                await using var outputModule = await moduleCatalog.LeaseOutputAsync(output.Module, cancellationToken).ConfigureAwait(false);
-                await outputModule.Module
-                    .WriteAsync(context, batch, output, cancellationToken)
+                var (renderApplicable, _) = SplitBatch(batch, delivery.Render);
+                if (renderApplicable.Count == 0)
+                {
+                    continue;
+                }
+
+                await using var renderModule = await moduleCatalog.LeaseRenderAsync(delivery.Render.Module, cancellationToken).ConfigureAwait(false);
+                var renderedBatch = await renderModule.Module
+                    .RenderAsync(context, renderApplicable, delivery.Render, cancellationToken)
+                    .ConfigureAwait(false);
+
+                var (deliverApplicable, _) = SplitBatch(renderedBatch, delivery.Deliver);
+                if (deliverApplicable.Count == 0)
+                {
+                    continue;
+                }
+
+                await using var deliverModule = await moduleCatalog.LeaseDeliverAsync(delivery.Deliver.Module, cancellationToken).ConfigureAwait(false);
+                await deliverModule.Module
+                    .DeliverAsync(context, deliverApplicable, delivery.Deliver, cancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -64,12 +91,62 @@ public sealed class FlowRuntime(
                 startedAt,
                 completedAt,
                 batch.Count,
-                pipeline.Outputs.Select(static step => step.Module).ToArray());
+                pipeline.Deliveries.Select(static route => route.Deliver.Module).ToArray());
         }
         finally
         {
             gate.Release();
         }
+    }
+
+    private static async Task<IntegrationBatch> ProcessConditionalStepAsync(
+        IntegrationBatch batch,
+        ModuleStepDefinition step,
+        Func<IntegrationBatch, Task<IntegrationBatch>> processor,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var (applicableBatch, passthroughBatch) = SplitBatch(batch, step);
+        if (applicableBatch.Count == 0)
+        {
+            return batch;
+        }
+
+        var processedBatch = await processor(applicableBatch).ConfigureAwait(false);
+        return passthroughBatch.Count == 0
+            ? processedBatch
+            : new IntegrationBatch(processedBatch.Payloads.Concat(passthroughBatch.Payloads).ToArray());
+    }
+
+    private static (IntegrationBatch ApplicableBatch, IntegrationBatch PassthroughBatch) SplitBatch(IntegrationBatch batch, ModuleStepDefinition step)
+    {
+        if (!step.Settings.TryGetValue(ConditionJsonSetting, out var conditionJson) || string.IsNullOrWhiteSpace(conditionJson))
+        {
+            return (batch, IntegrationBatch.Empty);
+        }
+
+        var conditions = DecisionRuntime.ParseConditions(conditionJson, step.Module);
+        if (conditions.Count == 0)
+        {
+            return (batch, IntegrationBatch.Empty);
+        }
+
+        var applicable = new List<IntegrationPayload>(batch.Payloads.Count);
+        var passthrough = new List<IntegrationPayload>(batch.Payloads.Count);
+
+        foreach (var payload in batch.Payloads)
+        {
+            if (DecisionRuntime.MatchesAll(payload, conditions, step.Module))
+            {
+                applicable.Add(payload);
+            }
+            else
+            {
+                passthrough.Add(payload);
+            }
+        }
+
+        return (new IntegrationBatch(applicable), new IntegrationBatch(passthrough));
     }
 
     private PipelineDefinition GetConfiguredFlow(string flowId)
@@ -81,9 +158,14 @@ public sealed class FlowRuntime(
             throw new InvalidOperationException($"Flow '{flowId}' is disabled.");
         }
 
-        if (string.IsNullOrWhiteSpace(pipeline.Input.Module))
+        if (string.IsNullOrWhiteSpace(pipeline.Fetch.Module))
         {
-            throw new InvalidOperationException($"Flow '{flowId}' does not define an input module.");
+            throw new InvalidOperationException($"Flow '{flowId}' does not define a fetch module.");
+        }
+
+        if (string.IsNullOrWhiteSpace(pipeline.Parse.Module))
+        {
+            throw new InvalidOperationException($"Flow '{flowId}' does not define a parse module.");
         }
 
         return pipeline;
