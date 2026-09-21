@@ -10,6 +10,7 @@ public sealed record BizTalkBindingFileViewModel(
 
 public sealed record BizTalkReceivePortViewModel(
     string Name,
+    bool IsTwoWay,
     IReadOnlyList<BizTalkReceiveLocationViewModel> ReceiveLocations);
 
 public sealed record BizTalkReceiveLocationViewModel(
@@ -28,6 +29,7 @@ public sealed record BizTalkSendPortViewModel(
     string TransmitPipeline,
     string ReceivePipeline,
     string FilterExpression,
+    bool IsTwoWay,
     string SuggestedRenderModule,
     string SuggestedDeliverModule,
     IReadOnlyDictionary<string, string> DraftRenderSettings,

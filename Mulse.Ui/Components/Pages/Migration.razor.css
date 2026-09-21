@@ -76,8 +76,13 @@
 
 .field-label {
     display: block;
+    margin-top: 1rem;
     margin-bottom: 0.5rem;
     font-weight: 600;
+}
+
+.field-label:first-of-type {
+    margin-top: 0;
 }
 
 .mapping-input {
@@ -87,6 +92,12 @@
     background: rgba(15, 23, 42, 0.9);
     color: #e2e8f0;
     padding: 0.85rem 1rem;
+}
+
+.field-hint {
+    margin: 0.5rem 0 0;
+    font-size: 0.85rem;
+    color: rgba(226, 232, 240, 0.65);
 }
 
 .action-row {

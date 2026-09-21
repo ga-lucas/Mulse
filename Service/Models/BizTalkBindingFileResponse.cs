@@ -12,6 +12,7 @@ public sealed record BizTalkBindingFileResponse(
 /// <summary>Represents one BizTalk receive port and its receive locations.</summary>
 public sealed record BizTalkReceivePortResponse(
     string Name,
+    bool IsTwoWay,
     IReadOnlyList<BizTalkReceiveLocationResponse> ReceiveLocations);
 
 /// <summary>Represents one BizTalk receive location and the draft Mulse fetch settings derived from it.</summary>
@@ -32,6 +33,7 @@ public sealed record BizTalkSendPortResponse(
     string TransmitPipeline,
     string ReceivePipeline,
     string FilterExpression,
+    bool IsTwoWay,
     string SuggestedRenderModule,
     string SuggestedDeliverModule,
     IReadOnlyDictionary<string, string> DraftRenderSettings,

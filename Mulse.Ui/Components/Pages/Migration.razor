@@ -34,6 +34,10 @@
             <label class="field-label" for="source-path">Source path</label>
             <input id="source-path" class="mapping-input" @bind="_sourcePath" @bind:event="oninput" placeholder="C:\Users\...\MyBizTalkApp.sln" />
 
+            <label class="field-label" for="additional-binding-paths">Additional binding export paths (optional)</label>
+            <input id="additional-binding-paths" class="mapping-input" @bind="_additionalBindingPaths" @bind:event="oninput" placeholder="C:\Exports\Bindings; C:\Exports\Prod.BindingInfo.xml" />
+            <p class="field-hint">Semicolon-separated files or folders containing bindings exported from the BizTalk Administration Console or a deployment framework, for solutions that don't check bindings into source control.</p>
+
             <div class="action-row">
                 <button class="run-button" @onclick="AnalyzeAsync" disabled="@_isAnalyzing">Load solution</button>
                 <button class="secondary-button" @onclick="ClearAsync" disabled="@_isAnalyzing || _isImporting">Clear</button>
@@ -443,6 +447,7 @@
 
 @code {
     private string _sourcePath = string.Empty;
+    private string _additionalBindingPaths = string.Empty;
     private bool _isAnalyzing;
     private string? _importingFlowId;
     private bool _isImporting => !string.IsNullOrWhiteSpace(_importingFlowId);
@@ -458,7 +463,10 @@
 
         try
         {
-            _analysis = await ApiClient.AnalyzeBizTalkSolutionAsync(new AnalyzeBizTalkSolutionRequestViewModel(_sourcePath), CancellationToken.None);
+            var additionalBindingPaths = _additionalBindingPaths
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToArray();
+            _analysis = await ApiClient.AnalyzeBizTalkSolutionAsync(new AnalyzeBizTalkSolutionRequestViewModel(_sourcePath, additionalBindingPaths), CancellationToken.None);
             _statusMessage = $"Loaded {_analysis.BizTalkProjectCount} BizTalk project(s), {_analysis.BindingFiles.Count} binding file(s), and {_analysis.FlowCandidates.Count} draft flow candidate(s).";
         }
         catch (Exception exception)
@@ -495,6 +503,7 @@
     private Task ClearAsync()
     {
         _sourcePath = string.Empty;
+        _additionalBindingPaths = string.Empty;
         _statusMessage = null;
         _errorMessage = null;
         _analysis = null;

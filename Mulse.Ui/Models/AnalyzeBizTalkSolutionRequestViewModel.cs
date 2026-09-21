@@ -1,3 +1,5 @@
 namespace Mulse.Ui.Models;
 
-public sealed record AnalyzeBizTalkSolutionRequestViewModel(string SourcePath);
+public sealed record AnalyzeBizTalkSolutionRequestViewModel(
+    string SourcePath,
+    IReadOnlyList<string>? AdditionalBindingPaths = null);
