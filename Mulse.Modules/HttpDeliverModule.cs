@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 
 namespace Mulse.Modules;
 
-public sealed class HttpDeliverModule(IHttpClientFactory httpClientFactory) : IDeliverModule
+public sealed class HttpDeliverModule(IHttpClientFactory httpClientFactory) : IRequestResponseDeliverModule
 {
     private static readonly IReadOnlyList<ModuleSettingDescriptor> SettingDescriptors =
     [
@@ -36,6 +36,37 @@ public sealed class HttpDeliverModule(IHttpClientFactory httpClientFactory) : ID
         IntegrationBatch batch,
         ModuleStepDefinition step,
         CancellationToken cancellationToken)
+    {
+        await foreach (var _ in SendAsync(context, batch, step, captureResponse: false, cancellationToken).ConfigureAwait(false))
+        {
+            // Fire-and-forget: response bodies are not needed for one-way delivery.
+        }
+    }
+
+    public async Task<IntegrationBatch> DeliverAndCaptureResponseAsync(
+        FlowExecutionContext context,
+        IntegrationBatch batch,
+        ModuleStepDefinition step,
+        CancellationToken cancellationToken)
+    {
+        var responses = new List<IntegrationPayload>(batch.Count);
+        await foreach (var response in SendAsync(context, batch, step, captureResponse: true, cancellationToken).ConfigureAwait(false))
+        {
+            if (response is not null)
+            {
+                responses.Add(response);
+            }
+        }
+
+        return new IntegrationBatch(responses);
+    }
+
+    private async IAsyncEnumerable<IntegrationPayload?> SendAsync(
+        FlowExecutionContext context,
+        IntegrationBatch batch,
+        ModuleStepDefinition step,
+        bool captureResponse,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var url = ModuleSettingReader.GetRequired(step.Settings, "url", Descriptor.Id);
         var method = ModuleSettingReader.GetOptional(step.Settings, "method") ?? "POST";
@@ -75,6 +106,24 @@ public sealed class HttpDeliverModule(IHttpClientFactory httpClientFactory) : ID
 
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
+
+            if (!captureResponse)
+            {
+                yield return null;
+                continue;
+            }
+
+            var responseBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            var responseContentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
+            yield return new IntegrationPayload(
+                payload.Name,
+                BinaryData.FromBytes(responseBytes),
+                responseContentType,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["requestPayloadName"] = payload.Name,
+                    ["statusCode"] = ((int)response.StatusCode).ToString()
+                });
         }
     }
 

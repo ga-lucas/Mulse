@@ -53,9 +53,14 @@
                                         <p><strong>Fetch:</strong> @flow.FetchModule</p>
                                         <p><strong>Parse:</strong> @flow.ParseModule</p>
                                     </div>
-                                    <button class="run-button" @onclick="() => RunFlowAsync(flow.Id)" disabled="@_isRunningFlow">
-                                        Run flow
-                                    </button>
+                                    <div class="flow-card-actions">
+                                        <button class="secondary-button" @onclick="() => ToggleFlowEnabledAsync(flow)" disabled="@_isTogglingFlowEnabled">
+                                            @(flow.Enabled ? "Disable" : "Enable")
+                                        </button>
+                                        <button class="run-button" @onclick="() => RunFlowAsync(flow.Id)" disabled="@_isRunningFlow">
+                                            Run flow
+                                        </button>
+                                    </div>
                                 </div>
                                 <dl class="flow-metadata">
                                     <div>
@@ -180,6 +185,7 @@
     private IReadOnlyList<ModulePackageViewModel> _packages = [];
     private bool _isLoading = true;
     private bool _isRunningFlow;
+    private bool _isTogglingFlowEnabled;
     private bool _isReloadingPackage;
     private string? _errorMessage;
     private string? _lastRunMessage;
@@ -228,6 +234,28 @@
         finally
         {
             _isRunningFlow = false;
+            await LoadAsync();
+        }
+    }
+
+    private async Task ToggleFlowEnabledAsync(FlowViewModel flow)
+    {
+        _isTogglingFlowEnabled = true;
+        _errorMessage = null;
+        _lastRunMessage = null;
+
+        try
+        {
+            var updated = await ApiClient.SetFlowEnabledAsync(flow.Id, !flow.Enabled, CancellationToken.None);
+            _lastRunMessage = $"Flow '{updated.Id}' is now {(updated.Enabled ? "enabled" : "disabled")}.";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to update flow '{flow.Id}': {exception.Message}";
+        }
+        finally
+        {
+            _isTogglingFlowEnabled = false;
             await LoadAsync();
         }
     }

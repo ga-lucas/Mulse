@@ -259,7 +259,8 @@ public sealed class BizTalkImportService : IBizTalkImportService
         }
 
         var references = document.Descendants()
-            .Where(static element => string.Equals(element.Name.LocalName, "Reference", StringComparison.Ordinal))
+            .Where(static element => string.Equals(element.Name.LocalName, "Reference", StringComparison.Ordinal)
+                || string.Equals(element.Name.LocalName, "ProjectReference", StringComparison.Ordinal))
             .Select(static reference => NormalizeReferenceName(
                 reference.Attribute("Include")?.Value,
                 reference.Elements().FirstOrDefault(static element => string.Equals(element.Name.LocalName, "Name", StringComparison.Ordinal))?.Value))
@@ -483,7 +484,7 @@ public sealed class BizTalkImportService : IBizTalkImportService
         if (project.Response.OrchestrationCount > 0)
         {
             openQuestions.Add(project.Response.OrchestrationControlFlowSignals.Count > 0
-                ? $"Which orchestration branches, subscriptions, and correlations should become separate Mulse flows versus augment steps? Detected {string.Join(", ", project.Response.OrchestrationControlFlowSignals.Select(static signal => $"{signal.Count} {signal.Description}"))} that aren't auto-translated."
+                ? $"Which orchestration branches, subscriptions, and correlations should become separate Mulse flows versus augment steps? Detected {string.Join(", ", project.Response.OrchestrationControlFlowSignals.Select(static signal => $"{signal.Count} {signal.Description}"))} that were used to scaffold placeholder decision/stateful-orchestration augment steps below \u2014 review and configure the real rules and correlation values before enabling the flow."
                 : "Which orchestration branches, subscriptions, and correlations should become separate Mulse flows versus augment steps?");
         }
 
@@ -517,6 +518,13 @@ public sealed class BizTalkImportService : IBizTalkImportService
         var deliveries = CreateDeliveryRoutes(flowId, project.Response, relatedBindings, requirements, draftWarnings);
         var augments = CreateAugments(flowId, project.Response, relatedAssemblies, deliveries.Count, requirements, draftWarnings);
 
+        var isPushTriggeredFetch = string.Equals(fetchStep.Module, "http-inbound-fetch", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fetchStep.Module, "file-system-watcher-fetch", StringComparison.OrdinalIgnoreCase);
+        if (string.Equals(fetchStep.Module, "http-inbound-fetch", StringComparison.OrdinalIgnoreCase))
+        {
+            draftWarnings.Add($"This fetch step listens for pushed HTTP requests at /api/inbound/{{route}} instead of polling. The original BizTalk WCF/HTTP endpoint consumers must be repointed at this URL, and the flow's trigger mode must be set to 'Push' before it will register.");
+        }
+
         if (deliveries.Count > 1)
         {
             deliveryGuidance.Add("Multiple send ports were discovered, so the draft adds route metadata and per-route conditions. Review the generated route rules before enabling the flow.");
@@ -543,7 +551,7 @@ public sealed class BizTalkImportService : IBizTalkImportService
         var draftFlow = new BizTalkDraftFlowResponse(
             flowId,
             false,
-            new BizTalkDraftTriggerResponse(PipelineTriggerMode.OnDemand, null, false),
+            new BizTalkDraftTriggerResponse(isPushTriggeredFetch ? PipelineTriggerMode.Push : PipelineTriggerMode.OnDemand, null, false),
             fetchStep,
             parseStep,
             augments,
@@ -686,6 +694,8 @@ public sealed class BizTalkImportService : IBizTalkImportService
         var receivePipeline = sendPortElement.Descendants().FirstOrDefault(static element => string.Equals(element.Name.LocalName, "ReceivePipeline", StringComparison.Ordinal))?.Attribute("Name")?.Value ?? string.Empty;
         var transportData = primaryTransport?.Descendants().FirstOrDefault(static element => string.Equals(element.Name.LocalName, "TransportTypeData", StringComparison.Ordinal))?.Value;
         var filter = sendPortElement.Descendants().FirstOrDefault(static element => string.Equals(element.Name.LocalName, "Filter", StringComparison.Ordinal));
+        var retryCount = ParseNonNegativeInt(primaryTransport?.Descendants().FirstOrDefault(static element => string.Equals(element.Name.LocalName, "RetryCount", StringComparison.Ordinal))?.Value);
+        var retryIntervalMinutes = ParseNonNegativeInt(primaryTransport?.Descendants().FirstOrDefault(static element => string.Equals(element.Name.LocalName, "RetryInterval", StringComparison.Ordinal))?.Value);
 
         return new SendPortAnalysis(
             sendPortElement.Attribute("Name")?.Value ?? "SendPort",
@@ -696,8 +706,13 @@ public sealed class BizTalkImportService : IBizTalkImportService
             receivePipeline,
             filter is null ? string.Empty : string.Concat(filter.Nodes().OfType<XText>().Select(static node => node.Value)).Trim(),
             ParseIsTwoWay(sendPortElement),
-            ParseTransportProperties(transportData));
+            ParseTransportProperties(transportData),
+            retryCount,
+            retryIntervalMinutes);
     }
+
+    private static int ParseNonNegativeInt(string? value)
+        => int.TryParse(value, out var parsed) && parsed >= 0 ? parsed : 0;
 
     private static bool ParseIsTwoWay(XElement portOrSendPortElement)
         => bool.TryParse(portOrSendPortElement.Attribute("IsTwoWay")?.Value, out var isTwoWay) && isTwoWay;
@@ -776,17 +791,24 @@ public sealed class BizTalkImportService : IBizTalkImportService
         {
             var placeholderPath = AddRequirement(requirements, flowId, "fetch.settings.path", "Config", "Choose the staging repository path used when no BizTalk receive location could be imported.", appliedToDraft: true);
             draftWarnings.Add("No BizTalk receive location was matched to this project, so the draft uses a repository inbox placeholder for fetch.");
+            AddArchiveAfterProcessingWarning(draftWarnings);
             return new BizTalkDraftStepResponse(
                 "document-repository-fetch",
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["path"] = placeholderPath,
                     ["searchPattern"] = "*.*",
-                    ["includeMetadataSidecars"] = "true"
+                    ["includeMetadataSidecars"] = "true",
+                    ["afterProcessing"] = nameof(Mulse.Modules.FetchPostProcessingAction.MoveToArchive)
                 });
         }
 
         var fetchStep = CreateFetchSettings(portLocation.Location, flowId, includeConfigPlaceholders: true, requirements, "fetch.settings");
+        if (fetchStep.Settings.ContainsKey("afterProcessing"))
+        {
+            AddArchiveAfterProcessingWarning(draftWarnings);
+        }
+
         if (portLocation.Port.IsTwoWay)
         {
             var twoWaySettings = new Dictionary<string, string>(fetchStep.Settings, StringComparer.OrdinalIgnoreCase)
@@ -807,10 +829,15 @@ public sealed class BizTalkImportService : IBizTalkImportService
         List<BizTalkSettingRequirementResponse> requirements,
         List<string> draftWarnings)
     {
-        var module = SelectParseModule(project);
+        var module = SelectParseModule(project, rootDirectory);
         var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        if (string.Equals(module, "xml-xsd-parse", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(module, "xml-envelope-debatch-parse", StringComparison.OrdinalIgnoreCase))
+        {
+            settings["bodyXPath"] = AddRequirement(requirements, flowId, "parse.settings.bodyXPath", "Config", "Enter the XPath selecting each repeated business-message element, based on the imported pipeline's EnvelopeSpecNames schema.", appliedToDraft: true);
+            draftWarnings.Add("This project's receive pipeline configures an envelope schema (EnvelopeSpecNames), so the draft uses an envelope-debatching parse step. Set bodyXPath to match the real envelope shape before enabling the flow.");
+        }
+        else if (string.Equals(module, "xml-xsd-parse", StringComparison.OrdinalIgnoreCase))
         {
             var schemaPaths = AllArtifacts(project)
                 .Where(static artifact => string.Equals(artifact.Kind, "Schema", StringComparison.OrdinalIgnoreCase))
@@ -878,7 +905,70 @@ public sealed class BizTalkImportService : IBizTalkImportService
             draftWarnings.Add("The project contains multiple BizTalk maps. Review which generated delivery route should use each converted map or XSLT artifact.");
         }
 
+        AddControlFlowAugments(flowId, project, augments, requirements, draftWarnings);
+
         return augments;
+    }
+
+    private static readonly IReadOnlyList<string> StatefulOrchestrationShapeTypes =
+    [
+        "Listen", "CorrelationDeclaration", "CorrelationType", "Loop", "AtomicTransaction"
+    ];
+
+    /// <summary>
+    /// Scaffolds draft augment steps from detected orchestration control-flow signals (see
+    /// <see cref="DetectOrchestrationControlFlowSignals"/>) instead of only surfacing them as open questions.
+    /// Decision/branch shapes become a placeholder <c>decision-augment</c> step; convoy, correlation, loop, and
+    /// atomic-transaction shapes become a placeholder <c>stateful-orchestration-augment</c> step. Both are added
+    /// disabled-by-default draft scaffolding: real rule/correlation configuration still requires manual review,
+    /// but the architecture (which module family applies) is now pre-selected rather than left fully open.
+    /// </summary>
+    private static void AddControlFlowAugments(
+        string flowId,
+        BizTalkProjectResponse project,
+        List<BizTalkDraftStepResponse> augments,
+        List<BizTalkSettingRequirementResponse> requirements,
+        List<string> draftWarnings)
+    {
+        if (project.OrchestrationControlFlowSignals.Count == 0)
+        {
+            return;
+        }
+
+        var signalsByShape = project.OrchestrationControlFlowSignals.ToDictionary(static signal => signal.ShapeType, StringComparer.Ordinal);
+
+        if (signalsByShape.TryGetValue("Decision", out var decisionSignal))
+        {
+            var decisionRulesPath = AddRequirement(requirements, flowId, "augments.decision.decisionJson", "Config", $"Detected {decisionSignal.Count} {decisionSignal.Description} in the orchestration. Replace the placeholder decision rules with the real branch conditions before enabling the flow.", appliedToDraft: true);
+            augments.Add(new BizTalkDraftStepResponse(
+                "decision-augment",
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["decisionJson"] = decisionRulesPath,
+                    ["stopAfterFirstMatch"] = "true"
+                }));
+            draftWarnings.Add($"Detected {decisionSignal.Count} {decisionSignal.Description} in the source orchestration. A decision-augment step was scaffolded with placeholder rules; replace them with the real branch conditions.");
+        }
+
+        var statefulSignals = StatefulOrchestrationShapeTypes
+            .Select(shapeType => signalsByShape.GetValueOrDefault(shapeType))
+            .Where(static signal => signal is not null)
+            .Select(static signal => signal!)
+            .ToArray();
+        if (statefulSignals.Length > 0)
+        {
+            var correlationPath = AddRequirement(requirements, flowId, "augments.stateful.correlationPath", "Config", "Set the metadata key or JSONPath that carries the correlation value used by the orchestration's correlation set(s).", appliedToDraft: true);
+            augments.Add(new BizTalkDraftStepResponse(
+                "stateful-orchestration-augment",
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["mode"] = "ResumeOrWait",
+                    ["correlationSource"] = "Metadata",
+                    ["correlationPath"] = correlationPath
+                }));
+            var summary = string.Join(", ", statefulSignals.Select(signal => $"{signal.Count} {signal.Description}"));
+            draftWarnings.Add($"Detected {summary} in the source orchestration. A stateful-orchestration-augment step was scaffolded to model convoy/correlation waits; configure the real correlation source, bookmarks, and state capture before enabling the flow.");
+        }
     }
 
     private static IReadOnlyList<BizTalkDraftDeliveryRouteResponse> CreateDeliveryRoutes(
@@ -913,7 +1003,45 @@ public sealed class BizTalkImportService : IBizTalkImportService
             routes.Add(CreateRouteForSendPort(flowId, project, sendPorts[index], index, requirements, draftWarnings));
         }
 
-        return routes;
+        return ApplyAtomicScopeIfDetected(flowId, project, routes, requirements, draftWarnings);
+    }
+
+    /// <summary>
+    /// Tags all delivery routes with a shared atomic scope, and adds a compensation-module requirement for each,
+    /// when the source orchestration used a BizTalk <c>AtomicTransaction</c> scope and there is more than one
+    /// delivery route to roll back between. With a single route there is nothing to compensate, so tagging is
+    /// skipped. This closes the loop between <see cref="DetectOrchestrationControlFlowSignals"/> and the
+    /// <see cref="Mulse.Modules.DeliveryRouteDefinition.AtomicScope"/>/<see cref="Mulse.Modules.DeliveryRouteDefinition.Compensation"/>
+    /// runtime model: the draft flow is pre-wired for all-or-nothing delivery, and the operator only needs to
+    /// supply real compensation module settings before enabling it.
+    /// </summary>
+    private static IReadOnlyList<BizTalkDraftDeliveryRouteResponse> ApplyAtomicScopeIfDetected(
+        string flowId,
+        BizTalkProjectResponse project,
+        List<BizTalkDraftDeliveryRouteResponse> routes,
+        List<BizTalkSettingRequirementResponse> requirements,
+        List<string> draftWarnings)
+    {
+        var hasAtomicTransaction = project.OrchestrationControlFlowSignals
+            .Any(static signal => string.Equals(signal.ShapeType, "AtomicTransaction", StringComparison.Ordinal));
+        if (!hasAtomicTransaction || routes.Count < 2)
+        {
+            return routes;
+        }
+
+        const string atomicScope = "atomic-scope-1";
+        var scopedRoutes = new List<BizTalkDraftDeliveryRouteResponse>(routes.Count);
+        for (var index = 0; index < routes.Count; index++)
+        {
+            AddRequirement(requirements, flowId, $"deliveries[{index}].compensation.module", "Config", $"This delivery route participates in a migrated atomic transaction scope. Configure a compensation deliver module (e.g. a cancel/undo call) for deliveries[{index}], or leave unset to only log a warning if rollback is needed.", appliedToDraft: false);            scopedRoutes.Add(routes[index] with
+            {
+                AtomicScope = atomicScope,
+                Compensation = new BizTalkDraftStepResponse(string.Empty, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
+            });
+        }
+
+        draftWarnings.Add($"The source orchestration used an AtomicTransaction scope, so all {routes.Count} delivery routes were tagged with atomic scope '{atomicScope}'. Configure a real compensation deliver module for each route before enabling the flow, or rollback will only be logged rather than executed.");
+        return scopedRoutes;
     }
 
     private static BizTalkDraftDeliveryRouteResponse CreateRouteForSendPort(
@@ -926,6 +1054,11 @@ public sealed class BizTalkImportService : IBizTalkImportService
     {
         var renderStep = CreateRenderStepForProject(referencePrefix, project, sendPort, routeIndex, requirements, draftWarnings);
         var deliverSettings = CreateDeliverSettings(sendPort, referencePrefix, routeIndex, requirements, renderStep.Module, includeConfigPlaceholders: requirements is not null);
+
+        if (deliverSettings.Retry is { } importedRetry)
+        {
+            draftWarnings.Add($"Send port '{sendPort.Name}' had a native BizTalk retry configuration (retry {sendPort.RetryCount} time(s), {sendPort.RetryIntervalMinutes} minute(s) apart) - the deliver step was migrated with an equivalent retry policy ({importedRetry.MaxAttempts} max attempts, {importedRetry.Delay} delay). Review before enabling the flow.");
+        }
 
         if (sendPort.IsTwoWay)
         {
@@ -1036,19 +1169,36 @@ public sealed class BizTalkImportService : IBizTalkImportService
                 settings.TryAdd("username", AddRequirement(requirements, referencePrefix, $"{settingPathPrefix}.username", "Secret", "Set the SFTP username in protected configuration before enabling the flow.", appliedToDraft: true));
                 settings["password"] = AddRequirement(requirements, referencePrefix, $"{settingPathPrefix}.password", "Secret", "Set the SFTP password in protected configuration before enabling the flow.", appliedToDraft: true);
                 settings["searchPattern"] = "*.*";
+                settings.TryAdd("deleteAfterRead", "true");
                 break;
             case "file-system-fetch":
                 settings["path"] = ResolveConfigValue(requirements, referencePrefix, $"{settingPathPrefix}.path", address, "File-system fetch path imported from BizTalk should usually be externalized to configuration.", includeConfigPlaceholders);
                 settings["searchPattern"] = "*.*";
+                settings["afterProcessing"] = nameof(Mulse.Modules.FetchPostProcessingAction.MoveToArchive);
+                break;
+            case "http-inbound-fetch":
+                settings["route"] = ResolveConfigValue(requirements, referencePrefix, $"{settingPathPrefix}.route", CreateSlug(location.Name), "Inbound route segment imported from a BizTalk WCF/HTTP receive location. Exposed at /api/inbound/{route}; the original endpoint must be repointed here during cutover.", includeConfigPlaceholders);
                 break;
             default:
                 settings["path"] = AddRequirement(requirements, referencePrefix, $"{settingPathPrefix}.path", "Config", "Choose the staging repository path used to replace this BizTalk receive transport.", appliedToDraft: includeConfigPlaceholders, actualValue: address);
                 settings["searchPattern"] = "*.*";
                 settings["includeMetadataSidecars"] = "true";
+                settings["afterProcessing"] = nameof(Mulse.Modules.FetchPostProcessingAction.MoveToArchive);
                 break;
         }
 
         return new BizTalkDraftStepResponse(module, settings);
+    }
+
+    /// <summary>
+    /// BizTalk receive locations always remove (or move) a file after successful pickup, specifically to
+    /// avoid re-processing it on the next poll. Imported fetch steps default to the same behavior
+    /// (archiving to a sibling '&lt;path&gt;.processed' folder) rather than silently leaving files in place,
+    /// which would otherwise deliver duplicate payloads on every subsequent run of a timer-triggered flow.
+    /// </summary>
+    private static void AddArchiveAfterProcessingWarning(List<string> draftWarnings)
+    {
+        draftWarnings.Add("The fetch step defaults to archiving files after a successful run (afterProcessing=MoveToArchive) so the same file isn't re-delivered on every run, matching BizTalk's receive-location behavior. Change 'afterProcessing' to 'None' if you need files left in place for manual inspection.");
     }
 
     private static BizTalkDraftStepResponse CreateDeliverSettings(
@@ -1094,7 +1244,30 @@ public sealed class BizTalkImportService : IBizTalkImportService
                 break;
         }
 
-        return new BizTalkDraftStepResponse(module, settings);
+        return new BizTalkDraftStepResponse(module, settings, CreateRetryPolicy(sendPort));
+    }
+
+    /// <summary>
+    /// Translates a BizTalk send port's native retry configuration (<c>RetryCount</c>/<c>RetryInterval</c>,
+    /// read straight from the binding file) into an equivalent <see cref="RetryPolicyDefinition"/> for the
+    /// migrated deliver step, so imported flows keep the source system's retry intent instead of silently
+    /// defaulting to no retries. BizTalk's RetryCount is the number of retries *after* the first attempt and
+    /// RetryInterval is in minutes; a RetryCount of 0 means BizTalk itself was configured with no retries, so
+    /// no policy (null, i.e. exactly one attempt) is generated in that case.
+    /// </summary>
+    private static RetryPolicyDefinition? CreateRetryPolicy(SendPortAnalysis sendPort)
+    {
+        if (sendPort.RetryCount <= 0)
+        {
+            return null;
+        }
+
+        return new RetryPolicyDefinition
+        {
+            MaxAttempts = sendPort.RetryCount + 1,
+            Delay = TimeSpan.FromMinutes(Math.Max(sendPort.RetryIntervalMinutes, 0)),
+            Backoff = RetryBackoffKind.Fixed
+        };
     }
 
     private static string SelectFetchModule(string transportType, string address)
@@ -1103,6 +1276,11 @@ public sealed class BizTalkImportService : IBizTalkImportService
         if (normalized.Contains("sftp") || normalized.StartsWith("sftp://", StringComparison.Ordinal))
         {
             return "sftp-fetch";
+        }
+
+        if (normalized.Contains("wcf") || normalized.Contains("http") || normalized.StartsWith("http://", StringComparison.Ordinal) || normalized.StartsWith("https://", StringComparison.Ordinal))
+        {
+            return "http-inbound-fetch";
         }
 
         if (normalized.Contains("file") || LooksLikeFilePath(address))
@@ -1134,8 +1312,13 @@ public sealed class BizTalkImportService : IBizTalkImportService
         return "document-repository-store";
     }
 
-    private static string SelectParseModule(BizTalkProjectResponse project)
+    private static string SelectParseModule(BizTalkProjectResponse project, string rootDirectory)
     {
+        if (ProjectHasConfiguredEnvelope(project, rootDirectory))
+        {
+            return "xml-envelope-debatch-parse";
+        }
+
         if (LooksLikeHl7(project))
         {
             return "hl7-parse";
@@ -1152,6 +1335,34 @@ public sealed class BizTalkImportService : IBizTalkImportService
         }
 
         return "json-parse";
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex EnvelopeSpecNamesPattern = new(
+        """<Property\s+Name="EnvelopeSpecNames">\s*<Value[^>]*>([^<]+)</Value>""",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.Singleline);
+
+    private static bool ProjectHasConfiguredEnvelope(BizTalkProjectResponse project, string rootDirectory)
+    {
+        var pipelineFiles = AllArtifacts(project)
+            .Where(static artifact => string.Equals(artifact.Kind, "Pipeline", StringComparison.OrdinalIgnoreCase))
+            .Select(artifact => Path.GetFullPath(Path.Combine(rootDirectory, artifact.RelativePath.Replace('/', Path.DirectorySeparatorChar))));
+
+        foreach (var pipelineFile in pipelineFiles)
+        {
+            if (!File.Exists(pipelineFile))
+            {
+                continue;
+            }
+
+            var content = File.ReadAllText(pipelineFile);
+            var match = EnvelopeSpecNamesPattern.Match(content);
+            if (match.Success && !string.IsNullOrWhiteSpace(match.Groups[1].Value))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string SelectRenderModule(BizTalkProjectResponse project, SendPortAnalysis? sendPort)
@@ -1516,5 +1727,7 @@ public sealed class BizTalkImportService : IBizTalkImportService
         string ReceivePipeline,
         string FilterExpression,
         bool IsTwoWay,
-        IReadOnlyDictionary<string, string> TransportProperties);
+        IReadOnlyDictionary<string, string> TransportProperties,
+        int RetryCount = 0,
+        int RetryIntervalMinutes = 0);
 }

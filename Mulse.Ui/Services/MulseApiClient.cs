@@ -54,6 +54,40 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<FlowRunViewModel>(response, cancellationToken, "flow run response").ConfigureAwait(false);
     }
 
+    public async Task<FlowViewModel> SetFlowEnabledAsync(string flowId, bool enabled, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PatchAsJsonAsync($"/api/flows/{Uri.EscapeDataString(flowId)}/enabled", new SetFlowEnabledRequestViewModel(enabled), cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<FlowViewModel>(response, cancellationToken, "updated flow response").ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<ConfigValueViewModel>> GetConfigValuesAsync(CancellationToken cancellationToken)
+    {
+        return await httpClient.GetFromJsonAsync<ConfigValueViewModel[]>("/api/config-values", cancellationToken).ConfigureAwait(false)
+            ?? [];
+    }
+
+    public async Task<IReadOnlyList<ConfigReferenceUsageViewModel>> GetConfigValueUsagesAsync(CancellationToken cancellationToken)
+    {
+        return await httpClient.GetFromJsonAsync<ConfigReferenceUsageViewModel[]>("/api/config-values/usages", cancellationToken).ConfigureAwait(false)
+            ?? [];
+    }
+
+    public async Task<ConfigValueViewModel> SetConfigValueAsync(string reference, string value, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PutAsJsonAsync($"/api/config-values/{Uri.EscapeDataString(reference)}", new SetConfigValueRequestViewModel(value), cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<ConfigValueViewModel>(response, cancellationToken, "config value response").ConfigureAwait(false);
+    }
+
+    public async Task DeleteConfigValueAsync(string reference, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.DeleteAsync($"/api/config-values/{Uri.EscapeDataString(reference)}", cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>(cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException(problem?.Detail ?? problem?.Title ?? $"The API returned status code {(int)response.StatusCode}.");
+        }
+    }
+
     public async Task<ModulePackageViewModel> ReloadModulePackageAsync(string packageId, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PostAsync($"/api/module-packages/{Uri.EscapeDataString(packageId)}/reload", content: null, cancellationToken).ConfigureAwait(false);

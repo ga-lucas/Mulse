@@ -48,7 +48,7 @@ public sealed class SoapEnvelopeRenderModule : IRenderModule
         var renderedPayloads = batch.Payloads.Select(payload =>
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var sourceXml = payload.Content.ToString();
+            var sourceXml = payload.GetText();
             var document = XDocument.Parse(sourceXml, LoadOptions.PreserveWhitespace);
             var operationName = document.Root?.Name.LocalName ?? string.Empty;
             var action = ResolveAction(actionMappings, operationName, fallbackAction);

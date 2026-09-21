@@ -5,4 +5,5 @@ public sealed record FlowRunViewModel(
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt,
     int PayloadCount,
-    IReadOnlyList<string> DeliverModules);
+    IReadOnlyList<string> DeliverModules,
+    int ResponsePayloadCount = 0);

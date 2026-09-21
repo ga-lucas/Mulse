@@ -48,7 +48,7 @@ public sealed class FlatFileParseModule : IParseModule
         var payloads = batch.Payloads.Select(payload =>
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var records = FlatFileCodec.ParseRecords(payload.Content.ToString(), delimiter, quoteCharacter, trimValues);
+            var records = FlatFileCodec.ParseRecords(payload.GetText(), delimiter, quoteCharacter, trimValues);
             var jsonNode = FlatFileCodec.ToJson(records, hasHeader);
             var json = jsonNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
             var metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.OrdinalIgnoreCase)

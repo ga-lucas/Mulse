@@ -6,4 +6,7 @@ public sealed record FlowRunResponse(
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt,
     int PayloadCount,
-    IReadOnlyList<string> DeliverModules);
+    IReadOnlyList<string> DeliverModules,
+    int ResponsePayloadCount = 0,
+    string Outcome = "Completed",
+    DateTimeOffset? NextAttemptAt = null);

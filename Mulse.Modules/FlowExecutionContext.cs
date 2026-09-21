@@ -33,6 +33,16 @@ public sealed class FlowExecutionContext
 
     public (string FlowId, string CorrelationKey)? PendingCheckpointCompletion { get; private set; }
 
+    private readonly List<IntegrationPayload> _capturedResponses = [];
+
+    /// <summary>Synchronous reply payloads captured from request-response deliver modules (e.g. a two-way WCF port). Empty for fire-and-forget flows.</summary>
+    public IReadOnlyList<IntegrationPayload> CapturedResponses => _capturedResponses;
+
+    public void CaptureResponse(IntegrationBatch response)
+    {
+        _capturedResponses.AddRange(response.Payloads);
+    }
+
     public void SetOrchestrationInstance(string instanceId, string correlationKey, string bookmark, bool isResumed)
     {
         OrchestrationInstanceId = instanceId;

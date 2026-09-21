@@ -29,5 +29,7 @@ app.MapModuleEndpoints();
 app.MapFlowEndpoints();
 app.MapDesignerEndpoints();
 app.MapBizTalkMigrationEndpoints();
+app.MapConfigValueEndpoints();
+app.MapHttpInboundEndpoints();
 
 app.Run();

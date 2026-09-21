@@ -3,7 +3,13 @@ using System.Text.Json.Nodes;
 
 namespace Mulse.Modules;
 
-internal static class JsonPayloadNavigator
+/// <summary>
+/// Shared helpers for navigating and mutating JSON payloads using simple dot-path expressions
+/// (with an optional trailing <c>[]</c> segment to expand arrays). Public so that module packages
+/// outside <c>Mulse.Modules</c> (built-in feature packs or third-party/OSS module contributions)
+/// can reuse the same JSON payload conventions instead of re-implementing path navigation.
+/// </summary>
+public static class JsonPayloadNavigator
 {
     public static JsonNode Parse(BinaryData content, string moduleId, string payloadName)
     {

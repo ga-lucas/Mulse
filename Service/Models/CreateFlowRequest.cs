@@ -29,4 +29,7 @@ public sealed record CreateFlowRequest
 
     /// <summary>The delivery routes executed after augmentation.</summary>
     public IReadOnlyList<DeliveryRouteRequest> Deliveries { get; init; } = [];
+
+    /// <summary>Default retry policy applied to any step in this flow that doesn't define its own retry override.</summary>
+    public RetryPolicyRequest? Retry { get; init; }
 }

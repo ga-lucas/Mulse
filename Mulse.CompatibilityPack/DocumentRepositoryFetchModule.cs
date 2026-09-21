@@ -9,7 +9,9 @@ public sealed class DocumentRepositoryFetchModule : IFetchModule
         new("path", "Repository path", "The document repository root directory.", true),
         new("searchPattern", "Search pattern", "A wildcard pattern used to select repository documents.", false, ModuleSettingInputKind.Text, "*.*"),
         new("recursive", "Recursive", "Search subdirectories when enabled.", false, ModuleSettingInputKind.Boolean, "true"),
-        new("includeMetadataSidecars", "Include metadata sidecars", "Loads sibling .metadata.json files into payload metadata when enabled.", false, ModuleSettingInputKind.Boolean, "true")
+        new("includeMetadataSidecars", "Include metadata sidecars", "Loads sibling .metadata.json files into payload metadata when enabled.", false, ModuleSettingInputKind.Boolean, "true"),
+        new("afterProcessing", "After processing", "What to do with a document once it has been fetched successfully, so it isn't re-processed on the next run.", false, ModuleSettingInputKind.Select, nameof(FetchPostProcessingAction.None), FetchPostProcessing.ActionOptions),
+        new("archivePath", "Archive path", "Directory documents are moved into when 'After processing' is MoveToArchive. Defaults to a sibling '<path>.processed' folder.", false)
     ];
 
     private static readonly ModuleRecommendationProfile Recommendation = new(
@@ -34,6 +36,8 @@ public sealed class DocumentRepositoryFetchModule : IFetchModule
         var searchPattern = ModuleSettings.GetOptional(step.Settings, "searchPattern") ?? "*.*";
         var recursive = ModuleSettings.GetBoolean(step.Settings, "recursive", defaultValue: true, Descriptor.Id);
         var includeMetadataSidecars = ModuleSettings.GetBoolean(step.Settings, "includeMetadataSidecars", defaultValue: true, Descriptor.Id);
+        var afterProcessing = FetchPostProcessing.ParseAction(step.Settings, "afterProcessing", Descriptor.Id);
+        var archivePath = ModuleSettings.GetOptional(step.Settings, "archivePath");
 
         if (!Directory.Exists(repositoryPath))
         {
@@ -74,6 +78,8 @@ public sealed class DocumentRepositoryFetchModule : IFetchModule
                 BinaryData.FromBytes(await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false)),
                 ResolveContentType(filePath),
                 metadata));
+
+            FetchPostProcessing.Apply(filePath, repositoryPath, afterProcessing, archivePath, sidecarPath: filePath + ".metadata.json");
         }
 
         return new IntegrationBatch(payloads);

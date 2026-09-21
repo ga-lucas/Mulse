@@ -18,11 +18,13 @@
           "path": "SampleData\\Inbox",
           "searchPattern": "*.json",
           "recursive": "false"
-        }
+        },
+        "retry": null
       },
       "parse": {
         "module": "json-parse",
-        "settings": {}
+        "settings": {},
+        "retry": null
       },
       "augments": [
         {
@@ -30,7 +32,8 @@
           "settings": {
             "scenario": "demo",
             "owner": "mulse"
-          }
+          },
+          "retry": null
         }
       ],
       "deliveries": [
@@ -39,30 +42,41 @@
             "module": "json-render",
             "settings": {
               "indented": "true"
-            }
+            },
+            "retry": null
           },
           "deliver": {
             "module": "logging-deliver",
             "settings": {
               "previewLength": "400"
-            }
-          }
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
         },
         {
           "render": {
             "module": "json-render",
-            "settings": {}
+            "settings": {},
+            "retry": null
           },
           "deliver": {
             "module": "file-system-deliver",
             "settings": {
               "path": "SampleData\\Outbox",
               "extension": ".json"
-            }
-          }
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
         }
-      ]
+      ],
+      "retry": null
     }
   ],
-  "orchestrationCheckpoints": []
+  "orchestrationCheckpoints": [],
+  "pendingRetries": [],
+  "configValues": {}
 }

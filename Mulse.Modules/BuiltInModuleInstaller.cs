@@ -9,9 +9,9 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
         builder.AddParse<JsonParseModule>();
         builder.AddOrchestrationAugment<JsonEnvelopeAugmentTransformModule>();
         builder.AddOrchestrationAugment<DecisionAugmentModule>();
-        builder.AddOrchestrationAugment<SqlServerLookupAugmentModule>();
         builder.AddOrchestrationAugment<ConditionalJoinMapAugmentModule>();
         builder.AddOrchestrationAugment<StatefulOrchestrationAugmentModule>();
+        builder.AddOrchestrationAugment<DebatchAugmentModule>();
         builder.AddRender<JsonRenderModule>();
         builder.AddRender<XmlRenderModule>();
         builder.AddDeliver<LoggingDeliverModule>();

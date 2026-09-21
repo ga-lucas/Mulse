@@ -4,7 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Microsoft.Data.SqlClient (Mulse.Dbms.SqlServer) requires ICU globalization data for
+         connection encryption negotiation; invariant mode is incompatible with it. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
     <UserSecretsId>dotnet-Service-eb4daf54-1acc-46ea-a1e3-323c25c4136b</UserSecretsId>
     <DockerDefaultTargetOS>Windows</DockerDefaultTargetOS>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -21,5 +23,6 @@
     <ProjectReference Include="..\Mulse.Modules\Mulse.Modules.csproj" />
     <ProjectReference Include="..\Mulse.CompatibilityPack\Mulse.CompatibilityPack.csproj" />
     <ProjectReference Include="..\Mulse.Hl7\Mulse.Hl7.csproj" />
+    <ProjectReference Include="..\Mulse.Dbms.SqlServer\Mulse.Dbms.SqlServer.csproj" />
   </ItemGroup>
 </Project>

@@ -23,12 +23,15 @@ public sealed record BizTalkDraftTriggerResponse(
 /// <summary>Represents one generated draft flow step.</summary>
 public sealed record BizTalkDraftStepResponse(
     string Module,
-    IReadOnlyDictionary<string, string> Settings);
+    IReadOnlyDictionary<string, string> Settings,
+    RetryPolicyDefinition? Retry = null);
 
 /// <summary>Represents one generated draft delivery route.</summary>
 public sealed record BizTalkDraftDeliveryRouteResponse(
     BizTalkDraftStepResponse Render,
-    BizTalkDraftStepResponse Deliver);
+    BizTalkDraftStepResponse Deliver,
+    string? AtomicScope = null,
+    BizTalkDraftStepResponse? Compensation = null);
 
 /// <summary>Represents a configuration or secret requirement identified during migration.</summary>
 public sealed record BizTalkSettingRequirementResponse(

@@ -1,0 +1,292 @@
+@page "/config-values"
+@inject IMulseApiClient ApiClient
+
+<PageTitle>Configuration values</PageTitle>
+
+<div class="config-values-shell">
+    <header class="config-values-hero">
+        <div>
+            <p class="eyebrow">Configuration &amp; secrets</p>
+            <h1>Resolve flow configuration references</h1>
+            <p class="lede">
+                Imported and hand-authored flows can reference <code>{{config:reference}}</code> or
+                <code>{{secret:reference}}</code> placeholder tokens instead of hard-coding paths, URLs,
+                credentials, or business rules. A flow will refuse to run while any of its tokens are
+                unresolved, naming exactly which reference is missing. Set real values here.
+            </p>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_statusMessage))
+    {
+        <div class="status-banner success">@_statusMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <div class="status-banner error">@_errorMessage</div>
+    }
+
+    @if (_isLoading)
+    {
+        <p>Loading configuration references...</p>
+    }
+    else
+    {
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Unresolved references</h2>
+                    <p>These tokens appear in a flow's settings but have no stored value yet. Flows using them will fail to run until you set a value.</p>
+                </div>
+            </div>
+
+            @if (_unresolvedUsages.Count == 0)
+            {
+                <p>No unresolved references. Every {{config:...}}/{{secret:...}} token currently in use across all flows has a stored value.</p>
+            }
+            else
+            {
+                <table class="module-table">
+                    <thead>
+                        <tr>
+                            <th>Reference</th>
+                            <th>Flow</th>
+                            <th>Setting</th>
+                            <th>Value</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var usage in _unresolvedUsages)
+                        {
+                            <tr>
+                                <td class="path-value">@usage.Reference</td>
+                                <td>@usage.FlowId</td>
+                                <td class="path-value">@usage.SettingPath</td>
+                                <td>
+                                    <input class="mapping-input" placeholder="Enter a value..." @bind="_pendingValues[usage.Reference]" @bind:event="oninput" />
+                                </td>
+                                <td>
+                                    <button class="run-button" @onclick="() => SaveAsync(usage.Reference)" disabled="@_isSaving">Save</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Stored values</h2>
+                    <p>Every config/secret value currently on file. Values are persisted with the rest of the runtime state and benefit from the same optional at-rest encryption.</p>
+                </div>
+            </div>
+
+            @if (_configValues.Count == 0)
+            {
+                <p>No config/secret values are stored yet.</p>
+            }
+            else
+            {
+                <table class="module-table">
+                    <thead>
+                        <tr>
+                            <th>Reference</th>
+                            <th>Value</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var value in _configValues)
+                        {
+                            <tr>
+                                <td class="path-value">@value.Reference</td>
+                                <td>
+                                    <input class="mapping-input" @bind="_pendingValues[value.Reference]" @bind:event="oninput" />
+                                </td>
+                                <td class="action-row">
+                                    <button class="run-button" @onclick="() => SaveAsync(value.Reference)" disabled="@_isSaving">Save</button>
+                                    <button class="secondary-button" @onclick="() => DeleteAsync(value.Reference)" disabled="@_isSaving">Delete</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            <h3>Add a new value</h3>
+            <label class="field-label" for="new-reference">Reference</label>
+            <input id="new-reference" class="mapping-input" @bind="_newReference" @bind:event="oninput" placeholder="my-flow-id.fetch-settings-path" />
+            <label class="field-label" for="new-value">Value</label>
+            <input id="new-value" class="mapping-input" @bind="_newValue" @bind:event="oninput" placeholder="C:\data\inbox or a connection string, URL, credential, etc." />
+            <div class="action-row">
+                <button class="run-button" @onclick="AddNewAsync" disabled="@_isSaving">Add value</button>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>All reference usages</h2>
+                    <p>Every {{config:...}}/{{secret:...}} token in use across all flows, resolved or not.</p>
+                </div>
+            </div>
+
+            @if (_allUsages.Count == 0)
+            {
+                <p>No flow currently references a config/secret token.</p>
+            }
+            else
+            {
+                <table class="module-table">
+                    <thead>
+                        <tr>
+                            <th>Reference</th>
+                            <th>Flow</th>
+                            <th>Setting</th>
+                            <th>Resolved</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var usage in _allUsages)
+                        {
+                            <tr>
+                                <td class="path-value">@usage.Reference</td>
+                                <td>@usage.FlowId</td>
+                                <td class="path-value">@usage.SettingPath</td>
+                                <td>@(usage.IsResolved ? "Yes" : "No")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<ConfigValueViewModel> _configValues = [];
+    private IReadOnlyList<ConfigReferenceUsageViewModel> _allUsages = [];
+    private IReadOnlyList<ConfigReferenceUsageViewModel> _unresolvedUsages = [];
+    private readonly Dictionary<string, string> _pendingValues = [];
+    private string _newReference = string.Empty;
+    private string _newValue = string.Empty;
+    private bool _isLoading = true;
+    private bool _isSaving;
+    private string? _statusMessage;
+    private string? _errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            _configValues = await ApiClient.GetConfigValuesAsync(CancellationToken.None);
+            _allUsages = await ApiClient.GetConfigValueUsagesAsync(CancellationToken.None);
+            _unresolvedUsages = _allUsages.Where(usage => !usage.IsResolved).ToArray();
+
+            foreach (var value in _configValues)
+            {
+                _pendingValues.TryAdd(value.Reference, value.Value);
+            }
+
+            foreach (var usage in _unresolvedUsages)
+            {
+                _pendingValues.TryAdd(usage.Reference, string.Empty);
+            }
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to load configuration references: {exception.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task SaveAsync(string reference)
+    {
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+
+        try
+        {
+            var value = _pendingValues.TryGetValue(reference, out var pending) ? pending : string.Empty;
+            await ApiClient.SetConfigValueAsync(reference, value, CancellationToken.None);
+            _statusMessage = $"Saved value for '{reference}'.";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to save '{reference}': {exception.Message}";
+        }
+        finally
+        {
+            _isSaving = false;
+            await LoadAsync();
+        }
+    }
+
+    private async Task AddNewAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newReference))
+        {
+            _errorMessage = "Enter a reference name before adding a value.";
+            return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+
+        try
+        {
+            await ApiClient.SetConfigValueAsync(_newReference, _newValue, CancellationToken.None);
+            _statusMessage = $"Saved value for '{_newReference}'.";
+            _newReference = string.Empty;
+            _newValue = string.Empty;
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to save the new value: {exception.Message}";
+        }
+        finally
+        {
+            _isSaving = false;
+            await LoadAsync();
+        }
+    }
+
+    private async Task DeleteAsync(string reference)
+    {
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+
+        try
+        {
+            await ApiClient.DeleteConfigValueAsync(reference, CancellationToken.None);
+            _statusMessage = $"Deleted '{reference}'.";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to delete '{reference}': {exception.Message}";
+        }
+        finally
+        {
+            _isSaving = false;
+            await LoadAsync();
+        }
+    }
+}

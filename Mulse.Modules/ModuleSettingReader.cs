@@ -1,6 +1,11 @@
 namespace Mulse.Modules;
 
-internal static class ModuleSettingReader
+/// <summary>
+/// Shared helpers for reading and validating <see cref="ModuleStepDefinition.Settings"/> values.
+/// Public so that module packages outside <c>Mulse.Modules</c> (built-in feature packs or
+/// third-party/OSS module contributions) can reuse the same setting-parsing conventions.
+/// </summary>
+public static class ModuleSettingReader
 {
     public static string GetRequired(IReadOnlyDictionary<string, string> settings, string settingName, string moduleId)
     {

@@ -6,7 +6,9 @@ public sealed class FileSystemFetchModule : IFetchModule
     [
         new("path", "Path", "The local or mounted directory to read files from.", true),
         new("searchPattern", "Search pattern", "A wildcard pattern used to select files from the directory.", false, ModuleSettingInputKind.Text, "*.*"),
-        new("recursive", "Recursive", "Search subdirectories when enabled.", false, ModuleSettingInputKind.Boolean, "false")
+        new("recursive", "Recursive", "Search subdirectories when enabled.", false, ModuleSettingInputKind.Boolean, "false"),
+        new("afterProcessing", "After processing", "What to do with a file once it has been fetched successfully, so it isn't re-processed on the next run.", false, ModuleSettingInputKind.Select, nameof(FetchPostProcessingAction.None), FetchPostProcessing.ActionOptions),
+        new("archivePath", "Archive path", "Directory files are moved into when 'After processing' is MoveToArchive. Defaults to a sibling '<path>.processed' folder.", false)
     ];
 
     private static readonly ModuleRecommendationProfile Recommendation = new(
@@ -30,6 +32,8 @@ public sealed class FileSystemFetchModule : IFetchModule
         var directory = Path.GetFullPath(ModuleSettingReader.GetRequired(step.Settings, "path", Descriptor.Id));
         var searchPattern = ModuleSettingReader.GetOptional(step.Settings, "searchPattern") ?? "*.*";
         var recursive = ModuleSettingReader.GetBoolean(step.Settings, "recursive", defaultValue: false, Descriptor.Id);
+        var afterProcessing = FetchPostProcessing.ParseAction(step.Settings, "afterProcessing", Descriptor.Id);
+        var archivePath = ModuleSettingReader.GetOptional(step.Settings, "archivePath");
 
         if (!Directory.Exists(directory))
         {
@@ -58,6 +62,8 @@ public sealed class FileSystemFetchModule : IFetchModule
                     ["extension"] = Path.GetExtension(filePath),
                     ["lastWriteTimeUtc"] = File.GetLastWriteTimeUtc(filePath).ToString("O")
                 }));
+
+            FetchPostProcessing.Apply(filePath, directory, afterProcessing, archivePath);
         }
 
         return new IntegrationBatch(payloads);

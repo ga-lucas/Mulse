@@ -14,6 +14,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly string _statePath;
+    private readonly IRuntimeStatePayloadProtector _protector;
     private RuntimeMulseState _state;
 
     static RuntimeConfigurationStore()
@@ -21,12 +22,13 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         SerializerOptions.Converters.Add(new JsonStringEnumConverter());
     }
 
-    public RuntimeConfigurationStore(IOptions<MulseOptions> options, IHostEnvironment environment)
+    public RuntimeConfigurationStore(IOptions<MulseOptions> options, IHostEnvironment environment, IRuntimeStatePayloadProtector protector)
     {
         var configuredPath = options.Value.RuntimeStatePath;
         _statePath = Path.GetFullPath(Path.IsPathRooted(configuredPath)
             ? configuredPath
             : Path.Combine(environment.ContentRootPath, configuredPath));
+        _protector = protector;
         _state = LoadState(options.Value);
     }
 
@@ -73,6 +75,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
             var updated = Clone(_state);
             updated.Pipelines.RemoveAll(candidate => string.Equals(candidate.Id, flowId, StringComparison.OrdinalIgnoreCase));
             updated.OrchestrationCheckpoints.RemoveAll(candidate => string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase));
+            updated.PendingRetries.RemoveAll(candidate => string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase));
             _state = updated;
             await PersistAsync(cancellationToken).ConfigureAwait(false);
             return Clone(_state);
@@ -182,18 +185,121 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         }
     }
 
+    public async Task<RuntimeMulseState> UpsertRetryStateAsync(FlowRetryState retryState, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = Clone(_state);
+            var existingIndex = updated.PendingRetries.FindIndex(candidate =>
+                string.Equals(candidate.FlowId, retryState.FlowId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(candidate.ExecutionId, retryState.ExecutionId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(candidate.StageId, retryState.StageId, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex >= 0)
+            {
+                updated.PendingRetries[existingIndex] = Clone(retryState);
+            }
+            else
+            {
+                updated.PendingRetries.Add(Clone(retryState));
+            }
+
+            _state = updated;
+            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            return Clone(_state);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<RuntimeMulseState> DeleteRetryStateAsync(string flowId, string executionId, string stageId, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = Clone(_state);
+            updated.PendingRetries.RemoveAll(candidate =>
+                string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(candidate.ExecutionId, executionId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(candidate.StageId, stageId, StringComparison.OrdinalIgnoreCase));
+            _state = updated;
+            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            return Clone(_state);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<RuntimeMulseState> DeleteAllRetryStateForExecutionAsync(string flowId, string executionId, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = Clone(_state);
+            updated.PendingRetries.RemoveAll(candidate =>
+                string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(candidate.ExecutionId, executionId, StringComparison.OrdinalIgnoreCase));
+            _state = updated;
+            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            return Clone(_state);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<RuntimeMulseState> SetConfigValueAsync(string reference, string value, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = Clone(_state);
+            updated.ConfigValues[reference] = value;
+            _state = updated;
+            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            return Clone(_state);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<RuntimeMulseState> DeleteConfigValueAsync(string reference, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = Clone(_state);
+            updated.ConfigValues.Remove(reference);
+            _state = updated;
+            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            return Clone(_state);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private RuntimeMulseState LoadState(MulseOptions options)
     {
         if (File.Exists(_statePath))
         {
-            var json = File.ReadAllText(_statePath);
-            return JsonSerializer.Deserialize<RuntimeMulseState>(json, SerializerOptions)
+            var protectedBytes = File.ReadAllBytes(_statePath);
+            var jsonBytes = _protector.Unprotect(protectedBytes);
+            return JsonSerializer.Deserialize<RuntimeMulseState>(jsonBytes, SerializerOptions)
                 ?? CreateSeedState(options);
         }
 
         var seededState = CreateSeedState(options);
         Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
-        File.WriteAllText(_statePath, JsonSerializer.Serialize(seededState, SerializerOptions));
+        File.WriteAllBytes(_statePath, _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(seededState, SerializerOptions)));
         return seededState;
     }
 
@@ -204,14 +310,16 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
             PluginDirectories = options.PluginDirectories.ToList(),
             ManagedPackages = [],
             Pipelines = options.Pipelines.Select(Clone).ToList(),
-            OrchestrationCheckpoints = []
+            OrchestrationCheckpoints = [],
+            PendingRetries = []
         };
     }
 
     private async Task PersistAsync(CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
-        await File.WriteAllTextAsync(_statePath, JsonSerializer.Serialize(_state, SerializerOptions), cancellationToken).ConfigureAwait(false);
+        var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(_state, SerializerOptions);
+        await File.WriteAllBytesAsync(_statePath, _protector.Protect(jsonBytes), cancellationToken).ConfigureAwait(false);
     }
 
     private static T Clone<T>(T value)

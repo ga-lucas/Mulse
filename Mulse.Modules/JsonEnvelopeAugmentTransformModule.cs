@@ -43,7 +43,7 @@ public sealed class JsonEnvelopeAugmentTransformModule(TimeProvider timeProvider
                 transformedAt,
                 metadata,
                 augmentation = step.Settings,
-                payload = payload.Content.ToString()
+                payload = payload.GetText()
             };
 
             var json = JsonSerializer.SerializeToUtf8Bytes(envelope);

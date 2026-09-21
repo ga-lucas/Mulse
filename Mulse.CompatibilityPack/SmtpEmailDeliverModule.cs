@@ -97,7 +97,7 @@ public sealed class SmtpEmailDeliverModule : IDeliverModule
     {
         if (usePayloadAsBody && IsTextLike(payload.ContentType))
         {
-            return payload.Content.ToString();
+            return payload.GetText();
         }
 
         return ApplyTemplate(template, context, payload);

@@ -57,7 +57,7 @@ public sealed class XmlRenderModule : IRenderModule
 
     private static XDocument CreateDocument(IntegrationPayload payload, string rootElement, string itemElement)
     {
-        var text = payload.Content.ToString();
+        var text = payload.GetText();
         if (payload.ContentType.Contains("xml", StringComparison.OrdinalIgnoreCase) || text.TrimStart().StartsWith('<'))
         {
             return XDocument.Parse(text, LoadOptions.PreserveWhitespace);

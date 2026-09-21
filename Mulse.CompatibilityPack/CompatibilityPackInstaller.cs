@@ -8,8 +8,10 @@ public sealed class CompatibilityPackInstaller : IModuleInstaller
     {
         builder.AddFetch<DocumentRepositoryFetchModule>();
         builder.AddFetch<FileSystemWatcherFetchModule>();
+        builder.AddFetch<HttpInboundFetchModule>();
         builder.AddParse<XmlXsdParseModule>();
         builder.AddParse<FlatFileParseModule>();
+        builder.AddParse<XmlEnvelopeDebatchParseModule>();
         builder.AddOrchestrationAugment<MetadataPromotionAugmentModule>();
         builder.AddOrchestrationAugment<RouteSelectionAugmentModule>();
         builder.AddRender<FlatFileRenderModule>();

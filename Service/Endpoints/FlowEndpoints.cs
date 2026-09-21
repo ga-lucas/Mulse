@@ -65,6 +65,20 @@ public static class FlowEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
+        app.MapPatch("/api/flows/{flowId}/enabled", async Task<Ok<FlowResponse>> (string flowId, SetFlowEnabledRequest request, IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>
+            {
+                var existing = flowDefinitionService.GetById(flowId);
+                var updated = await flowDefinitionService.UpdateAsync(flowId, FlowMappings.WithEnabled(existing, request.Enabled), cancellationToken).ConfigureAwait(false);
+                return TypedResults.Ok(FlowMappings.MapFlow(updated));
+            })
+            .WithName("SetFlowEnabled")
+            .WithSummary("Enable or disable a flow")
+            .WithDescription("Toggles whether a flow is enabled without requiring the caller to resend its fetch, parse, augment, and delivery definition. Useful right after reviewing an imported or newly-designed draft flow's settings.")
+            .WithTags("Flows")
+            .Produces<FlowResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status500InternalServerError);
+
         app.MapDelete("/api/flows/{flowId}", async Task<NoContent> (string flowId, IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>
             {
                 await flowDefinitionService.DeleteAsync(flowId, cancellationToken).ConfigureAwait(false);
@@ -86,7 +100,10 @@ public static class FlowEndpoints
                     result.StartedAt,
                     result.CompletedAt,
                     result.PayloadCount,
-                    result.DeliverModules));
+                    result.DeliverModules,
+                    result.ResponsePayloads?.Count ?? 0,
+                    result.Outcome.ToString(),
+                    result.NextAttemptAt));
             })
             .WithName("RunFlow")
             .WithSummary("Run a configured flow")

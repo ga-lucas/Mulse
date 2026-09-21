@@ -12,4 +12,10 @@ public sealed record DeliveryRouteRequest
     /// <summary>The delivery step that dispatches the rendered payload.</summary>
     [Required]
     public required FlowStepRequest Deliver { get; init; }
+
+    /// <summary>Optional atomic-transaction scope name. Routes sharing a scope are compensated together on failure.</summary>
+    public string? AtomicScope { get; init; }
+
+    /// <summary>Optional deliver-module step that undoes this route's delivery if a later route in the same atomic scope fails.</summary>
+    public FlowStepRequest? Compensation { get; init; }
 }

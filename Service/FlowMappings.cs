@@ -21,7 +21,9 @@ internal static class FlowMappings
             MapStep(flow.Fetch),
             MapStep(flow.Parse),
             flow.Augments.Select(MapStep).ToArray(),
-            flow.Deliveries.Select(MapDelivery).ToArray());
+            flow.Deliveries.Select(MapDelivery).ToArray(),
+            MapRetry(flow.Retry),
+            new FlowTriggerResponse(flow.Trigger.Mode, flow.Trigger.Interval, flow.Trigger.RunOnStartup));
     }
 
     public static PipelineDefinition MapPipeline(CreateFlowRequest request)
@@ -39,7 +41,8 @@ internal static class FlowMappings
             Fetch = MapStep(request.Fetch),
             Parse = MapStep(request.Parse),
             Augments = request.Augments.Select(MapStep).ToList(),
-            Deliveries = request.Deliveries.Select(MapDelivery).ToList()
+            Deliveries = request.Deliveries.Select(MapDelivery).ToList(),
+            Retry = MapRetry(request.Retry)
         };
     }
 
@@ -58,7 +61,28 @@ internal static class FlowMappings
             Fetch = MapStep(request.Fetch),
             Parse = MapStep(request.Parse),
             Augments = request.Augments.Select(MapStep).ToList(),
-            Deliveries = request.Deliveries.Select(MapDelivery).ToList()
+            Deliveries = request.Deliveries.Select(MapDelivery).ToList(),
+            Retry = MapRetry(request.Retry)
+        };
+    }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="pipeline"/> with only <see cref="PipelineDefinition.Enabled"/>
+    /// changed. Used by the dedicated enable/disable endpoint so callers can toggle a flow without
+    /// resending its entire fetch/parse/augment/delivery definition.
+    /// </summary>
+    public static PipelineDefinition WithEnabled(PipelineDefinition pipeline, bool enabled)
+    {
+        return new PipelineDefinition
+        {
+            Id = pipeline.Id,
+            Enabled = enabled,
+            Trigger = pipeline.Trigger,
+            Fetch = pipeline.Fetch,
+            Parse = pipeline.Parse,
+            Augments = pipeline.Augments,
+            Deliveries = pipeline.Deliveries,
+            Retry = pipeline.Retry
         };
     }
 
@@ -82,14 +106,16 @@ internal static class FlowMappings
     }
 
     private static DeliveryRouteResponse MapDelivery(DeliveryRouteDefinition route)
-        => new(MapStep(route.Render), MapStep(route.Deliver));
+        => new(MapStep(route.Render), MapStep(route.Deliver), route.AtomicScope, route.Compensation is null ? null : MapStep(route.Compensation));
 
     private static DeliveryRouteDefinition MapDelivery(DeliveryRouteRequest route)
     {
         return new DeliveryRouteDefinition
         {
             Render = MapStep(route.Render),
-            Deliver = MapStep(route.Deliver)
+            Deliver = MapStep(route.Deliver),
+            AtomicScope = route.AtomicScope,
+            Compensation = route.Compensation is null ? null : MapStep(route.Compensation)
         };
     }
 
@@ -98,19 +124,22 @@ internal static class FlowMappings
         return new DeliveryRouteDefinition
         {
             Render = MapStep(route.Render),
-            Deliver = MapStep(route.Deliver)
+            Deliver = MapStep(route.Deliver),
+            AtomicScope = route.AtomicScope,
+            Compensation = route.Compensation is null ? null : MapStep(route.Compensation)
         };
     }
 
     private static ModuleStepResponse MapStep(ModuleStepDefinition step)
-        => new(step.Module, new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase));
+        => new(step.Module, new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase), MapRetry(step.Retry));
 
     private static ModuleStepDefinition MapStep(FlowStepRequest step)
     {
         return new ModuleStepDefinition
         {
             Module = step.Module,
-            Settings = new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase)
+            Settings = new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase),
+            Retry = MapRetry(step.Retry)
         };
     }
 
@@ -119,7 +148,20 @@ internal static class FlowMappings
         return new ModuleStepDefinition
         {
             Module = step.Module,
-            Settings = new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase)
+            Settings = new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase),
+            Retry = step.Retry
         };
     }
+
+    private static RetryPolicyResponse? MapRetry(RetryPolicyDefinition? retry)
+        => retry is null ? null : new RetryPolicyResponse(retry.MaxAttempts, retry.Delay.TotalSeconds, retry.Backoff, retry.MaxDelay?.TotalSeconds);
+
+    private static RetryPolicyDefinition? MapRetry(RetryPolicyRequest? retry)
+        => retry is null ? null : new RetryPolicyDefinition
+        {
+            MaxAttempts = retry.MaxAttempts,
+            Delay = TimeSpan.FromSeconds(retry.DelaySeconds),
+            Backoff = retry.Backoff,
+            MaxDelay = retry.MaxDelaySeconds is { } maxDelaySeconds ? TimeSpan.FromSeconds(maxDelaySeconds) : null
+        };
 }

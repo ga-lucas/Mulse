@@ -14,4 +14,5 @@ public sealed record FlowViewModel(
     FlowStepViewModel Fetch,
     FlowStepViewModel Parse,
     IReadOnlyList<FlowStepViewModel> Augments,
-    IReadOnlyList<DeliveryRouteViewModel> Deliveries);
+    IReadOnlyList<DeliveryRouteViewModel> Deliveries,
+    RetryPolicyViewModel? Retry = null);

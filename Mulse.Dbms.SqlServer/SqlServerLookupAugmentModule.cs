@@ -1,9 +1,10 @@
-using System.Data;
 using System.Globalization;
 using System.Text.Json.Nodes;
+using Dapper;
 using Microsoft.Data.SqlClient;
+using Mulse.Modules;
 
-namespace Mulse.Modules;
+namespace Mulse.Dbms.SqlServer;
 
 public sealed class SqlServerLookupAugmentModule : IOrchestrationAugmentModule
 {
@@ -42,6 +43,9 @@ public sealed class SqlServerLookupAugmentModule : IOrchestrationAugmentModule
 
         var transformedPayloads = new List<IntegrationPayload>(batch.Payloads.Count);
 
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
         foreach (var payload in batch.Payloads)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -53,7 +57,7 @@ public sealed class SqlServerLookupAugmentModule : IOrchestrationAugmentModule
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            var rows = await ExecuteLookupAsync(connectionString, queryText, idsParameterName, ids, context, payload, cancellationToken).ConfigureAwait(false);
+            var rows = await ExecuteLookupAsync(connection, queryText, idsParameterName, ids, context, payload, cancellationToken).ConfigureAwait(false);
             var envelope = new JsonObject
             {
                 ["source"] = sourceNode.DeepClone(),
@@ -82,7 +86,7 @@ public sealed class SqlServerLookupAugmentModule : IOrchestrationAugmentModule
     }
 
     private static async Task<JsonArray> ExecuteLookupAsync(
-        string connectionString,
+        SqlConnection connection,
         string queryText,
         string idsParameterName,
         IReadOnlyList<string> ids,
@@ -96,27 +100,26 @@ public sealed class SqlServerLookupAugmentModule : IOrchestrationAugmentModule
             return rows;
         }
 
-        await using var connection = new SqlConnection(connectionString);
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        var parameters = new DynamicParameters();
+        parameters.Add(idsParameterName, string.Join(',', ids));
+        parameters.Add("@flowId", context.FlowId);
+        parameters.Add("@executionId", context.ExecutionId);
+        parameters.Add("@payloadName", payload.Name);
 
-        await using var command = connection.CreateCommand();
-        command.CommandType = CommandType.Text;
-        command.CommandText = queryText;
-        command.Parameters.AddWithValue(idsParameterName, string.Join(',', ids));
-        command.Parameters.AddWithValue("@flowId", context.FlowId);
-        command.Parameters.AddWithValue("@executionId", context.ExecutionId);
-        command.Parameters.AddWithValue("@payloadName", payload.Name);
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        var command = new CommandDefinition(queryText, parameters, cancellationToken: cancellationToken);
+        var reader = await connection.ExecuteReaderAsync(command).ConfigureAwait(false);
+        await using (reader.ConfigureAwait(false))
         {
-            var row = new JsonObject();
-            for (var index = 0; index < reader.FieldCount; index++)
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                row[reader.GetName(index)] = CreateJsonNode(reader.GetValue(index));
-            }
+                var row = new JsonObject();
+                for (var index = 0; index < reader.FieldCount; index++)
+                {
+                    row[reader.GetName(index)] = CreateJsonNode(reader.GetValue(index));
+                }
 
-            rows.Add(row);
+                rows.Add(row);
+            }
         }
 
         return rows;

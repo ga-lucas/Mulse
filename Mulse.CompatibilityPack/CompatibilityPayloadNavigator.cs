@@ -15,7 +15,7 @@ internal static class CompatibilityPayloadNavigator
     {
         try
         {
-            return JsonNode.Parse(payload.Content.ToString())
+            return JsonNode.Parse(payload.GetText())
                 ?? throw new InvalidOperationException($"Module '{moduleId}' could not parse payload '{payload.Name}' as JSON.");
         }
         catch (JsonException exception)
@@ -28,7 +28,7 @@ internal static class CompatibilityPayloadNavigator
     {
         try
         {
-            return XDocument.Parse(payload.Content.ToString(), preserveWhitespace ? LoadOptions.PreserveWhitespace : LoadOptions.None);
+            return XDocument.Parse(payload.GetText(), preserveWhitespace ? LoadOptions.PreserveWhitespace : LoadOptions.None);
         }
         catch (Exception exception) when (exception is XmlException or InvalidOperationException)
         {

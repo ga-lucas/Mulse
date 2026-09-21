@@ -7,4 +7,6 @@ public sealed record FlowExecutionResult(
     int PayloadCount,
     IReadOnlyList<string> DeliverModules,
     FlowExecutionOutcome Outcome,
-    string? Detail);
+    string? Detail,
+    IReadOnlyList<Mulse.Modules.IntegrationPayload>? ResponsePayloads = null,
+    DateTimeOffset? NextAttemptAt = null);

@@ -59,10 +59,21 @@ public sealed class ModuleCatalog : IModuleCatalog
             sourceFileLastWriteTimeUtc: File.Exists(hl7AssemblyPath)
                 ? File.GetLastWriteTimeUtc(hl7AssemblyPath)
                 : DateTime.UtcNow);
+        var sqlServerAssemblyPath = typeof(Mulse.Dbms.SqlServer.SqlServerModuleInstaller).Assembly.Location;
+        var sqlServerPackage = CreatePackageFromInstaller(
+            packageId: "builtin.dbms.sqlserver",
+            sourceKind: RuntimePackageSourceKind.BuiltIn,
+            sourceAssemblyPath: sqlServerAssemblyPath,
+            installerFactory: static () => [new Mulse.Dbms.SqlServer.SqlServerModuleInstaller()],
+            loadContext: null,
+            sourceFileLastWriteTimeUtc: File.Exists(sqlServerAssemblyPath)
+                ? File.GetLastWriteTimeUtc(sqlServerAssemblyPath)
+                : DateTime.UtcNow);
 
         AddOrReplacePackage(builtInPackage, replaceExisting: true, previousPackage: out _);
         AddOrReplacePackage(compatibilityPackage, replaceExisting: true, previousPackage: out _);
         AddOrReplacePackage(hl7Package, replaceExisting: true, previousPackage: out _);
+        AddOrReplacePackage(sqlServerPackage, replaceExisting: true, previousPackage: out _);
     }
 
     public IReadOnlyList<ModuleCatalogEntry> GetAll()

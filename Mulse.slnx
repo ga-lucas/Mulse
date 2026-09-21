@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="Mulse.AppHost/Mulse.AppHost.csproj" />
   <Project Path="Mulse.CompatibilityPack/Mulse.CompatibilityPack.csproj" />
+  <Project Path="Mulse.Dbms.SqlServer/Mulse.Dbms.SqlServer.csproj" />
   <Project Path="Mulse.Hl7/Mulse.Hl7.csproj" />
   <Project Path="Mulse.Modules/Mulse.Modules.csproj" />
   <Project Path="Mulse.SamplePlugin/Mulse.SamplePlugin.csproj" />

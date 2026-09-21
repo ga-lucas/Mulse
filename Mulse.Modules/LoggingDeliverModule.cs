@@ -32,7 +32,7 @@ public sealed class LoggingDeliverModule(ILogger<LoggingDeliverModule> logger) :
 
         foreach (var payload in batch.Payloads)
         {
-            var preview = payload.Content.ToString();
+            var preview = payload.GetText();
             if (preview.Length > previewLength)
             {
                 preview = preview[..previewLength];
