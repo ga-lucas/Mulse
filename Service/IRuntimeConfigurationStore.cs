@@ -11,4 +11,8 @@ public interface IRuntimeConfigurationStore
     Task<RuntimeMulseState> UpsertManagedPackageAsync(ManagedModulePackageDefinition package, CancellationToken cancellationToken);
 
     Task<RuntimeMulseState> DeleteManagedPackageAsync(string packageId, CancellationToken cancellationToken);
+
+    Task<RuntimeMulseState> UpsertOrchestrationCheckpointAsync(Mulse.Modules.FlowOrchestrationCheckpoint checkpoint, CancellationToken cancellationToken);
+
+    Task<RuntimeMulseState> DeleteOrchestrationCheckpointAsync(string flowId, string correlationKey, CancellationToken cancellationToken);
 }

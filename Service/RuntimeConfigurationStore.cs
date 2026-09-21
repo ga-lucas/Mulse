@@ -72,6 +72,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         {
             var updated = Clone(_state);
             updated.Pipelines.RemoveAll(candidate => string.Equals(candidate.Id, flowId, StringComparison.OrdinalIgnoreCase));
+            updated.OrchestrationCheckpoints.RemoveAll(candidate => string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase));
             _state = updated;
             await PersistAsync(cancellationToken).ConfigureAwait(false);
             return Clone(_state);
@@ -129,6 +130,58 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         }
     }
 
+    public async Task<RuntimeMulseState> UpsertOrchestrationCheckpointAsync(FlowOrchestrationCheckpoint checkpoint, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = Clone(_state);
+            var existingIndex = updated.OrchestrationCheckpoints.FindIndex(candidate =>
+                string.Equals(candidate.FlowId, checkpoint.FlowId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(candidate.CorrelationKey, checkpoint.CorrelationKey, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex >= 0)
+            {
+                updated.OrchestrationCheckpoints[existingIndex] = Clone(checkpoint);
+            }
+            else
+            {
+                updated.OrchestrationCheckpoints.Add(Clone(checkpoint));
+            }
+
+            updated.OrchestrationCheckpoints = updated.OrchestrationCheckpoints
+                .OrderBy(static candidate => candidate.FlowId, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static candidate => candidate.CorrelationKey, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            _state = updated;
+            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            return Clone(_state);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<RuntimeMulseState> DeleteOrchestrationCheckpointAsync(string flowId, string correlationKey, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = Clone(_state);
+            updated.OrchestrationCheckpoints.RemoveAll(candidate =>
+                string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(candidate.CorrelationKey, correlationKey, StringComparison.OrdinalIgnoreCase));
+            _state = updated;
+            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            return Clone(_state);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private RuntimeMulseState LoadState(MulseOptions options)
     {
         if (File.Exists(_statePath))
@@ -150,7 +203,8 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         {
             PluginDirectories = options.PluginDirectories.ToList(),
             ManagedPackages = [],
-            Pipelines = options.Pipelines.Select(Clone).ToList()
+            Pipelines = options.Pipelines.Select(Clone).ToList(),
+            OrchestrationCheckpoints = []
         };
     }
 

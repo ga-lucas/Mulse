@@ -9,4 +9,6 @@ public sealed class RuntimeMulseState
     public List<ManagedModulePackageDefinition> ManagedPackages { get; set; } = [];
 
     public List<PipelineDefinition> Pipelines { get; set; } = [];
+
+    public List<FlowOrchestrationCheckpoint> OrchestrationCheckpoints { get; set; } = [];
 }

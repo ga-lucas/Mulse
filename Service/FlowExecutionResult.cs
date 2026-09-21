@@ -5,4 +5,6 @@ public sealed record FlowExecutionResult(
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt,
     int PayloadCount,
-    IReadOnlyList<string> DeliverModules);
+    IReadOnlyList<string> DeliverModules,
+    FlowExecutionOutcome Outcome,
+    string? Detail);

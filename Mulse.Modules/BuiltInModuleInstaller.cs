@@ -11,6 +11,7 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
         builder.AddOrchestrationAugment<DecisionAugmentModule>();
         builder.AddOrchestrationAugment<SqlServerLookupAugmentModule>();
         builder.AddOrchestrationAugment<ConditionalJoinMapAugmentModule>();
+        builder.AddOrchestrationAugment<StatefulOrchestrationAugmentModule>();
         builder.AddRender<JsonRenderModule>();
         builder.AddRender<XmlRenderModule>();
         builder.AddDeliver<LoggingDeliverModule>();

@@ -91,6 +91,72 @@ Content-Type: application/json
   ]
 }
 
+### Create a stateful correlation flow that waits for a follow-up message
+POST {{baseUrl}}/api/flows
+Content-Type: application/json
+
+{
+  "id": "stateful-correlation-flow",
+  "enabled": true,
+  "trigger": {
+    "mode": "Push",
+    "runOnStartup": false
+  },
+  "fetch": {
+    "module": "file-system-watcher-fetch",
+    "settings": {
+      "path": "SampleData\\StatefulInbox",
+      "searchPattern": "*.json",
+      "recursive": "false",
+      "includeExistingOnFirstRun": "false",
+      "includeChanged": "true",
+      "settleSeconds": "1"
+    }
+  },
+  "parse": {
+    "module": "json-parse",
+    "settings": {}
+  },
+  "augments": [
+    {
+      "module": "stateful-orchestration-augment",
+      "settings": {
+        "mode": "ResumeOrWait",
+        "bookmark": "await-second-message",
+        "correlationSource": "Payload",
+        "correlationPath": "$.orderId",
+        "metadataPrefix": "orchestration",
+        "suspensionReason": "Waiting for the second correlated message."
+      }
+    },
+    {
+      "module": "stateful-orchestration-augment",
+      "settings": {
+        "mode": "Complete",
+        "correlationSource": "Payload",
+        "correlationPath": "$.orderId",
+        "metadataPrefix": "orchestration"
+      }
+    }
+  ],
+  "deliveries": [
+    {
+      "render": {
+        "module": "json-render",
+        "settings": {
+          "indented": "true"
+        }
+      },
+      "deliver": {
+        "module": "logging-deliver",
+        "settings": {
+          "previewLength": "400"
+        }
+      }
+    }
+  ]
+}
+
 ### Create a flow with a decision augment and conditional deliveries
 POST {{baseUrl}}/api/flows
 Content-Type: application/json

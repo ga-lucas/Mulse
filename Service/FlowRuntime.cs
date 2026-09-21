@@ -6,6 +6,7 @@ namespace Service;
 public sealed class FlowRuntime(
     IFlowDefinitionService flowDefinitionService,
     IModuleCatalog moduleCatalog,
+    IFlowOrchestrationStateStore orchestrationStateStore,
     TimeProvider timeProvider,
     ILogger<FlowRuntime> logger) : IFlowRuntime
 {
@@ -52,6 +53,25 @@ public sealed class FlowRuntime(
                     augment,
                     applicableBatch => augmentModule.Module.AugmentAsync(context, applicableBatch, augment, cancellationToken),
                     cancellationToken).ConfigureAwait(false);
+
+                if (context.Disposition == FlowExecutionDisposition.Suspended)
+                {
+                    var suspendedAt = timeProvider.GetUtcNow();
+                    logger.LogInformation(
+                        "Flow {FlowId} execution {ExecutionId} suspended after augment {ModuleId}. Reason: {Reason}",
+                        pipeline.Id,
+                        context.ExecutionId,
+                        augment.Module,
+                        context.SuspensionReason ?? "n/a");
+                    return new FlowExecutionResult(
+                        pipeline.Id,
+                        startedAt,
+                        suspendedAt,
+                        batch.Count,
+                        [],
+                        FlowExecutionOutcome.Suspended,
+                        context.SuspensionReason);
+                }
             }
 
             foreach (var delivery in pipeline.Deliveries)
@@ -79,6 +99,11 @@ public sealed class FlowRuntime(
                     .ConfigureAwait(false);
             }
 
+            if (context.PendingCheckpointCompletion is { } pendingCompletion)
+            {
+                await orchestrationStateStore.DeleteAsync(pendingCompletion.FlowId, pendingCompletion.CorrelationKey, cancellationToken).ConfigureAwait(false);
+            }
+
             var completedAt = timeProvider.GetUtcNow();
             logger.LogInformation(
                 "Flow {FlowId} execution {ExecutionId} completed with {PayloadCount} payload(s).",
@@ -91,7 +116,9 @@ public sealed class FlowRuntime(
                 startedAt,
                 completedAt,
                 batch.Count,
-                pipeline.Deliveries.Select(static route => route.Deliver.Module).ToArray());
+                pipeline.Deliveries.Select(static route => route.Deliver.Module).ToArray(),
+                FlowExecutionOutcome.Completed,
+                null);
         }
         finally
         {

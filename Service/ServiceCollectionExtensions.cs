@@ -14,6 +14,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFlowDefinitionService, FlowDefinitionService>();
         services.AddSingleton<IFlowDesignService, FlowDesignService>();
         services.AddSingleton<IBizTalkImportService, BizTalkImportService>();
+        services.AddSingleton<IFlowOrchestrationStateStore, FlowOrchestrationStateStore>();
         services.AddSingleton<IFlowRuntime, FlowRuntime>();
         services.AddHostedService<ModuleSynchronizationService>();
         services.AddHostedService<ScheduledFlowService>();
