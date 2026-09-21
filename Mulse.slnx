@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Mulse.AppHost/Mulse.AppHost.csproj" />
+  <Project Path="Mulse.Modules/Mulse.Modules.csproj" />
+  <Project Path="Mulse.SamplePlugin/Mulse.SamplePlugin.csproj" />
+  <Project Path="Mulse.ServiceDefaults/Mulse.ServiceDefaults.csproj" />
+  <Project Path="Mulse.Ui/Mulse.Ui.csproj" />
+  <Project Path="Service/Service.csproj" />
+</Solution>

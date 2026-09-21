@@ -1,0 +1,275 @@
+@page "/designer"
+@using Microsoft.AspNetCore.Components.Forms
+@inject IMulseApiClient ApiClient
+
+<PageTitle>Flow Designer</PageTitle>
+
+<div class="designer-shell">
+    <header class="designer-hero">
+        <div>
+            <p class="eyebrow">Sample-driven design</p>
+            <h1>Flow designer</h1>
+            <p class="lede">Upload, drag onto the file input, or paste a sample payload. Mulse inspects the structure, suggests modules, and lets you map fields visually before you build the real flow.</p>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_statusMessage))
+    {
+        <div class="status-banner success">@_statusMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <div class="status-banner error">@_errorMessage</div>
+    }
+
+    <section class="designer-grid">
+        <article class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>1. Load sample data</h2>
+                    <p>Use a representative payload or schema-like sample so the analyzer can infer fields and suggest modules.</p>
+                </div>
+            </div>
+
+            <label class="drop-zone">
+                <span>Select or drag a file here</span>
+                <InputFile OnChange="HandleFileSelectedAsync" class="drop-zone-input" />
+            </label>
+
+            <div class="file-meta">
+                <span><strong>Selected file:</strong> @(_fileName ?? "None")</span>
+                <span><strong>Detected content type:</strong> @(_contentType ?? "Unknown")</span>
+            </div>
+
+            <label class="field-label" for="sample-text">Paste sample payload</label>
+            <textarea id="sample-text" class="sample-textarea" @bind="_sampleText" @bind:event="oninput" placeholder="Paste JSON, XML, CSV, or raw text here."></textarea>
+
+            <div class="action-row">
+                <button class="run-button" @onclick="AnalyzeAsync" disabled="@_isAnalyzing">Analyze sample</button>
+                <button class="secondary-button" @onclick="ClearAsync" disabled="@_isAnalyzing">Clear</button>
+            </div>
+        </article>
+
+        @if (_analysis is not null)
+        {
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>2. Review suggestions</h2>
+                        <p>Mulse detected <strong>@_analysis.DetectedFormat</strong> and ranked compatible modules automatically.</p>
+                    </div>
+                </div>
+
+                <div class="preview-box">
+                    <pre>@_analysis.Preview</pre>
+                </div>
+
+                <div class="suggestion-grid">
+                    <section>
+                        <h3>Input module</h3>
+                        <select class="selector" @bind="_selectedInputModuleId">
+                            @foreach (var module in _analysis.InputModules)
+                            {
+                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                            }
+                        </select>
+                    </section>
+
+                    <section>
+                        <h3>Orchestration augment</h3>
+                        <select class="selector" @bind="_selectedAugmentModuleId">
+                            @foreach (var module in _analysis.OrchestrationAugmentModules)
+                            {
+                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                            }
+                        </select>
+                    </section>
+
+                    <section>
+                        <h3>Output module</h3>
+                        <select class="selector" @bind="_selectedOutputModuleId">
+                            @foreach (var module in _analysis.OutputModules)
+                            {
+                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                            }
+                        </select>
+                    </section>
+                </div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>3. Map fields visually</h2>
+                        <p>Adjust how each inferred source field should participate in merge, orchestration, or output stages.</p>
+                    </div>
+                </div>
+
+                <table class="mapping-table">
+                    <thead>
+                        <tr>
+                            <th>Source field</th>
+                            <th>Sample value</th>
+                            <th>Purpose</th>
+                            <th>Target field</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var field in _mappingRows)
+                        {
+                            <tr>
+                                <td><code>@field.SourcePath</code></td>
+                                <td>@field.SampleValue</td>
+                                <td>
+                                    <select class="selector compact" @bind="field.Purpose">
+                                        @foreach (var purpose in PurposeOptions)
+                                        {
+                                            <option value="@purpose">@purpose</option>
+                                        }
+                                    </select>
+                                </td>
+                                <td>
+                                    <input class="mapping-input" @bind="field.TargetField" @bind:event="oninput" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </article>
+
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>4. Draft summary</h2>
+                        <p>Use this to guide creation of the real runtime flow and module configuration.</p>
+                    </div>
+                </div>
+
+                <div class="summary-grid">
+                    <div>
+                        <h3>Selected modules</h3>
+                        <ul>
+                            <li><strong>Input:</strong> @_selectedInputModuleId</li>
+                            <li><strong>Orchestration augment:</strong> @_selectedAugmentModuleId</li>
+                            <li><strong>Output:</strong> @_selectedOutputModuleId</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3>Mapping counts</h3>
+                        <ul>
+                            <li><strong>Merge:</strong> @_mappingRows.Count(row => row.Purpose == "Merge")</li>
+                            <li><strong>Orchestration:</strong> @_mappingRows.Count(row => row.Purpose == "Orchestration")</li>
+                            <li><strong>Output:</strong> @_mappingRows.Count(row => row.Purpose == "Output")</li>
+                        </ul>
+                    </div>
+                </div>
+            </article>
+        }
+    </section>
+</div>
+
+@code {
+    private static readonly string[] PurposeOptions = ["Merge", "Orchestration", "Output"];
+
+    private string _sampleText = string.Empty;
+    private string? _fileName;
+    private string? _contentType;
+    private bool _isAnalyzing;
+    private string? _statusMessage;
+    private string? _errorMessage;
+    private FlowDesignAnalysisViewModel? _analysis;
+    private List<FieldMappingRow> _mappingRows = [];
+    private string? _selectedInputModuleId;
+    private string? _selectedAugmentModuleId;
+    private string? _selectedOutputModuleId;
+
+    private async Task HandleFileSelectedAsync(InputFileChangeEventArgs args)
+    {
+        _errorMessage = null;
+        _statusMessage = null;
+
+        var file = args.File;
+        if (file is null)
+        {
+            return;
+        }
+
+        _fileName = file.Name;
+        _contentType = file.ContentType;
+
+        await using var stream = file.OpenReadStream(maxAllowedSize: 1_000_000);
+        using var reader = new StreamReader(stream);
+        _sampleText = await reader.ReadToEndAsync();
+        await AnalyzeAsync();
+    }
+
+    private async Task AnalyzeAsync()
+    {
+        _isAnalyzing = true;
+        _statusMessage = null;
+        _errorMessage = null;
+
+        try
+        {
+            _analysis = await ApiClient.AnalyzeFlowDesignAsync(new FlowDesignAnalysisRequestViewModel(
+                _fileName,
+                _contentType,
+                _sampleText), CancellationToken.None);
+
+            _selectedInputModuleId = ChooseModule(_analysis.InputModules);
+            _selectedAugmentModuleId = ChooseModule(_analysis.OrchestrationAugmentModules);
+            _selectedOutputModuleId = ChooseModule(_analysis.OutputModules);
+            _mappingRows = _analysis.Fields
+                .Select(field => new FieldMappingRow
+                {
+                    SourcePath = field.SourcePath,
+                    SampleValue = field.SampleValue,
+                    Purpose = field.RecommendedPurpose,
+                    TargetField = field.SuggestedTargetField
+                })
+                .ToList();
+            _statusMessage = $"Analyzed {_analysis.Fields.Count} field(s) from {_analysis.DetectedFormat} sample data.";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to analyze sample data: {exception.Message}";
+        }
+        finally
+        {
+            _isAnalyzing = false;
+        }
+    }
+
+    private Task ClearAsync()
+    {
+        _sampleText = string.Empty;
+        _fileName = null;
+        _contentType = null;
+        _analysis = null;
+        _mappingRows = [];
+        _selectedInputModuleId = null;
+        _selectedAugmentModuleId = null;
+        _selectedOutputModuleId = null;
+        _statusMessage = null;
+        _errorMessage = null;
+        return Task.CompletedTask;
+    }
+
+    private static string? ChooseModule(IReadOnlyList<ModuleSuggestionViewModel> modules)
+    {
+        return modules.FirstOrDefault(static module => module.IsRecommended)?.Id
+            ?? modules.FirstOrDefault()?.Id;
+    }
+
+    private sealed class FieldMappingRow
+    {
+        public string SourcePath { get; init; } = string.Empty;
+
+        public string SampleValue { get; init; } = string.Empty;
+
+        public string Purpose { get; set; } = "Output";
+
+        public string TargetField { get; set; } = string.Empty;
+    }
+}

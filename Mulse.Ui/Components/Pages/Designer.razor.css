@@ -1,0 +1,146 @@
+.designer-shell {
+    display: grid;
+    gap: 1.5rem;
+}
+
+.designer-hero {
+    padding: 2rem;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 1rem;
+    background: rgba(15, 23, 42, 0.7);
+}
+
+.designer-grid {
+    display: grid;
+    gap: 1.5rem;
+}
+
+.drop-zone {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 9rem;
+    border: 2px dashed rgba(56, 189, 248, 0.55);
+    border-radius: 1rem;
+    background: rgba(8, 47, 73, 0.35);
+    color: #bae6fd;
+    cursor: pointer;
+    margin-bottom: 1rem;
+    overflow: hidden;
+}
+
+.drop-zone-input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.file-meta,
+.summary-grid,
+.suggestion-grid {
+    display: grid;
+    gap: 1rem;
+}
+
+.suggestion-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.field-label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.sample-textarea,
+.selector,
+.mapping-input {
+    width: 100%;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 0.75rem;
+    background: rgba(15, 23, 42, 0.9);
+    color: #e2e8f0;
+    padding: 0.85rem 1rem;
+}
+
+.sample-textarea {
+    min-height: 14rem;
+    resize: vertical;
+}
+
+.selector.compact {
+    min-width: 10rem;
+}
+
+.action-row {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.secondary-button,
+.run-button {
+    border: 0;
+    border-radius: 0.65rem;
+    font-weight: 700;
+    padding: 0.8rem 1rem;
+    cursor: pointer;
+}
+
+.secondary-button {
+    background: rgba(148, 163, 184, 0.2);
+    color: #e2e8f0;
+}
+
+.preview-box {
+    max-height: 16rem;
+    overflow: auto;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 0.85rem;
+    background: rgba(2, 6, 23, 0.85);
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.preview-box pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.mapping-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.mapping-table th,
+.mapping-table td {
+    padding: 0.9rem 0.75rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+    text-align: left;
+    vertical-align: top;
+}
+
+.mapping-table code {
+    color: #7dd3fc;
+}
+
+@media (max-width: 800px) {
+    .action-row {
+        flex-direction: column;
+    }
+
+    .mapping-table,
+    .mapping-table thead,
+    .mapping-table tbody,
+    .mapping-table tr,
+    .mapping-table th,
+    .mapping-table td {
+        display: block;
+    }
+
+    .mapping-table thead {
+        display: none;
+    }
+}

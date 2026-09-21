@@ -1,0 +1,16 @@
+{
+  "orderId": "SO-1001",
+  "customer": "Contoso Health",
+  "requestedAt": "2026-09-21T09:45:00-04:00",
+  "items": [
+    {
+      "sku": "MRI-CONSUMABLE-01",
+      "quantity": 4
+    },
+    {
+      "sku": "XRAY-FILM-02",
+      "quantity": 2
+    }
+  ],
+  "priority": "High"
+}

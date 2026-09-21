@@ -1,0 +1,259 @@
+﻿@page "/"
+@inject IMulseApiClient ApiClient
+
+<PageTitle>Mulse UI</PageTitle>
+
+<div class="page-shell">
+    <header class="hero">
+        <div>
+            <p class="eyebrow">Separate UI project</p>
+            <h1>Mulse orchestration console</h1>
+            <p class="lede">This UI is hosted independently from the API and uses the service layer only as a control-plane orchestration endpoint.</p>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <div class="status-banner error">@_errorMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_lastRunMessage))
+    {
+        <div class="status-banner success">@_lastRunMessage</div>
+    }
+
+    @if (_isLoading)
+    {
+        <p>Loading orchestration metadata...</p>
+    }
+    else
+    {
+        <section class="dashboard-grid">
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Configured flows</h2>
+                        <p>Flows remain in the API service, while this UI drives orchestration separately.</p>
+                    </div>
+                </div>
+
+                @if (_flows.Count == 0)
+                {
+                    <p>No flows are configured.</p>
+                }
+                else
+                {
+                    <div class="flow-list">
+                        @foreach (var flow in _flows)
+                        {
+                            <section class="flow-card">
+                                <div class="flow-card-header">
+                                    <div>
+                                        <h3>@flow.Id</h3>
+                                        <p><strong>Input:</strong> @flow.InputModule</p>
+                                    </div>
+                                    <button class="run-button" @onclick="() => RunFlowAsync(flow.Id)" disabled="@_isRunningFlow">
+                                        Run flow
+                                    </button>
+                                </div>
+                                <dl class="flow-metadata">
+                                    <div>
+                                        <dt>Enabled</dt>
+                                        <dd>@(flow.Enabled ? "Yes" : "No")</dd>
+                                    </div>
+                                    <div>
+                                        <dt>Trigger</dt>
+                                        <dd>@flow.TriggerMode</dd>
+                                    </div>
+                                    <div>
+                                        <dt>Interval</dt>
+                                        <dd>@(flow.Interval?.ToString() ?? "n/a")</dd>
+                                    </div>
+                                    <div>
+                                        <dt>Outputs</dt>
+                                        <dd>@(flow.OutputModules.Count == 0 ? "None" : flow.OutputModules.Count.ToString())</dd>
+                                    </div>
+                                </dl>
+                                <p><strong>Augments:</strong> @FormatModules(flow.AugmentModules)</p>
+                                <p><strong>Outputs:</strong> @FormatModules(flow.OutputModules)</p>
+                            </section>
+                        }
+                    </div>
+                }
+            </article>
+
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Runtime module packages</h2>
+                        <p>Packages are hot-discovered or managed at runtime and can be reloaded without restarting the API.</p>
+                    </div>
+                </div>
+
+                @if (_packages.Count == 0)
+                {
+                    <p>No module packages are loaded.</p>
+                }
+                else
+                {
+                    <div class="flow-list">
+                        @foreach (var package in _packages)
+                        {
+                            <section class="flow-card">
+                                <div class="flow-card-header">
+                                    <div>
+                                        <h3>@package.Id</h3>
+                                        <p><strong>Package type:</strong> @package.SourceKind</p>
+                                    </div>
+                                    <button class="run-button" @onclick="() => ReloadPackageAsync(package.Id)" disabled="@(_isReloadingPackage || package.SourceKind == "BuiltIn")">
+                                        Reload package
+                                    </button>
+                                </div>
+                                <dl class="flow-metadata">
+                                    <div>
+                                        <dt>Loaded</dt>
+                                        <dd>@(package.IsLoaded ? "Yes" : "No")</dd>
+                                    </div>
+                                    <div>
+                                        <dt>Modules</dt>
+                                        <dd>@package.ModuleCount</dd>
+                                    </div>
+                                    <div>
+                                        <dt>Last loaded</dt>
+                                        <dd>@(package.LastLoadedAt == DateTimeOffset.MinValue ? "n/a" : package.LastLoadedAt.ToLocalTime().ToString("g"))</dd>
+                                    </div>
+                                </dl>
+                                <p><strong>Assembly:</strong> @package.AssemblyPath</p>
+                            </section>
+                        }
+                    </div>
+                }
+            </article>
+
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Available modules</h2>
+                        <p>All data ingress, processing, eventing, and storage stay in the module layer.</p>
+                    </div>
+                </div>
+
+                @if (_modules.Count == 0)
+                {
+                    <p>No modules are registered.</p>
+                }
+                else
+                {
+                    <table class="module-table">
+                        <thead>
+                            <tr>
+                                <th>Id</th>
+                                <th>Kind</th>
+                                <th>Name</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var module in _modules)
+                            {
+                                <tr>
+                                    <td>@module.Id</td>
+                                    <td>@module.Kind</td>
+                                    <td>
+                                        <strong>@module.DisplayName</strong>
+                                        <div class="module-description">@module.Description</div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </article>
+        </section>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<FlowViewModel> _flows = [];
+    private IReadOnlyList<ModuleViewModel> _modules = [];
+    private IReadOnlyList<ModulePackageViewModel> _packages = [];
+    private bool _isLoading = true;
+    private bool _isRunningFlow;
+    private bool _isReloadingPackage;
+    private string? _errorMessage;
+    private string? _lastRunMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            _flows = await ApiClient.GetFlowsAsync(CancellationToken.None);
+            _modules = await ApiClient.GetModulesAsync(CancellationToken.None);
+            _packages = await ApiClient.GetModulePackagesAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to load orchestration metadata: {exception.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task RunFlowAsync(string flowId)
+    {
+        _isRunningFlow = true;
+        _errorMessage = null;
+        _lastRunMessage = null;
+
+        try
+        {
+            var result = await ApiClient.RunFlowAsync(flowId, CancellationToken.None);
+            _lastRunMessage = $"Ran {result.FlowId} with {result.PayloadCount} payload(s).";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to run flow '{flowId}': {exception.Message}";
+        }
+        finally
+        {
+            _isRunningFlow = false;
+            await LoadAsync();
+        }
+    }
+
+    private async Task ReloadPackageAsync(string packageId)
+    {
+        _isReloadingPackage = true;
+        _errorMessage = null;
+        _lastRunMessage = null;
+
+        try
+        {
+            var package = await ApiClient.ReloadModulePackageAsync(packageId, CancellationToken.None);
+            _lastRunMessage = $"Reloaded package {package.Id}.";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to reload package '{packageId}': {exception.Message}";
+        }
+        finally
+        {
+            _isReloadingPackage = false;
+            await LoadAsync();
+        }
+    }
+
+    private static string FormatModules(IReadOnlyList<string> modules)
+    {
+        return modules.Count == 0 ? "None" : string.Join(", ", modules);
+    }
+}

@@ -1,0 +1,49 @@
+{
+  "pluginDirectories": [
+    "plugins"
+  ],
+  "managedPackages": [],
+  "pipelines": [
+    {
+      "id": "sample-file-pipeline",
+      "enabled": true,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": "00:05:00",
+        "runOnStartup": false
+      },
+      "input": {
+        "module": "file-system",
+        "settings": {
+          "path": "SampleData\\Inbox",
+          "searchPattern": "*.json",
+          "recursive": "false"
+        }
+      },
+      "augments": [
+        {
+          "module": "json-envelope-augment",
+          "settings": {
+            "scenario": "demo",
+            "owner": "mulse"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "module": "logging-event",
+          "settings": {
+            "previewLength": "400"
+          }
+        },
+        {
+          "module": "file-system-storage",
+          "settings": {
+            "path": "SampleData\\Outbox",
+            "extension": ".json"
+          }
+        }
+      ]
+    }
+  ]
+}

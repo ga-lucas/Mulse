@@ -1,0 +1,134 @@
+@baseUrl = http://localhost:5210
+
+### List registered modules
+GET {{baseUrl}}/api/modules
+
+### List runtime module packages
+GET {{baseUrl}}/api/module-packages
+
+### Create a hot-loadable sample plugin package manually
+POST {{baseUrl}}/api/module-packages
+Content-Type: application/json
+
+{
+  "id": "sample-managed-plugin",
+  "assemblyPath": "plugins\\Mulse.SamplePlugin\\Mulse.SamplePlugin.dll",
+  "enabled": true
+}
+
+### Reload a runtime module package
+POST {{baseUrl}}/api/module-packages/Mulse.SamplePlugin/reload
+
+### Analyze sample data for the visual flow designer
+POST {{baseUrl}}/api/flow-designer/analyze
+Content-Type: application/json
+
+{
+  "fileName": "customer-order.json",
+  "contentType": "application/json",
+  "textContent": "{\"orderId\":\"SO-1001\",\"customer\":\"Contoso\",\"priority\":\"High\",\"items\":[{\"sku\":\"MRI-CONSUMABLE-01\",\"quantity\":4}]}"
+}
+
+### List configured flows
+GET {{baseUrl}}/api/flows
+
+### Get a single configured flow
+GET {{baseUrl}}/api/flows/sample-file-pipeline
+
+### Create a flow that uses the hot-loadable sample plugin
+POST {{baseUrl}}/api/flows
+Content-Type: application/json
+
+{
+  "id": "sample-plugin-flow",
+  "enabled": true,
+  "trigger": {
+    "mode": "OnDemand",
+    "runOnStartup": false
+  },
+  "input": {
+    "module": "file-system",
+    "settings": {
+      "path": "SampleData\\Inbox",
+      "searchPattern": "*.json",
+      "recursive": "false"
+    }
+  },
+  "augments": [
+    {
+      "module": "sample-plugin-augment",
+      "settings": {
+        "mode": "demo"
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "module": "logging-event",
+      "settings": {
+        "previewLength": "400"
+      }
+    },
+    {
+      "module": "file-system-storage",
+      "settings": {
+        "path": "SampleData\\Outbox",
+        "extension": ".json"
+      }
+    }
+  ]
+}
+
+### Update a configured flow
+PUT {{baseUrl}}/api/flows/sample-plugin-flow
+Content-Type: application/json
+
+{
+  "id": "sample-plugin-flow",
+  "enabled": true,
+  "trigger": {
+    "mode": "Interval",
+    "interval": "00:10:00",
+    "runOnStartup": true
+  },
+  "input": {
+    "module": "file-system",
+    "settings": {
+      "path": "SampleData\\Inbox",
+      "searchPattern": "*.json",
+      "recursive": "false"
+    }
+  },
+  "augments": [
+    {
+      "module": "sample-plugin-augment",
+      "settings": {
+        "mode": "scheduled"
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "module": "logging-event",
+      "settings": {
+        "previewLength": "400"
+      }
+    },
+    {
+      "module": "file-system-storage",
+      "settings": {
+        "path": "SampleData\\Outbox",
+        "extension": ".json"
+      }
+    }
+  ]
+}
+
+### Run the sample flow
+POST {{baseUrl}}/api/flows/sample-file-pipeline/run
+
+### Delete a runtime-configurable flow
+DELETE {{baseUrl}}/api/flows/sample-plugin-flow
+
+### Delete a managed runtime module package
+DELETE {{baseUrl}}/api/module-packages/sample-managed-plugin
