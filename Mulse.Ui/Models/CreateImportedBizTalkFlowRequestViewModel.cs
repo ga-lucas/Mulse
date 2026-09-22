@@ -2,4 +2,5 @@ namespace Mulse.Ui.Models;
 
 public sealed record CreateImportedBizTalkFlowRequestViewModel(
     string SourcePath,
-    string SuggestedFlowId);
+    string SuggestedFlowId,
+    IReadOnlyList<string>? AdditionalSourcePaths = null);

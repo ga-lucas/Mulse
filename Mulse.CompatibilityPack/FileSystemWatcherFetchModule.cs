@@ -31,8 +31,10 @@ public sealed class FileSystemWatcherFetchModule(ILogger<FileSystemWatcherFetchM
         SettingDescriptors,
         Recommendation);
 
+    /// <summary><paramref name="input"/> is unused: this is a root source driven by file system change events.</summary>
     public async Task<IntegrationBatch> FetchAsync(
         FlowExecutionContext context,
+        IntegrationBatch input,
         ModuleStepDefinition step,
         CancellationToken cancellationToken)
     {
@@ -134,15 +136,7 @@ public sealed class FileSystemWatcherFetchModule(ILogger<FileSystemWatcherFetchM
 
     private static string ResolveContentType(string filePath)
     {
-        return Path.GetExtension(filePath).ToLowerInvariant() switch
-        {
-            ".json" => "application/json",
-            ".xml" => "application/xml",
-            ".csv" => "text/csv",
-            ".hl7" or ".adt" => "text/hl7-v2",
-            ".txt" => "text/plain",
-            _ => "application/octet-stream"
-        };
+        return ContentTypeResolver.FromFileName(filePath);
     }
 
     private sealed class WatchRegistration : IDisposable

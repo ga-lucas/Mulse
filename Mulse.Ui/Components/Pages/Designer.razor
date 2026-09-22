@@ -1,15 +1,25 @@
 @page "/designer"
-@using Microsoft.AspNetCore.Components.Forms
+@page "/designer/{FlowId}"
+@using System.Globalization
+@using System.Text.Json
+@using System.Text.Json.Serialization
 @inject IMulseApiClient ApiClient
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
-<PageTitle>Flow Designer</PageTitle>
+<PageTitle>@(IsExistingFlow ? $"Edit flow {FlowId}" : "Flow designer")</PageTitle>
 
 <div class="designer-shell">
     <header class="designer-hero">
         <div>
-            <p class="eyebrow">Sample-driven design</p>
-            <h1>Flow designer</h1>
-            <p class="lede">Upload, drag onto the file input, or paste a sample payload. Mulse inspects the structure, suggests modules, and lets you configure a runnable SFTP + SQL Server + HTTP + XML workflow visually.</p>
+            <p class="eyebrow">Visual flow canvas</p>
+            <h1>@(IsExistingFlow ? FlowId : "New flow")</h1>
+            <p class="lede">
+                One canvas for every flow: drop modules in by hand, seed the graph from a sample payload, import a BizTalk draft flow,
+                or open an existing flow and rewire it. Drag nodes to arrange the graph and click a node to configure its module and settings.
+            </p>
+            <a class="secondary-button" href="/">&larr; Back to dashboard</a>
         </div>
     </header>
 
@@ -23,13 +33,35 @@
         <div class="status-banner error">@_errorMessage</div>
     }
 
-    <section class="designer-grid">
+    <section class="toolbar">
+        <div class="toolbar-group">
+            <span class="toolbar-label">Add node</span>
+            <button class="secondary-button" @onclick="AddSourceLane" title="Adds a new source lane: its own fetch node plus parse node, with a source id other sources and join augments can reference.">Source</button>
+            <button class="secondary-button" @onclick="AddAugmentNode">Augment</button>
+            <button class="secondary-button" @onclick="AddJoinAugmentNode" disabled="@(_sources.Count < 2)" title="Adds a multi-source join and map augment, pre-wired to the first two source lanes on the canvas.">Join sources</button>
+            <button class="secondary-button" @onclick="AddDeliveryRoute">Delivery route</button>
+        </div>
+        <div class="toolbar-group">
+            <span class="toolbar-label">Seed from</span>
+            <button class="secondary-button @(_showSamplePanel ? "active" : null)" @onclick="ToggleSamplePanel">Import sample data</button>
+            <button class="secondary-button @(_showBizTalkPanel ? "active" : null)" @onclick="ToggleBizTalkPanel">Import from BizTalk</button>
+        </div>
+        <div class="toolbar-group toolbar-actions">
+            <button class="secondary-button" @onclick="AutoLayout">Auto layout</button>
+            <button class="secondary-button" @onclick="ClearCanvas">Clear canvas</button>
+            <button class="run-button" @onclick="SaveAsync" disabled="@_isSaving">@(_isSaving ? "Saving..." : IsExistingFlow ? "Save flow" : "Create flow")</button>
+        </div>
+    </section>
+
+    @if (_showSamplePanel)
+    {
         <article class="panel">
             <div class="panel-header">
                 <div>
-                    <h2>1. Load sample data</h2>
-                    <p>Use a representative payload or schema-like sample so the analyzer can infer fields and suggest modules.</p>
+                    <h2>Import sample data</h2>
+                    <p>Upload or paste a representative payload. Mulse detects the format, suggests modules, and seeds the canvas with them.</p>
                 </div>
+                <button class="secondary-button" @onclick="ToggleSamplePanel">Close</button>
             </div>
 
             <label class="drop-zone">
@@ -46,305 +78,1585 @@
             <textarea id="sample-text" class="sample-textarea" @bind="_sampleText" @bind:event="oninput" placeholder="Paste JSON, XML, CSV, or raw text here."></textarea>
 
             <div class="action-row">
-                <button class="run-button" @onclick="AnalyzeAsync" disabled="@_isAnalyzing">Analyze sample</button>
-                <button class="secondary-button" @onclick="ClearAsync" disabled="@(_isAnalyzing || _isCreatingFlow)">Clear</button>
+                <button class="run-button" @onclick="AnalyzeSampleAsync" disabled="@_isAnalyzingSample">@(_isAnalyzingSample ? "Analyzing..." : "Analyze sample")</button>
+                <button class="secondary-button" @onclick="ClearSample" disabled="@_isAnalyzingSample">Clear sample</button>
             </div>
-        </article>
 
-        @if (_analysis is not null)
-        {
-            <article class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h2>2. Workflow shape</h2>
-                        <p>Mulse detected <strong>@_analysis.DetectedFormat</strong> and preselected a hot-loadable workflow for scheduled SFTP ingest, SQL enrichment, API delivery, and XML export.</p>
-                    </div>
-                </div>
-
+            @if (_analysis is not null)
+            {
+                <h3>Detected format: @_analysis.DetectedFormat</h3>
                 <div class="preview-box">
                     <pre>@_analysis.Preview</pre>
                 </div>
 
-                <div class="summary-grid">
-                    <div>
-                        <label class="field-label" for="flow-id">Flow id</label>
-                        <input id="flow-id" class="mapping-input" @bind="_flowId" @bind:event="oninput" />
-                    </div>
-                    <div>
-                        <label class="field-label" for="trigger-mode">Trigger mode</label>
-                        <select id="trigger-mode" class="selector" @bind="_triggerMode">
-                            <option value="OnDemand">On demand</option>
-                            <option value="Interval">Interval</option>
-                            <option value="Push">Push</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="field-label" for="interval">Interval</label>
-                        <input id="interval" class="mapping-input" @bind="_intervalText" @bind:event="oninput" placeholder="00:05:00" disabled="@(_triggerMode != "Interval")" />
-                    </div>
-                    <div>
-                        <label class="field-label checkbox-row">
-                            <input type="checkbox" checked="@_runOnStartup" @onchange="HandleRunOnStartupChanged" />
-                            <span>Run on startup</span>
-                        </label>
-                        <label class="field-label checkbox-row">
-                            <input type="checkbox" checked="@_flowEnabled" @onchange="HandleFlowEnabledChanged" />
-                            <span>Flow enabled</span>
-                        </label>
-                    </div>
-                </div>
-            </article>
-
-            <article class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h2>3. Choose modules</h2>
-                        <p>Each stage remains module-owned. The service layer only orchestrates the configured steps.</p>
-                    </div>
-                </div>
-
                 <div class="suggestion-grid">
                     <section>
-                        <h3>Fetch: remote file ingest</h3>
-                        <select class="selector" value="@_selectedFetchModuleId" @onchange="HandleFetchModuleChanged">
+                        <h4>Fetch suggestions</h4>
+                        <ul class="suggestion-list">
                             @foreach (var module in _analysis.FetchModules)
                             {
-                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                                <li>@module.DisplayName <code>@module.Id</code>@(module.IsRecommended ? " - recommended" : string.Empty)</li>
                             }
-                        </select>
-                        @RenderSettingsEditor(SelectedFetchModule, _fetchSettings)
+                        </ul>
                     </section>
-
                     <section>
-                        <h3>Parse: payload normalization</h3>
-                        <select class="selector" value="@_selectedParseModuleId" @onchange="HandleParseModuleChanged">
+                        <h4>Parse suggestions</h4>
+                        <ul class="suggestion-list">
                             @foreach (var module in _analysis.ParseModules)
                             {
-                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                                <li>@module.DisplayName <code>@module.Id</code>@(module.IsRecommended ? " - recommended" : string.Empty)</li>
                             }
-                        </select>
-                        @RenderSettingsEditor(SelectedParseModule, _parseSettings)
+                        </ul>
                     </section>
-
                     <section>
-                        <h3>Augment: SQL lookup</h3>
-                        <select class="selector" value="@_selectedLookupAugmentModuleId" @onchange="HandleLookupAugmentModuleChanged">
+                        <h4>Augment suggestions</h4>
+                        <ul class="suggestion-list">
                             @foreach (var module in _analysis.OrchestrationAugmentModules)
                             {
-                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                                <li>@module.DisplayName <code>@module.Id</code>@(module.IsRecommended ? " - recommended" : string.Empty)</li>
                             }
-                        </select>
-                        @RenderSettingsEditor(SelectedLookupAugmentModule, _lookupAugmentSettings)
+                        </ul>
                     </section>
-
                     <section>
-                        <h3>Augment: conditional join/map</h3>
-                        <select class="selector" value="@_selectedMappingAugmentModuleId" @onchange="HandleMappingAugmentModuleChanged">
-                            @foreach (var module in _analysis.OrchestrationAugmentModules)
-                            {
-                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
-                            }
-                        </select>
-                        @RenderSettingsEditor(SelectedMappingAugmentModule, _mappingAugmentSettings, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "mappingJson" })
-                    </section>
-
-                    <section>
-                        <h3>Delivery route: remote API render</h3>
-                        <select class="selector" value="@_selectedApiRenderModuleId" @onchange="HandleApiRenderModuleChanged">
+                        <h4>Delivery suggestions</h4>
+                        <ul class="suggestion-list">
                             @foreach (var module in _analysis.RenderModules)
                             {
-                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                                <li>Render: @module.DisplayName <code>@module.Id</code></li>
                             }
-                        </select>
-                        @RenderSettingsEditor(SelectedApiRenderModule, _apiRenderSettings)
-                    </section>
-
-                    <section>
-                        <h3>Delivery route: remote API dispatch</h3>
-                        <select class="selector" value="@_selectedApiDeliverModuleId" @onchange="HandleApiDeliverModuleChanged">
                             @foreach (var module in _analysis.DeliverModules)
                             {
-                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
+                                <li>Deliver: @module.DisplayName <code>@module.Id</code></li>
                             }
-                        </select>
-                        @RenderSettingsEditor(SelectedApiDeliverModule, _apiDeliverSettings)
-                    </section>
-
-                    <section>
-                        <h3>Delivery route: XML render</h3>
-                        <select class="selector" value="@_selectedXmlRenderModuleId" @onchange="HandleXmlRenderModuleChanged">
-                            @foreach (var module in _analysis.RenderModules)
-                            {
-                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
-                            }
-                        </select>
-                        @RenderSettingsEditor(SelectedXmlRenderModule, _xmlRenderSettings)
-                    </section>
-
-                    <section>
-                        <h3>Delivery route: XML/file dispatch</h3>
-                        <select class="selector" value="@_selectedXmlDeliverModuleId" @onchange="HandleXmlDeliverModuleChanged">
-                            @foreach (var module in _analysis.DeliverModules)
-                            {
-                                <option value="@module.Id">@module.DisplayName (@module.Id)@(module.IsRecommended ? " - recommended" : string.Empty)</option>
-                            }
-                        </select>
-                        @RenderSettingsEditor(SelectedXmlDeliverModule, _xmlDeliverSettings)
+                        </ul>
                     </section>
                 </div>
-            </article>
 
-            <article class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h2>4. Map fields visually</h2>
-                        <p>Configure how source fields and SQL lookup columns land in the working payload that the render and delivery routes receive.</p>
-                    </div>
-                </div>
+                <p class="field-hint">@_analysis.Fields.Count field mapping(s) were detected and will be attached to the flow when it is created.</p>
 
                 <div class="action-row">
-                    <button class="secondary-button" @onclick="AddMappingRow">Add mapping row</button>
+                    <button class="run-button" @onclick="ApplySampleAnalysis">Populate canvas from sample</button>
+                </div>
+            }
+        </article>
+    }
+
+    @if (_showBizTalkPanel)
+    {
+        <article class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Import from BizTalk</h2>
+                    <p>Point Mulse at a BizTalk solution, project, or directory, then load one generated draft flow onto the canvas and hand-edit it.</p>
+                </div>
+                <button class="secondary-button" @onclick="ToggleBizTalkPanel">Close</button>
+            </div>
+
+            <label class="field-label" for="source-path">Source path</label>
+            <input id="source-path" class="mapping-input" @bind="_sourcePath" @bind:event="oninput" placeholder="C:\Users\...\MyBizTalkApp.sln" />
+
+            <label class="field-label" for="additional-source-paths">Additional solutions/projects (optional)</label>
+            <input id="additional-source-paths" class="mapping-input" @bind="_additionalSourcePaths" @bind:event="oninput" placeholder="C:\...\Partners.sln; C:\...\Core.sln" />
+            <p class="field-hint">Semicolon-separated additional solution, project, or directory paths analyzed alongside the source path as one combined workspace.</p>
+
+            <label class="field-label" for="additional-binding-paths">Additional binding export paths (optional)</label>
+            <input id="additional-binding-paths" class="mapping-input" @bind="_additionalBindingPaths" @bind:event="oninput" placeholder="C:\Exports\Bindings; C:\Exports\Prod.BindingInfo.xml" />
+            <p class="field-hint">Semicolon-separated files or folders containing bindings exported from the BizTalk Administration Console.</p>
+
+            <div class="action-row">
+                <button class="run-button" @onclick="AnalyzeBizTalkAsync" disabled="@_isAnalyzingBizTalk">@(_isAnalyzingBizTalk ? "Analyzing..." : "Analyze source")</button>
+                <button class="secondary-button" @onclick="ClearBizTalk" disabled="@_isAnalyzingBizTalk">Clear</button>
+            </div>
+
+            @if (_bizTalkAnalysis is not null)
+            {
+                <dl class="summary-grid summary-metadata">
+                    <div>
+                        <dt>Source</dt>
+                        <dd>@_bizTalkAnalysis.DisplayName (@_bizTalkAnalysis.SourceType)</dd>
+                    </div>
+                    <div>
+                        <dt>BizTalk projects</dt>
+                        <dd>@_bizTalkAnalysis.BizTalkProjectCount</dd>
+                    </div>
+                    <div>
+                        <dt>Binding files</dt>
+                        <dd>@_bizTalkAnalysis.BindingFiles.Count</dd>
+                    </div>
+                    <div>
+                        <dt>Orchestrations</dt>
+                        <dd>@_bizTalkAnalysis.OrchestrationCount</dd>
+                    </div>
+                    <div>
+                        <dt>Maps</dt>
+                        <dd>@_bizTalkAnalysis.MapCount</dd>
+                    </div>
+                    <div>
+                        <dt>Draft flows</dt>
+                        <dd>@_bizTalkAnalysis.FlowCandidates.Count</dd>
+                    </div>
+                </dl>
+
+                @if (_bizTalkAnalysis.Warnings.Count > 0)
+                {
+                    <div class="warning-panel">
+                        <h3>Analysis warnings</h3>
+                        <ul>
+                            @foreach (var warning in _bizTalkAnalysis.Warnings)
+                            {
+                                <li>@warning</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (_bizTalkAnalysis.FlowCandidates.Count == 0)
+                {
+                    <p>No draft flow candidates were generated for this source.</p>
+                }
+                else
+                {
+                    <div class="card-grid">
+                        @foreach (var candidate in _bizTalkAnalysis.FlowCandidates)
+                        {
+                            <section class="flow-card">
+                                <div class="flow-card-header">
+                                    <div>
+                                        <h3>@candidate.SuggestedFlowId</h3>
+                                        <p><strong>Project:</strong> @candidate.SourceProject</p>
+                                        @if (candidate.IsLikelyTestArtifact)
+                                        {
+                                            <p class="test-artifact-badge">? Looks like a test/debug artifact - confirm before migrating</p>
+                                        }
+                                    </div>
+                                    <button class="run-button" @onclick="() => ApplyBizTalkCandidate(candidate)">Load onto canvas</button>
+                                </div>
+                                <p>@candidate.Summary</p>
+                                <p><strong>Fetch:</strong> @candidate.FetchGuidance</p>
+                                <p><strong>Parse:</strong> @candidate.ParseGuidance</p>
+                                <p><strong>Augments:</strong> @FormatList(candidate.AugmentGuidance)</p>
+                                <p><strong>Deliveries:</strong> @FormatList(candidate.DeliveryGuidance)</p>
+                                @if (candidate.OpenQuestions.Count > 0)
+                                {
+                                    <p><strong>Open questions:</strong> @FormatList(candidate.OpenQuestions)</p>
+                                }
+                                @if (candidate.ScaffoldedModules.Count > 0)
+                                {
+                                    <div class="scaffolded-modules">
+                                        <p>
+                                            <strong>Scaffolded modules:</strong> @candidate.ScaffoldedModules.Count starter C# module(s) for decision/control-flow logic too complex to auto-translate.
+                                            <button class="run-button" @onclick="() => DownloadBizTalkScaffoldedModulesAsync(candidate)">Download all (.zip)</button>
+                                        </p>
+                                        <ul>
+                                            @foreach (var module in candidate.ScaffoldedModules)
+                                            {
+                                                <li>
+                                                    @module.FileName <span class="muted">(@module.SourceArtifactName)</span>
+                                                    <button class="run-button" @onclick="() => DownloadBizTalkScaffoldedModuleAsync(candidate, module)">Download</button>
+                                                </li>
+                                            }
+                                        </ul>
+                                    </div>
+                                }
+                            </section>
+                        }
+                    </div>
+                }
+            }
+        </article>
+    }
+
+    <section class="canvas-layout">
+        <aside class="side-panel">
+            <h2>Flow settings</h2>
+            <p class="panel-hint">Flow-level properties applied when the graph is saved.</p>
+
+            @if (_unresolvedConfigCount > 0)
+            {
+                <p class="status-banner error compact">
+                    @_unresolvedConfigCount unresolved config/secret reference(s) for this flow.
+                    <a href="/config-values">Resolve on the Config values page</a> before enabling or running it.
+                </p>
+            }
+
+            <label class="field-label" for="flow-id">Flow id</label>
+            <input id="flow-id" class="mapping-input" @bind="_flowId" @bind:event="oninput" disabled="@IsExistingFlow" />
+
+            <label class="field-label checkbox-row">
+                <input type="checkbox" checked="@_enabled" @onchange="e => _enabled = (bool)(e.Value ?? false)" />
+                <span>Enabled</span>
+            </label>
+
+            <label class="field-label" for="trigger-mode">Trigger mode</label>
+            <select id="trigger-mode" class="selector" value="@_triggerMode" @onchange="e => _triggerMode = e.Value?.ToString() ?? _triggerMode">
+                @foreach (var mode in TriggerModeOptions)
+                {
+                    <option value="@mode">@mode</option>
+                }
+            </select>
+
+            @if (string.Equals(_triggerMode, "Interval", StringComparison.OrdinalIgnoreCase))
+            {
+                <label class="field-label" for="trigger-interval">Interval (hh:mm:ss)</label>
+                <input id="trigger-interval" class="mapping-input" @bind="_intervalText" @bind:event="oninput" placeholder="00:05:00" />
+            }
+
+            <label class="field-label checkbox-row">
+                <input type="checkbox" checked="@_runOnStartup" @onchange="e => _runOnStartup = (bool)(e.Value ?? false)" />
+                <span>Run on startup</span>
+            </label>
+
+            <label class="field-label checkbox-row">
+                <input type="checkbox" checked="@_hasDefaultRetry" @onchange="e => _hasDefaultRetry = (bool)(e.Value ?? false)" />
+                <span>Use a default retry policy</span>
+            </label>
+
+            @if (_hasDefaultRetry)
+            {
+                <label class="field-label">Max attempts</label>
+                <input class="mapping-input" type="number" min="1" value="@_retryMaxAttempts" @oninput="e => _retryMaxAttempts = ParseNullableInt(e.Value?.ToString())" />
+
+                <label class="field-label">Delay (seconds)</label>
+                <input class="mapping-input" type="number" min="0" step="0.5" value="@_retryDelaySeconds" @oninput="e => _retryDelaySeconds = ParseDouble(e.Value?.ToString(), _retryDelaySeconds)" />
+
+                <label class="field-label">Backoff</label>
+                <select class="selector" value="@_retryBackoff" @onchange="e => _retryBackoff = e.Value?.ToString() ?? _retryBackoff">
+                    @foreach (var backoff in RetryBackoffOptions)
+                    {
+                        <option value="@backoff">@backoff</option>
+                    }
+                </select>
+
+                <label class="field-label">Max delay (seconds, optional)</label>
+                <input class="mapping-input" type="number" min="0" step="0.5" value="@_retryMaxDelaySeconds" @oninput="e => _retryMaxDelaySeconds = ParseNullableDouble(e.Value?.ToString())" />
+            }
+
+            <dl class="summary-grid summary-metadata compact-metadata">
+                <div>
+                    <dt>Sources</dt>
+                    <dd>@(_sources.Count == 0 ? "None" : $"{_sources.Count} ({string.Join(", ", _sources.Select(source => source.Id))})")</dd>
+                </div>
+                <div>
+                    <dt>Augments</dt>
+                    <dd>@AugmentNodes.Count</dd>
+                </div>
+                <div>
+                    <dt>Delivery routes</dt>
+                    <dd>@Routes.Count</dd>
+                </div>
+                <div>
+                    <dt>Seeded from</dt>
+                    <dd>@SeedSourceLabel</dd>
+                </div>
+            </dl>
+        </aside>
+
+        <div class="canvas-surface">
+            @if (_isLoading)
+            {
+                <p class="canvas-placeholder">Loading flow and module catalog...</p>
+            }
+            else if (_nodes.Count == 0)
+            {
+                <p class="canvas-placeholder">The canvas is empty. Add a source from the toolbar, or seed the graph from sample data or a BizTalk source.</p>
+            }
+
+            @if (SourceGraphError is { } graphError)
+            {
+                <div class="status-banner error compact">@graphError</div>
+            }
+
+            <svg @ref="_canvasElement" class="flow-canvas" width="@F(CanvasWidth)" height="@F(CanvasHeight)" viewBox="0 0 @F(CanvasWidth) @F(CanvasHeight)">
+                <defs>
+                    <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" class="edge-arrow" />
+                    </marker>
+                    <marker id="dependency-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" class="edge-arrow dependency" />
+                    </marker>
+                </defs>
+
+                <rect class="canvas-background" x="0" y="0" width="@F(CanvasWidth)" height="@F(CanvasHeight)" @onclick="() => _selectedNodeId = null" />
+
+                @foreach (var source in _sources)
+                {
+                    var bounds = LaneBounds(source);
+                    <g class="source-lane" @key="source">
+                        <rect class="source-lane-body" x="@F(bounds.X)" y="@F(bounds.Y)" width="@F(bounds.Width)" height="@F(bounds.Height)" rx="18" ry="18" />
+                        <text class="source-lane-label" x="@F(bounds.X + 18)" y="@F(bounds.Y + 24)">@LaneLabel(source)</text>
+                    </g>
+                }
+
+                @foreach (var edge in BuildEdges())
+                {
+                    <path class="flow-edge @(edge.IsDependency ? "dependency" : null)"
+                          data-edge-from="@edge.From.Id"
+                          data-edge-to="@edge.To.Id"
+                          data-edge-kind="@(edge.IsDependency ? "dependency" : "flow")"
+                          d="@EdgePath(edge)"
+                          marker-end="@(edge.IsDependency ? "url(#dependency-arrow)" : "url(#flow-arrow)")" />
+                }
+
+                @foreach (var node in _nodes)
+                {
+                    <g @key="node.Id"
+                       class="flow-node stage-@node.Stage.ToString().ToLowerInvariant() @(string.Equals(node.Id, _selectedNodeId, StringComparison.Ordinal) ? "selected" : null)"
+                       data-node-id="@node.Id"
+                       transform="translate(@F(node.X), @F(node.Y))"
+                       @onclick="() => SelectNode(node)">
+                        <rect class="node-body" x="0" y="0" width="@F(NodeWidth)" height="@F(NodeHeight)" rx="14" ry="14" />
+                        <text class="node-stage" x="16" y="26">@Truncate(NodeHeading(node), 24)</text>
+                        <text class="node-title" x="16" y="52">@Truncate(NodeTitle(node), 26)</text>
+                        <text class="node-subtitle" x="16" y="74">@NodeSubtitle(node)</text>
+                    </g>
+                }
+            </svg>
+        </div>
+
+        <aside class="side-panel">
+            @if (SelectedNode is null)
+            {
+                <h2>Node details</h2>
+                <p class="panel-hint">Select a node on the canvas to choose its module and edit its settings.</p>
+            }
+            else
+            {
+                var node = SelectedNode;
+                var catalogModule = FindCatalogModule(node.ModuleId);
+                <h2>@NodeHeading(node)</h2>
+                <p class="panel-hint">@StageDescription(node.Stage)</p>
+
+                <label class="field-label">Module</label>
+                <select class="selector" value="@node.ModuleId" @onchange="e => HandleNodeModuleChanged(node, e)">
+                    <option value="">(select a module)</option>
+                    @foreach (var module in ModulesForStage(node.Stage))
+                    {
+                        <option value="@module.Id">@module.DisplayName (@module.Id)</option>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(node.ModuleId) && catalogModule is null)
+                    {
+                        <option value="@node.ModuleId">@node.ModuleId (not in catalog)</option>
+                    }
+                </select>
+
+                @if (catalogModule is not null)
+                {
+                    <p class="module-description">@catalogModule.Description</p>
+                }
+
+                @if (SourceForNode(node) is { } lane)
+                {
+                    <h3>Source lane</h3>
+                    <label class="field-label">Source id</label>
+                    <input class="mapping-input" value="@lane.Id" @onchange="@(args => RenameSource(lane, args.Value?.ToString()))" />
+                    <p class="field-hint">Join augments reference this id as their left/right source, and other sources reference it when they depend on this source's parsed output.</p>
+
+                    @if (node.Stage == NodeStage.Fetch)
+                    {
+                        <label class="field-label">Depends on (input sources)</label>
+                        @if (_sources.Count < 2)
+                        {
+                            <p class="field-hint">Add a second source lane to feed its parsed output into this source's fetch step.</p>
+                        }
+                        else
+                        {
+                            @foreach (var other in _sources.Where(candidate => !ReferenceEquals(candidate, lane)))
+                            {
+                                <label class="field-label checkbox-row" @key="other">
+                                    <input type="checkbox"
+                                           checked="@lane.InputSourceIds.Contains(other.Id, StringComparer.OrdinalIgnoreCase)"
+                                           @onchange="@(args => ToggleSourceDependency(lane, other.Id, (bool)(args.Value ?? false)))" />
+                                    <span>@other.Id</span>
+                                </label>
+                            }
+                            <p class="field-hint">The selected sources' parsed batches are merged and handed to this fetch module as its input. The dependency graph must stay acyclic.</p>
+                        }
+                    }
+                }
+
+                @if (IsJoinNode(node))
+                {
+                    var joinEditor = EnsureJoinEditor(node);
+                    var leftValue = NormalizeLeftSourceValue(node.Settings.GetValueOrDefault(LeftSourceKey));
+                    var rightValue = node.Settings.GetValueOrDefault(RightSourceKey) ?? string.Empty;
+                    var joinKind = string.IsNullOrWhiteSpace(node.Settings.GetValueOrDefault(JoinKindKey)) ? "Left" : node.Settings[JoinKindKey];
+                    var cardinality = string.IsNullOrWhiteSpace(node.Settings.GetValueOrDefault(CardinalityKey)) ? "FanOut" : node.Settings[CardinalityKey];
+
+                    <h3>Join inputs</h3>
+                    <label class="field-label">Left source</label>
+                    <select class="selector" value="@leftValue" @onchange="@(args => SetJoinSetting(node, LeftSourceKey, args.Value?.ToString()))">
+                        <option value="@WorkingDocumentSelector">* (working document so far)</option>
+                        @foreach (var source in _sources)
+                        {
+                            <option value="@source.Id">@source.Id</option>
+                        }
+                        @if (!string.Equals(leftValue, WorkingDocumentSelector, StringComparison.Ordinal) && FindSource(leftValue) is null)
+                        {
+                            <option value="@leftValue">@leftValue (unknown source)</option>
+                        }
+                    </select>
+                    <p class="field-hint">Choose "*" to join against everything accumulated so far, which is how several joins are chained together.</p>
+
+                    <label class="field-label">Right source *</label>
+                    <select class="selector" value="@rightValue" @onchange="@(args => SetJoinSetting(node, RightSourceKey, args.Value?.ToString()))">
+                        <option value="">(select a source)</option>
+                        @foreach (var source in _sources)
+                        {
+                            <option value="@source.Id">@source.Id</option>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(rightValue) && FindSource(rightValue) is null)
+                        {
+                            <option value="@rightValue">@rightValue (unknown source)</option>
+                        }
+                    </select>
+
+                    <label class="field-label">Join kind</label>
+                    <select class="selector" value="@joinKind" @onchange="@(args => SetJoinSetting(node, JoinKindKey, args.Value?.ToString()))">
+                        @foreach (var option in JoinKindOptions)
+                        {
+                            <option value="@option">@option</option>
+                        }
+                    </select>
+
+                    <label class="field-label">Result cardinality</label>
+                    <select class="selector" value="@cardinality" @onchange="@(args => SetJoinSetting(node, CardinalityKey, args.Value?.ToString()))">
+                        @foreach (var option in CardinalityOptions)
+                        {
+                            <option value="@option">@CardinalityLabel(option)</option>
+                        }
+                    </select>
+
+                    @if (string.Equals(cardinality, "Nested", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <label class="field-label">Nested target path *</label>
+                        <input class="mapping-input"
+                               value="@(node.Settings.GetValueOrDefault(NestedPathKey) ?? string.Empty)"
+                               placeholder="order.lineItems"
+                               @oninput="@(args => SetJoinSetting(node, NestedPathKey, args.Value?.ToString()))" />
+                        <p class="field-hint">Where the array of mapped right rows is written on each left row, e.g. <code>order.lineItems</code>. Required for nested cardinality.</p>
+                    }
+
+                    <h3>Join keys</h3>
+                    <p class="panel-hint">Every key pair must match for two rows to join. Paths use the payload path convention, e.g. <code>$.customerId</code> or <code>order.customer.id</code>.</p>
+                    @if (joinEditor.Keys.Count == 0)
+                    {
+                        <p class="field-hint">No join keys yet. Add at least one pair.</p>
+                    }
+                    @foreach (var key in joinEditor.Keys)
+                    {
+                        <div class="inline-row" @key="key">
+                            <input class="mapping-input" placeholder="@($"Left path ({JoinSideName(node, "Left")})")" value="@key.LeftPath"
+                                   @oninput="@(args => SetJoinKeyPath(node, key, isLeft: true, args.Value?.ToString()))" />
+                            <input class="mapping-input" placeholder="@($"Right path ({JoinSideName(node, "Right")})")" value="@key.RightPath"
+                                   @oninput="@(args => SetJoinKeyPath(node, key, isLeft: false, args.Value?.ToString()))" />
+                            <button class="secondary-button" @onclick="@(() => RemoveJoinKey(node, key))">Remove</button>
+                        </div>
+                    }
+                    <div class="action-row">
+                        <button class="secondary-button" @onclick="@(() => AddJoinKey(node))">Add join key</button>
+                    </div>
+
+                    <h3>Join field mappings</h3>
+                    <p class="panel-hint">Each row writes one target field from the left row, the right row, or a literal JSON value.</p>
+                    <table class="mapping-table">
+                        <thead>
+                            <tr>
+                                <th>Reads from</th>
+                                <th>Source path</th>
+                                <th>Target field</th>
+                                <th>Condition</th>
+                                <th>Literal</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in joinEditor.Mappings)
+                            {
+                                <tr @key="row">
+                                    <td>
+                                        <select class="selector compact" value="@row.SourceKind" @onchange="@(args => SetJoinMappingField(node, row, JoinMappingField.SourceKind, args.Value?.ToString()))">
+                                            @foreach (var kind in SourceKindOptions)
+                                            {
+                                                <option value="@kind">@JoinSideLabel(node, kind)</option>
+                                            }
+                                        </select>
+                                    </td>
+                                    <td><input class="mapping-input" value="@row.SourcePath" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.SourcePath, args.Value?.ToString()))" /></td>
+                                    <td><input class="mapping-input" value="@row.TargetField" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.TargetField, args.Value?.ToString()))" /></td>
+                                    <td>
+                                        <select class="selector compact" value="@row.Condition" @onchange="@(args => SetJoinMappingField(node, row, JoinMappingField.Condition, args.Value?.ToString()))">
+                                            @foreach (var condition in ConditionOptions)
+                                            {
+                                                <option value="@condition">@condition</option>
+                                            }
+                                        </select>
+                                    </td>
+                                    <td><input class="mapping-input" value="@row.LiteralValue" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.LiteralValue, args.Value?.ToString()))" /></td>
+                                    <td><button class="secondary-button" @onclick="@(() => RemoveJoinMapping(node, row))">Remove</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <p class="field-hint">Literal values are raw JSON, so text literals need quotes: <code>"enriched"</code>.</p>
+                    <div class="action-row">
+                        <button class="secondary-button" @onclick="@(() => AddJoinMapping(node))">Add mapping</button>
+                    </div>
+                }
+                else
+                {
+                    @RenderSettingsEditor(catalogModule?.Settings, node.Settings)
+                }
+
+                var descriptorKeys = catalogModule?.Settings.Select(static setting => setting.Key).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                    ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var extraKeys = node.Settings.Keys.Where(key => !descriptorKeys.Contains(key)).OrderBy(static key => key, StringComparer.OrdinalIgnoreCase).ToArray();
+
+                @if (extraKeys.Length > 0)
+                {
+                    <h3>Additional settings</h3>
+                    @foreach (var key in extraKeys)
+                    {
+                        <div class="setting-row" @key="key">
+                            <label class="field-label">@key</label>
+                            <div class="inline-row">
+                                <input class="mapping-input" value="@node.Settings[key]" @oninput="e => node.Settings[key] = e.Value?.ToString() ?? string.Empty" />
+                                <button class="secondary-button" @onclick="() => node.Settings.Remove(key)">Remove</button>
+                            </div>
+                        </div>
+                    }
+                }
+
+                <h3>Add a setting</h3>
+                <div class="inline-row">
+                    <input class="mapping-input" @bind="_newSettingKey" @bind:event="oninput" placeholder="Setting key" />
+                    <button class="secondary-button" @onclick="() => AddCustomSetting(node)">Add</button>
                 </div>
 
-                <table class="mapping-table">
+                @if (node.Stage == NodeStage.Augment)
+                {
+                    <h3>Order</h3>
+                    <p class="panel-hint">Augment steps run in order after every source has been fetched and parsed. Join behaviour is configured through the module's own settings.</p>
+                    <div class="inline-row">
+                        <button class="secondary-button" @onclick="() => MoveAugment(node, -1)">Move earlier</button>
+                        <button class="secondary-button" @onclick="() => MoveAugment(node, 1)">Move later</button>
+                    </div>
+                }
+
+                @if (node.Stage is NodeStage.Render or NodeStage.Deliver)
+                {
+                    <h3>Delivery route</h3>
+                    <p class="panel-hint">Route @RouteNumber(node) pairs one render step with one deliver step.</p>
+                }
+
+                <div class="action-row">
+                    @if (node.Stage is NodeStage.Render or NodeStage.Deliver)
+                    {
+                        <button class="secondary-button" @onclick="() => RemoveRoute(node.RouteId)">Remove route</button>
+                    }
+                    else if (SourceForNode(node) is { } selectedLane)
+                    {
+                        <button class="secondary-button" @onclick="() => RemoveSourceLane(selectedLane)">Remove source</button>
+                    }
+                    else
+                    {
+                        <button class="secondary-button" @onclick="() => RemoveNode(node)">Remove node</button>
+                    }
+                </div>
+            }
+        </aside>
+    </section>
+
+    @if (_mappingRows.Count > 0)
+    {
+        <article class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Field mappings</h2>
+                    <p>Visual mappings captured from the analyzed sample. They are written into the join and map augment's field mappings when the flow is created.</p>
+                </div>
+                <button class="secondary-button" @onclick="AddMappingRow">Add mapping</button>
+            </div>
+
+            <table class="mapping-table">
+                <thead>
+                    <tr>
+                        <th>Reads from</th>
+                        <th>Source path</th>
+                        <th>Target field</th>
+                        <th>Condition</th>
+                        <th>Literal</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in _mappingRows)
+                    {
+                        <tr @key="row">
+                            <td>
+                                <select class="selector compact" value="@row.SourceKind" @onchange="e => row.SourceKind = e.Value?.ToString() ?? row.SourceKind">
+                                    @foreach (var kind in SourceKindOptions)
+                                    {
+                                        <option value="@kind">@kind</option>
+                                    }
+                                </select>
+                            </td>
+                            <td><input class="mapping-input" value="@row.SourcePath" @oninput="e => row.SourcePath = e.Value?.ToString() ?? string.Empty" /></td>
+                            <td><input class="mapping-input" value="@row.TargetField" @oninput="e => row.TargetField = e.Value?.ToString() ?? string.Empty" /></td>
+                            <td>
+                                <select class="selector compact" value="@row.Condition" @onchange="e => row.Condition = e.Value?.ToString() ?? row.Condition">
+                                    @foreach (var condition in ConditionOptions)
+                                    {
+                                        <option value="@condition">@condition</option>
+                                    }
+                                </select>
+                            </td>
+                            <td><input class="mapping-input" value="@row.LiteralValue" @oninput="e => row.LiteralValue = e.Value?.ToString() ?? string.Empty" /></td>
+                            <td><button class="secondary-button" @onclick="() => _mappingRows.Remove(row)">Remove</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </article>
+    }
+
+    @if (_bizTalkRequirements.Count > 0 || _bizTalkWarnings.Count > 0)
+    {
+        <article class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>BizTalk import follow-up</h2>
+                    <p>Config, secret, and review items reported for the draft flow currently on the canvas.</p>
+                </div>
+            </div>
+
+            @if (_bizTalkRequirements.Count > 0)
+            {
+                <table class="module-table">
                     <thead>
                         <tr>
-                            <th>Source kind</th>
-                            <th>Source field / column</th>
-                            <th>Sample value</th>
-                            <th>Purpose</th>
-                            <th>Condition</th>
-                            <th>Target field</th>
-                            <th>Literal value</th>
+                            <th>Kind</th>
+                            <th>Setting</th>
+                            <th>Reference</th>
+                            <th>Applied</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var field in _mappingRows)
+                        @foreach (var requirement in _bizTalkRequirements)
                         {
                             <tr>
-                                <td>
-                                    <select class="selector compact" @bind="field.SourceKind">
-                                        @foreach (var sourceKind in SourceKindOptions)
-                                        {
-                                            <option value="@sourceKind">@sourceKind</option>
-                                        }
-                                    </select>
-                                </td>
-                                <td>
-                                    <input class="mapping-input" @bind="field.SourcePath" @bind:event="oninput" />
-                                </td>
-                                <td>@field.SampleValue</td>
-                                <td>
-                                    <select class="selector compact" @bind="field.Purpose">
-                                        @foreach (var purpose in PurposeOptions)
-                                        {
-                                            <option value="@purpose">@purpose</option>
-                                        }
-                                    </select>
-                                </td>
-                                <td>
-                                    <select class="selector compact" @bind="field.Condition">
-                                        @foreach (var condition in ConditionOptions)
-                                        {
-                                            <option value="@condition">@condition</option>
-                                        }
-                                    </select>
-                                </td>
-                                <td>
-                                    <input class="mapping-input" @bind="field.TargetField" @bind:event="oninput" />
-                                </td>
-                                <td>
-                                    <input class="mapping-input" @bind="field.LiteralValue" @bind:event="oninput" disabled="@(field.SourceKind != "Literal")" />
-                                </td>
+                                <td>@requirement.Kind</td>
+                                <td class="path-value">@requirement.SettingPath</td>
+                                <td class="path-value">@requirement.ReferenceName</td>
+                                <td>@(requirement.AppliedToDraft ? "Placeholder in draft" : "Recommendation only")</td>
                             </tr>
                         }
                     </tbody>
                 </table>
-            </article>
+            }
 
-            <article class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h2>5. Create the runnable flow</h2>
-                        <p>The designer persists a runtime flow that uses your selected modules and field mappings.</p>
-                    </div>
+            @if (_bizTalkWarnings.Count > 0)
+            {
+                <div class="warning-panel">
+                    <h3>Draft warnings</h3>
+                    <ul>
+                        @foreach (var warning in _bizTalkWarnings)
+                        {
+                            <li>@warning</li>
+                        }
+                    </ul>
                 </div>
-
-                <div class="summary-grid">
-                    <div>
-                        <h3>Selected modules</h3>
-                        <ul>
-                            <li><strong>Fetch:</strong> @_selectedFetchModuleId</li>
-                            <li><strong>Parse:</strong> @_selectedParseModuleId</li>
-                            <li><strong>Lookup augment:</strong> @_selectedLookupAugmentModuleId</li>
-                            <li><strong>Join/map augment:</strong> @_selectedMappingAugmentModuleId</li>
-                            <li><strong>API route:</strong> @_selectedApiRenderModuleId -> @_selectedApiDeliverModuleId</li>
-                            <li><strong>XML route:</strong> @_selectedXmlRenderModuleId -> @_selectedXmlDeliverModuleId</li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h3>Mapping counts</h3>
-                        <ul>
-                            <li><strong>Merge:</strong> @_mappingRows.Count(row => row.Purpose == "Merge")</li>
-                            <li><strong>Orchestration:</strong> @_mappingRows.Count(row => row.Purpose == "Orchestration")</li>
-                            <li><strong>Output:</strong> @_mappingRows.Count(row => row.Purpose == "Output")</li>
-                            <li><strong>Total rows:</strong> @_mappingRows.Count</li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div class="action-row">
-                    <button class="run-button" @onclick="CreateFlowAsync" disabled="@_isCreatingFlow">Create flow</button>
-                </div>
-            </article>
-        }
-    </section>
+            }
+        </article>
+    }
 </div>
 
 @code {
-    private static readonly string[] PurposeOptions = ["Merge", "Orchestration", "Output"];
-    private static readonly string[] SourceKindOptions = ["Source", "Lookup", "Literal"];
-    private static readonly string[] ConditionOptions = ["Always", "WhenLookupFound", "WhenLookupMissing"];
+    private const double NodeWidth = 210;
+    private const double NodeHeight = 96;
+    private const double ColumnSpacing = 270;
+    private const double RowSpacing = 150;
+    private const double CanvasPadding = 40;
+    private const double LanePaddingX = 18;
+    private const double LaneHeaderHeight = 38;
+    private const double LaneGap = 30;
 
+    private const string JoinModuleId = "multi-source-join-map-augment";
+    private const string WorkingDocumentSelector = "*";
+    private const string LeftSourceKey = "leftSourceId";
+    private const string RightSourceKey = "rightSourceId";
+    private const string JoinKindKey = "joinKind";
+    private const string CardinalityKey = "resultCardinality";
+    private const string NestedPathKey = "nestedTargetPath";
+    private const string JoinKeysKey = "joinKeysJson";
+    private const string MappingsKey = "mappingJson";
+
+    private static readonly string[] TriggerModeOptions = ["Disabled", "OnDemand", "Interval", "Push"];
+    private static readonly string[] RetryBackoffOptions = ["Fixed", "Linear", "Exponential"];
+    private static readonly string[] SourceKindOptions = ["Left", "Right", "Literal"];
+    private static readonly string[] ConditionOptions = ["Always", "WhenMatched", "WhenUnmatched"];
+    private static readonly string[] JoinKindOptions = ["Inner", "Left", "Right", "Full"];
+    private static readonly string[] CardinalityOptions = ["FanOut", "Nested"];
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    [Parameter]
+    public string? FlowId { get; set; }
+
+    private readonly List<FlowNode> _nodes = [];
+    private readonly List<SourceLane> _sources = [];
+    private readonly Dictionary<string, JoinEditorState> _joinEditors = new(StringComparer.Ordinal);
+    private readonly List<FieldMappingRow> _mappingRows = [];
+
+    private IReadOnlyList<ModuleViewModel> _modules = [];
+    private IReadOnlyList<ConfigReferenceUsageViewModel> _configUsages = [];
+    private IReadOnlyList<BizTalkSettingRequirementViewModel> _bizTalkRequirements = [];
+    private IReadOnlyList<string> _bizTalkWarnings = [];
+
+    private ElementReference _canvasElement;
+    private IJSObjectReference? _canvasModule;
+    private DotNetObjectReference<Designer>? _selfReference;
+    private bool _canvasInitialized;
+
+    private string? _loadedFlowId;
+    private bool _graphInitialized;
+    private bool _isLoading = true;
+    private bool _isSaving;
+    private string? _statusMessage;
+    private string? _errorMessage;
+    private string? _selectedNodeId;
+    private string _newSettingKey = string.Empty;
+    private int _unresolvedConfigCount;
+    private SeedSource _seedSource = SeedSource.Manual;
+
+    private string _flowId = string.Empty;
+    private bool _enabled = true;
+    private string _triggerMode = "OnDemand";
+    private string _intervalText = "00:05:00";
+    private bool _runOnStartup;
+
+    private bool _hasDefaultRetry;
+    private int? _retryMaxAttempts;
+    private double _retryDelaySeconds = 1;
+    private string _retryBackoff = "Fixed";
+    private double? _retryMaxDelaySeconds;
+
+    private bool _showSamplePanel;
+    private bool _isAnalyzingSample;
     private string _sampleText = string.Empty;
     private string? _fileName;
     private string? _contentType;
-    private bool _isAnalyzing;
-    private bool _isCreatingFlow;
-    private bool _flowEnabled = true;
-    private bool _runOnStartup;
-    private string _flowId = "sftp-sql-http-xml-flow";
-    private string _triggerMode = "Interval";
-    private string _intervalText = "00:05:00";
-    private string? _statusMessage;
-    private string? _errorMessage;
     private FlowDesignAnalysisViewModel? _analysis;
-    private List<FieldMappingRow> _mappingRows = [];
-    private string? _selectedFetchModuleId;
-    private string? _selectedParseModuleId;
-    private string? _selectedLookupAugmentModuleId;
-    private string? _selectedMappingAugmentModuleId;
-    private string? _selectedApiRenderModuleId;
-    private string? _selectedApiDeliverModuleId;
-    private string? _selectedXmlRenderModuleId;
-    private string? _selectedXmlDeliverModuleId;
-    private readonly Dictionary<string, string> _fetchSettings = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _parseSettings = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _lookupAugmentSettings = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _mappingAugmentSettings = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _apiRenderSettings = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _apiDeliverSettings = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _xmlRenderSettings = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _xmlDeliverSettings = new(StringComparer.OrdinalIgnoreCase);
 
-    private ModuleSuggestionViewModel? SelectedFetchModule => FindModule(_analysis?.FetchModules, _selectedFetchModuleId);
-    private ModuleSuggestionViewModel? SelectedParseModule => FindModule(_analysis?.ParseModules, _selectedParseModuleId);
-    private ModuleSuggestionViewModel? SelectedLookupAugmentModule => FindModule(_analysis?.OrchestrationAugmentModules, _selectedLookupAugmentModuleId);
-    private ModuleSuggestionViewModel? SelectedMappingAugmentModule => FindModule(_analysis?.OrchestrationAugmentModules, _selectedMappingAugmentModuleId);
-    private ModuleSuggestionViewModel? SelectedApiRenderModule => FindModule(_analysis?.RenderModules, _selectedApiRenderModuleId);
-    private ModuleSuggestionViewModel? SelectedApiDeliverModule => FindModule(_analysis?.DeliverModules, _selectedApiDeliverModuleId);
-    private ModuleSuggestionViewModel? SelectedXmlRenderModule => FindModule(_analysis?.RenderModules, _selectedXmlRenderModuleId);
-    private ModuleSuggestionViewModel? SelectedXmlDeliverModule => FindModule(_analysis?.DeliverModules, _selectedXmlDeliverModuleId);
+    private bool _showBizTalkPanel;
+    private bool _isAnalyzingBizTalk;
+    private string _sourcePath = string.Empty;
+    private string _additionalSourcePaths = string.Empty;
+    private string _additionalBindingPaths = string.Empty;
+    private BizTalkSolutionAnalysisViewModel? _bizTalkAnalysis;
+
+    private bool IsExistingFlow => !string.IsNullOrWhiteSpace(FlowId);
+
+    private FlowNode? SelectedNode => _nodes.FirstOrDefault(node => string.Equals(node.Id, _selectedNodeId, StringComparison.Ordinal));
+
+    private SourceLane? FindSource(string? sourceId)
+        => string.IsNullOrWhiteSpace(sourceId)
+            ? null
+            : _sources.FirstOrDefault(source => string.Equals(source.Id, sourceId, StringComparison.OrdinalIgnoreCase));
+
+    private SourceLane? SourceForNode(FlowNode node)
+        => node.Stage is NodeStage.Fetch or NodeStage.Parse ? FindSource(node.SourceId) : null;
+
+    private List<FlowNode> AugmentNodes => _nodes.Where(static node => node.Stage == NodeStage.Augment).OrderBy(static node => node.Order).ToList();
+
+    private List<RouteView> Routes => _nodes
+        .Where(static node => node.Stage is NodeStage.Render or NodeStage.Deliver)
+        .GroupBy(static node => node.RouteId, StringComparer.Ordinal)
+        .Select(static group => new RouteView(
+            group.Key,
+            group.Min(static node => node.Order),
+            group.FirstOrDefault(static node => node.Stage == NodeStage.Render),
+            group.FirstOrDefault(static node => node.Stage == NodeStage.Deliver)))
+        .OrderBy(static route => route.Order)
+        .ToList();
+
+    private string SeedSourceLabel => _seedSource switch
+    {
+        SeedSource.Sample => "Sample data",
+        SeedSource.BizTalk => "BizTalk import",
+        SeedSource.ExistingFlow => "Existing flow",
+        _ => "Manual"
+    };
+
+    private double CanvasWidth => Math.Max(1080, (_nodes.Count == 0 ? 0 : _nodes.Max(static node => node.X)) + NodeWidth + CanvasPadding + LanePaddingX);
+
+    private double CanvasHeight => Math.Max(520, (_nodes.Count == 0 ? 0 : _nodes.Max(static node => node.Y)) + NodeHeight + CanvasPadding + LanePaddingX);
+
+    private string? SourceGraphError => DescribeSourceGraphError();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCatalogAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_graphInitialized && string.Equals(_loadedFlowId, FlowId, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _graphInitialized = true;
+        _loadedFlowId = FlowId;
+
+        if (IsExistingFlow)
+        {
+            await LoadFlowAsync(FlowId!);
+        }
+        else
+        {
+            ResetGraph();
+            _isLoading = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_canvasInitialized)
+        {
+            return;
+        }
+
+        _canvasInitialized = true;
+        _selfReference = DotNetObjectReference.Create(this);
+        _canvasModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/flow-canvas.js");
+        await _canvasModule.InvokeVoidAsync("initialize", _canvasElement, _selfReference);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_canvasModule is not null)
+        {
+            try
+            {
+                await _canvasModule.InvokeVoidAsync("dispose", _canvasElement);
+                await _canvasModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // The circuit is already gone, so there is nothing left to clean up on the client.
+            }
+        }
+
+        _selfReference?.Dispose();
+    }
+
+    [JSInvokable]
+    public Task OnNodeMoved(string nodeId, double x, double y)
+    {
+        var node = _nodes.FirstOrDefault(candidate => string.Equals(candidate.Id, nodeId, StringComparison.Ordinal));
+        if (node is not null)
+        {
+            node.X = x;
+            node.Y = y;
+            StateHasChanged();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task LoadCatalogAsync()
+    {
+        try
+        {
+            _modules = await ApiClient.GetModulesAsync(CancellationToken.None);
+            _configUsages = await ApiClient.GetConfigValueUsagesAsync(CancellationToken.None);
+            UpdateUnresolvedConfigCount();
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to load the module catalog: {exception.Message}";
+        }
+    }
+
+    private async Task LoadFlowAsync(string flowId)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            var flow = await ApiClient.GetFlowAsync(flowId, CancellationToken.None);
+            BuildFromFlow(flow);
+            _seedSource = SeedSource.ExistingFlow;
+            UpdateUnresolvedConfigCount();
+        }
+        catch (Exception exception)
+        {
+            ResetGraph();
+            _errorMessage = $"Unable to load flow '{flowId}': {exception.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void ResetGraph()
+    {
+        _nodes.Clear();
+        _sources.Clear();
+        _joinEditors.Clear();
+        _mappingRows.Clear();
+        _bizTalkRequirements = [];
+        _bizTalkWarnings = [];
+        _selectedNodeId = null;
+        _seedSource = SeedSource.Manual;
+        _flowId = string.Empty;
+        _enabled = true;
+        _triggerMode = "OnDemand";
+        _intervalText = "00:05:00";
+        _runOnStartup = false;
+        _hasDefaultRetry = false;
+        _retryMaxAttempts = null;
+        _retryDelaySeconds = 1;
+        _retryBackoff = "Fixed";
+        _retryMaxDelaySeconds = null;
+    }
+
+    private void ClearCanvas()
+    {
+        var flowId = _flowId;
+        ResetGraph();
+        _flowId = flowId;
+        _seedSource = IsExistingFlow ? SeedSource.ExistingFlow : SeedSource.Manual;
+        _statusMessage = "Canvas cleared.";
+    }
+
+    private void BuildFromFlow(FlowViewModel flow)
+    {
+        _nodes.Clear();
+        _sources.Clear();
+        _joinEditors.Clear();
+        _mappingRows.Clear();
+        _bizTalkRequirements = [];
+        _bizTalkWarnings = [];
+        _selectedNodeId = null;
+
+        _flowId = flow.Id;
+        _enabled = flow.Enabled;
+        _triggerMode = flow.TriggerMode;
+        _intervalText = flow.Interval?.ToString() ?? "00:05:00";
+        _runOnStartup = flow.RunOnStartup;
+
+        if (flow.Retry is { } retry)
+        {
+            _hasDefaultRetry = true;
+            _retryMaxAttempts = retry.MaxAttempts;
+            _retryDelaySeconds = retry.DelaySeconds;
+            _retryBackoff = retry.Backoff;
+            _retryMaxDelaySeconds = retry.MaxDelaySeconds;
+        }
+        else
+        {
+            _hasDefaultRetry = false;
+            _retryMaxAttempts = null;
+            _retryDelaySeconds = 1;
+            _retryBackoff = "Fixed";
+            _retryMaxDelaySeconds = null;
+        }
+
+        foreach (var source in flow.Sources)
+        {
+            CreateSourceLane(
+                source.Id,
+                source.Fetch.Module,
+                source.Fetch.Settings,
+                source.Parse.Module,
+                source.Parse.Settings,
+                source.InputSourceIds);
+        }
+
+        var order = 0;
+        foreach (var augment in flow.Augments)
+        {
+            CreateNode(NodeStage.Augment, augment.Module, augment.Settings, order: order++);
+        }
+
+        var routeIndex = 0;
+        foreach (var route in flow.Deliveries)
+        {
+            var routeId = Guid.NewGuid().ToString("n");
+            CreateNode(NodeStage.Render, route.Render.Module, route.Render.Settings, order: routeIndex, routeId: routeId);
+            CreateNode(NodeStage.Deliver, route.Deliver.Module, route.Deliver.Settings, order: routeIndex, routeId: routeId);
+            routeIndex++;
+        }
+
+        AutoLayout();
+    }
+
+    private FlowNode CreateNode(NodeStage stage, string moduleId, IReadOnlyDictionary<string, string>? settings = null, int order = 0, string? routeId = null, string? sourceId = null)
+    {
+        var node = new FlowNode
+        {
+            Stage = stage,
+            ModuleId = moduleId,
+            Order = order,
+            RouteId = routeId ?? string.Empty,
+            SourceId = sourceId ?? string.Empty,
+            Settings = settings is null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(settings, StringComparer.OrdinalIgnoreCase)
+        };
+
+        _nodes.Add(node);
+        return node;
+    }
+
+    private SourceLane CreateSourceLane(
+        string sourceId,
+        string fetchModuleId,
+        IReadOnlyDictionary<string, string>? fetchSettings,
+        string parseModuleId,
+        IReadOnlyDictionary<string, string>? parseSettings,
+        IEnumerable<string>? inputSourceIds)
+    {
+        var id = string.IsNullOrWhiteSpace(sourceId) ? NextSourceId() : sourceId.Trim();
+        var lane = new SourceLane
+        {
+            Id = id,
+            Fetch = CreateNode(NodeStage.Fetch, fetchModuleId, fetchSettings, sourceId: id),
+            Parse = CreateNode(NodeStage.Parse, parseModuleId, parseSettings, sourceId: id)
+        };
+
+        if (inputSourceIds is not null)
+        {
+            foreach (var inputSourceId in inputSourceIds.Where(static value => !string.IsNullOrWhiteSpace(value)))
+            {
+                lane.InputSourceIds.Add(inputSourceId.Trim());
+            }
+        }
+
+        _sources.Add(lane);
+        return lane;
+    }
+
+    private string NextSourceId()
+    {
+        if (FindSource("primary") is null)
+        {
+            return "primary";
+        }
+
+        for (var index = 2; ; index++)
+        {
+            var candidate = $"source-{index}";
+            if (FindSource(candidate) is null)
+            {
+                return candidate;
+            }
+        }
+    }
+
+    private void AddSourceLane()
+    {
+        var fetchModule = ModulesForStage(NodeStage.Fetch).FirstOrDefault();
+        var parseModule = ModulesForStage(NodeStage.Parse).FirstOrDefault();
+
+        var lane = CreateSourceLane(NextSourceId(), fetchModule?.Id ?? string.Empty, null, parseModule?.Id ?? string.Empty, null, null);
+        ApplyModuleDefaults(lane.Fetch, fetchModule);
+        ApplyModuleDefaults(lane.Parse, parseModule);
+
+        AutoLayout();
+        _selectedNodeId = lane.Fetch.Id;
+        _statusMessage = $"Added source '{lane.Id}'. Pick its fetch and parse modules, and wire its inputs if it depends on another source.";
+    }
+
+    private void RemoveSourceLane(SourceLane lane)
+    {
+        _nodes.Remove(lane.Fetch);
+        _nodes.Remove(lane.Parse);
+        _sources.Remove(lane);
+
+        foreach (var other in _sources)
+        {
+            other.InputSourceIds.RemoveAll(inputSourceId => string.Equals(inputSourceId, lane.Id, StringComparison.OrdinalIgnoreCase));
+        }
+
+        foreach (var augment in AugmentNodes)
+        {
+            foreach (var key in new[] { LeftSourceKey, RightSourceKey })
+            {
+                if (augment.Settings.TryGetValue(key, out var value) && string.Equals(value, lane.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    augment.Settings[key] = string.Empty;
+                }
+            }
+        }
+
+        _selectedNodeId = null;
+        AutoLayout();
+        _statusMessage = $"Removed source '{lane.Id}'.";
+    }
+
+    private void RenameSource(SourceLane lane, string? value)
+    {
+        var newId = (value ?? string.Empty).Trim();
+        if (string.Equals(newId, lane.Id, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newId))
+        {
+            _errorMessage = "A source id cannot be empty.";
+            return;
+        }
+
+        if (_sources.Any(other => !ReferenceEquals(other, lane) && string.Equals(other.Id, newId, StringComparison.OrdinalIgnoreCase)))
+        {
+            _errorMessage = $"Source id '{newId}' is already used by another source.";
+            return;
+        }
+
+        var previousId = lane.Id;
+        lane.Id = newId;
+        lane.Fetch.SourceId = newId;
+        lane.Parse.SourceId = newId;
+
+        foreach (var other in _sources)
+        {
+            for (var index = 0; index < other.InputSourceIds.Count; index++)
+            {
+                if (string.Equals(other.InputSourceIds[index], previousId, StringComparison.OrdinalIgnoreCase))
+                {
+                    other.InputSourceIds[index] = newId;
+                }
+            }
+        }
+
+        foreach (var augment in AugmentNodes)
+        {
+            foreach (var key in new[] { LeftSourceKey, RightSourceKey })
+            {
+                if (augment.Settings.TryGetValue(key, out var current) && string.Equals(current, previousId, StringComparison.OrdinalIgnoreCase))
+                {
+                    augment.Settings[key] = newId;
+                }
+            }
+        }
+
+        _errorMessage = null;
+        _statusMessage = $"Renamed source '{previousId}' to '{newId}'.";
+    }
+
+    private void ToggleSourceDependency(SourceLane lane, string inputSourceId, bool selected)
+    {
+        if (selected)
+        {
+            if (!lane.InputSourceIds.Contains(inputSourceId, StringComparer.OrdinalIgnoreCase))
+            {
+                lane.InputSourceIds.Add(inputSourceId);
+            }
+        }
+        else
+        {
+            lane.InputSourceIds.RemoveAll(existing => string.Equals(existing, inputSourceId, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private string? DescribeSourceGraphError()
+    {
+        if (_sources.Any(static source => string.IsNullOrWhiteSpace(source.Id)))
+        {
+            return "Every source needs a non-empty id.";
+        }
+
+        var duplicate = _sources
+            .GroupBy(static source => source.Id, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(static group => group.Count() > 1);
+        if (duplicate is not null)
+        {
+            return $"Source id '{duplicate.Key}' is used more than once. Source ids must be unique within a flow.";
+        }
+
+        foreach (var source in _sources)
+        {
+            foreach (var inputSourceId in source.InputSourceIds)
+            {
+                if (string.Equals(inputSourceId, source.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    return $"Source '{source.Id}' cannot depend on itself.";
+                }
+
+                if (FindSource(inputSourceId) is null)
+                {
+                    return $"Source '{source.Id}' depends on unknown source '{inputSourceId}'.";
+                }
+            }
+        }
+
+        var cycle = FindSourceCycle();
+        return cycle is null
+            ? null
+            : $"The source dependency graph has a cycle: {string.Join(" -> ", cycle)}. Remove one of those 'depends on' links before saving.";
+    }
+
+    private List<string>? FindSourceCycle()
+    {
+        var states = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var stack = new List<string>();
+
+        List<string>? Visit(string sourceId)
+        {
+            if (states.TryGetValue(sourceId, out var state))
+            {
+                if (state == 1)
+                {
+                    return null;
+                }
+
+                var startIndex = stack.FindIndex(entry => string.Equals(entry, sourceId, StringComparison.OrdinalIgnoreCase));
+                var cycle = stack.Skip(startIndex < 0 ? 0 : startIndex).ToList();
+                cycle.Add(sourceId);
+                return cycle;
+            }
+
+            states[sourceId] = 0;
+            stack.Add(sourceId);
+
+            if (FindSource(sourceId) is { } lane)
+            {
+                foreach (var inputSourceId in lane.InputSourceIds)
+                {
+                    var cycle = Visit(inputSourceId);
+                    if (cycle is not null)
+                    {
+                        return cycle;
+                    }
+                }
+            }
+
+            states[sourceId] = 1;
+            stack.RemoveAt(stack.Count - 1);
+            return null;
+        }
+
+        foreach (var source in _sources)
+        {
+            var cycle = Visit(source.Id);
+            if (cycle is not null)
+            {
+                return cycle;
+            }
+        }
+
+        return null;
+    }
+
+    private void AddAugmentNode()
+    {
+        var augments = AugmentNodes;
+        var order = augments.Count == 0 ? 0 : augments.Max(static node => node.Order) + 1;
+        AddStageNode(NodeStage.Augment, order);
+    }
+
+    private void AddJoinAugmentNode()
+    {
+        var module = FindCatalogModule(JoinModuleId);
+        if (module is null)
+        {
+            _errorMessage = $"The '{JoinModuleId}' module is not available in the module catalog.";
+            return;
+        }
+
+        var augments = AugmentNodes;
+        var order = augments.Count == 0 ? 0 : augments.Max(static node => node.Order) + 1;
+        var node = CreateNode(NodeStage.Augment, module.Id, order: order);
+        ApplyModuleDefaults(node, module);
+
+        if (_sources.Count >= 2)
+        {
+            node.Settings[LeftSourceKey] = _sources[0].Id;
+            node.Settings[RightSourceKey] = _sources[1].Id;
+        }
+
+        AutoLayout();
+        _selectedNodeId = node.Id;
+        _statusMessage = "Added a multi-source join and map augment. Configure its join keys and field mappings in the node details panel.";
+    }
+
+    private void AddStageNode(NodeStage stage, int order = 0)
+    {
+        var module = ModulesForStage(stage).FirstOrDefault();
+        var node = CreateNode(stage, module?.Id ?? string.Empty, order: order);
+        ApplyModuleDefaults(node, module);
+        AutoLayout();
+        _selectedNodeId = node.Id;
+    }
+
+    private void AddDeliveryRoute()
+    {
+        var routeId = Guid.NewGuid().ToString("n");
+        var order = Routes.Count;
+        var renderModule = ModulesForStage(NodeStage.Render).FirstOrDefault();
+        var deliverModule = ModulesForStage(NodeStage.Deliver).FirstOrDefault();
+
+        var render = CreateNode(NodeStage.Render, renderModule?.Id ?? string.Empty, order: order, routeId: routeId);
+        var deliver = CreateNode(NodeStage.Deliver, deliverModule?.Id ?? string.Empty, order: order, routeId: routeId);
+        ApplyModuleDefaults(render, renderModule);
+        ApplyModuleDefaults(deliver, deliverModule);
+
+        AutoLayout();
+        _selectedNodeId = render.Id;
+    }
+
+    private void RemoveNode(FlowNode node)
+    {
+        _nodes.Remove(node);
+        _joinEditors.Remove(node.Id);
+        if (string.Equals(_selectedNodeId, node.Id, StringComparison.Ordinal))
+        {
+            _selectedNodeId = null;
+        }
+    }
+
+    private void RemoveRoute(string routeId)
+    {
+        foreach (var node in _nodes.Where(candidate => string.Equals(candidate.RouteId, routeId, StringComparison.Ordinal)).ToArray())
+        {
+            _joinEditors.Remove(node.Id);
+        }
+
+        _nodes.RemoveAll(node => string.Equals(node.RouteId, routeId, StringComparison.Ordinal));
+        _selectedNodeId = null;
+    }
+
+    private void MoveAugment(FlowNode node, int delta)
+    {
+        var ordered = AugmentNodes;
+        var index = ordered.IndexOf(node);
+        var target = index + delta;
+        if (index < 0 || target < 0 || target >= ordered.Count)
+        {
+            return;
+        }
+
+        (ordered[index].Order, ordered[target].Order) = (ordered[target].Order, ordered[index].Order);
+        AutoLayout();
+    }
+
+    private void SelectNode(FlowNode node)
+    {
+        _selectedNodeId = node.Id;
+        _newSettingKey = string.Empty;
+    }
+
+    private void HandleNodeModuleChanged(FlowNode node, ChangeEventArgs args)
+    {
+        node.ModuleId = args.Value?.ToString() ?? string.Empty;
+        _joinEditors.Remove(node.Id);
+        ApplyModuleDefaults(node, FindCatalogModule(node.ModuleId));
+    }
+
+    private static void ApplyModuleDefaults(FlowNode node, ModuleViewModel? module)
+    {
+        node.Settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (module is null)
+        {
+            return;
+        }
+
+        foreach (var setting in module.Settings)
+        {
+            node.Settings[setting.Key] = setting.DefaultValue ?? string.Empty;
+        }
+    }
+
+    private void AddCustomSetting(FlowNode node)
+    {
+        if (string.IsNullOrWhiteSpace(_newSettingKey))
+        {
+            return;
+        }
+
+        node.Settings.TryAdd(_newSettingKey.Trim(), string.Empty);
+        _newSettingKey = string.Empty;
+    }
+
+    private void AutoLayout()
+    {
+        var laneStride = NodeHeight + LaneHeaderHeight + LaneGap;
+        var laneTop = CanvasPadding + LaneHeaderHeight;
+        var laneIndex = 0;
+
+        foreach (var source in _sources)
+        {
+            var y = laneTop + (laneIndex * laneStride);
+            source.Fetch.X = CanvasPadding + LanePaddingX;
+            source.Fetch.Y = y;
+            source.Parse.X = source.Fetch.X + ColumnSpacing;
+            source.Parse.Y = y;
+            laneIndex++;
+        }
+
+        var downstreamX = CanvasPadding + LanePaddingX + ColumnSpacing + NodeWidth + LanePaddingX + LaneGap;
+        var downstreamY = _sources.Count == 0
+            ? CanvasPadding
+            : laneTop + ((_sources.Count - 1) * laneStride / 2);
+
+        var column = 0;
+        foreach (var augment in AugmentNodes)
+        {
+            augment.X = downstreamX + (column * ColumnSpacing);
+            augment.Y = downstreamY;
+            column++;
+        }
+
+        var routeIndex = 0;
+        foreach (var route in Routes)
+        {
+            if (route.Render is { } render)
+            {
+                render.X = downstreamX + (column * ColumnSpacing);
+                render.Y = downstreamY + (routeIndex * RowSpacing);
+            }
+
+            if (route.Deliver is { } deliver)
+            {
+                deliver.X = downstreamX + ((column + 1) * ColumnSpacing);
+                deliver.Y = downstreamY + (routeIndex * RowSpacing);
+            }
+
+            routeIndex++;
+        }
+    }
+
+    private (double X, double Y, double Width, double Height) LaneBounds(SourceLane source)
+    {
+        var minX = Math.Max(0, Math.Min(source.Fetch.X, source.Parse.X) - LanePaddingX);
+        var minY = Math.Max(0, Math.Min(source.Fetch.Y, source.Parse.Y) - LaneHeaderHeight);
+        var maxX = Math.Max(source.Fetch.X, source.Parse.X) + NodeWidth + LanePaddingX;
+        var maxY = Math.Max(source.Fetch.Y, source.Parse.Y) + NodeHeight + LanePaddingX;
+        return (minX, minY, maxX - minX, maxY - minY);
+    }
+
+    private static string LaneLabel(SourceLane source)
+    {
+        var label = $"Source: {source.Id}";
+        return source.InputSourceIds.Count == 0
+            ? label
+            : $"{label} (input from {string.Join(", ", source.InputSourceIds)})";
+    }
+
+    private List<FlowEdge> BuildEdges()
+    {
+        var edges = new List<FlowEdge>();
+
+        foreach (var source in _sources)
+        {
+            edges.Add(new FlowEdge(source.Fetch, source.Parse, IsDependency: false));
+
+            foreach (var inputSourceId in source.InputSourceIds)
+            {
+                var upstream = FindSource(inputSourceId);
+                if (upstream is not null && !ReferenceEquals(upstream, source))
+                {
+                    edges.Add(new FlowEdge(upstream.Parse, source.Fetch, IsDependency: true));
+                }
+            }
+        }
+
+        var heads = _sources.Select(static source => source.Parse).ToList();
+        FlowNode? tail = null;
+
+        foreach (var augment in AugmentNodes)
+        {
+            if (tail is null)
+            {
+                foreach (var head in heads)
+                {
+                    edges.Add(new FlowEdge(head, augment, IsDependency: false));
+                }
+            }
+            else
+            {
+                edges.Add(new FlowEdge(tail, augment, IsDependency: false));
+            }
+
+            tail = augment;
+        }
+
+        foreach (var route in Routes)
+        {
+            if (route.Render is not { } render)
+            {
+                continue;
+            }
+
+            if (tail is null)
+            {
+                foreach (var head in heads)
+                {
+                    edges.Add(new FlowEdge(head, render, IsDependency: false));
+                }
+            }
+            else
+            {
+                edges.Add(new FlowEdge(tail, render, IsDependency: false));
+            }
+
+            if (route.Deliver is { } deliver)
+            {
+                edges.Add(new FlowEdge(render, deliver, IsDependency: false));
+            }
+        }
+
+        return edges;
+    }
+
+    private static string EdgePath(FlowEdge edge)
+        => edge.IsDependency ? DependencyEdgePath(edge.From, edge.To) : FlowEdgePath(edge.From, edge.To);
+
+    private static string FlowEdgePath(FlowNode from, FlowNode to)
+    {
+        var x1 = from.X + NodeWidth;
+        var y1 = from.Y + (NodeHeight / 2);
+        var x2 = to.X;
+        var y2 = to.Y + (NodeHeight / 2);
+        var control = (x1 + x2) / 2;
+        return $"M {F(x1)} {F(y1)} C {F(control)} {F(y1)}, {F(control)} {F(y2)}, {F(x2)} {F(y2)}";
+    }
+
+    private static string DependencyEdgePath(FlowNode from, FlowNode to)
+    {
+        var x1 = from.X + (NodeWidth / 2);
+        var y1 = from.Y + NodeHeight;
+        var x2 = to.X + (NodeWidth / 2);
+        var y2 = to.Y;
+        var control = (y1 + y2) / 2;
+        return $"M {F(x1)} {F(y1)} C {F(x1)} {F(control)}, {F(x2)} {F(control)}, {F(x2)} {F(y2)}";
+    }
+
+    private void ToggleSamplePanel()
+    {
+        _showSamplePanel = !_showSamplePanel;
+        if (_showSamplePanel)
+        {
+            _showBizTalkPanel = false;
+        }
+    }
+
+    private void ToggleBizTalkPanel()
+    {
+        _showBizTalkPanel = !_showBizTalkPanel;
+        if (_showBizTalkPanel)
+        {
+            _showSamplePanel = false;
+        }
+    }
 
     private async Task HandleFileSelectedAsync(InputFileChangeEventArgs args)
     {
@@ -363,54 +1675,20 @@
         await using var stream = file.OpenReadStream(maxAllowedSize: 1_000_000);
         using var reader = new StreamReader(stream);
         _sampleText = await reader.ReadToEndAsync();
-        await AnalyzeAsync();
+        await AnalyzeSampleAsync();
     }
 
-    private async Task AnalyzeAsync()
+    private async Task AnalyzeSampleAsync()
     {
-        _isAnalyzing = true;
+        _isAnalyzingSample = true;
         _statusMessage = null;
         _errorMessage = null;
 
         try
         {
-            _analysis = await ApiClient.AnalyzeFlowDesignAsync(new FlowDesignAnalysisRequestViewModel(
-                _fileName,
-                _contentType,
-                _sampleText), CancellationToken.None);
-
-            _selectedFetchModuleId = ChooseModule(_analysis.FetchModules, requiredProtocol: "Sftp");
-            _selectedParseModuleId = ChooseModule(_analysis.ParseModules, requiredCapability: "Parsing", requiredFormat: _analysis.DetectedFormat);
-            _selectedLookupAugmentModuleId = ChooseModule(_analysis.OrchestrationAugmentModules, requiredCapability: "Lookup");
-            _selectedMappingAugmentModuleId = ChooseModule(_analysis.OrchestrationAugmentModules, _selectedLookupAugmentModuleId, requiredCapability: "Mapping");
-            _selectedApiRenderModuleId = ChooseModule(_analysis.RenderModules, requiredCapability: "Serialization", requiredFormat: "Json");
-            _selectedApiDeliverModuleId = ChooseModule(_analysis.DeliverModules, requiredCapability: "Delivery", requiredProtocol: "Http");
-            _selectedXmlRenderModuleId = ChooseModule(_analysis.RenderModules, _selectedApiRenderModuleId, requiredCapability: "Serialization", requiredFormat: "Xml");
-            _selectedXmlDeliverModuleId = ChooseModule(_analysis.DeliverModules, _selectedApiDeliverModuleId, requiredCapability: "Delivery", requiredProtocol: "FileSystem");
-
-            InitializeSettings(_fetchSettings, SelectedFetchModule);
-            InitializeSettings(_parseSettings, SelectedParseModule);
-            InitializeSettings(_lookupAugmentSettings, SelectedLookupAugmentModule);
-            InitializeSettings(_mappingAugmentSettings, SelectedMappingAugmentModule);
-            InitializeSettings(_apiRenderSettings, SelectedApiRenderModule);
-            InitializeSettings(_apiDeliverSettings, SelectedApiDeliverModule);
-            InitializeSettings(_xmlRenderSettings, SelectedXmlRenderModule);
-            InitializeSettings(_xmlDeliverSettings, SelectedXmlDeliverModule);
-
-            _mappingRows = _analysis.Fields
-                .Select(field => new FieldMappingRow
-                {
-                    SourceKind = "Source",
-                    SourcePath = field.SourcePath,
-                    SampleValue = field.SampleValue,
-                    Purpose = field.RecommendedPurpose,
-                    Condition = "Always",
-                    TargetField = field.SuggestedTargetField,
-                    LiteralValue = string.Empty
-                })
-                .ToList();
-
-            _flowId = CreateDefaultFlowId(_fileName, _analysis.DetectedFormat);
+            _analysis = await ApiClient.AnalyzeFlowDesignAsync(
+                new FlowDesignAnalysisRequestViewModel(_fileName, _contentType, _sampleText),
+                CancellationToken.None);
             _statusMessage = $"Analyzed {_analysis.Fields.Count} field(s) from {_analysis.DetectedFormat} sample data.";
         }
         catch (Exception exception)
@@ -419,34 +1697,276 @@
         }
         finally
         {
-            _isAnalyzing = false;
+            _isAnalyzingSample = false;
         }
     }
 
-    private async Task CreateFlowAsync()
+    private void ApplySampleAnalysis()
     {
-        _isCreatingFlow = true;
+        if (_analysis is null)
+        {
+            return;
+        }
+
+        _nodes.Clear();
+        _sources.Clear();
+        _joinEditors.Clear();
+        _mappingRows.Clear();
+        _bizTalkRequirements = [];
+        _bizTalkWarnings = [];
+        _selectedNodeId = null;
+
+        var fetchModuleId = ChooseModule(_analysis.FetchModules, requiredProtocol: "Sftp");
+        var parseModuleId = ChooseModule(_analysis.ParseModules, requiredCapability: "Parsing", requiredFormat: _analysis.DetectedFormat);
+        var lane = CreateSourceLane("primary", fetchModuleId ?? string.Empty, null, parseModuleId ?? string.Empty, null, null);
+        ApplyModuleDefaults(lane.Fetch, FindCatalogModule(fetchModuleId));
+        ApplyModuleDefaults(lane.Parse, FindCatalogModule(parseModuleId));
+
+        var mappingAugment = _analysis.OrchestrationAugmentModules
+            .FirstOrDefault(static module => string.Equals(module.Id, JoinModuleId, StringComparison.OrdinalIgnoreCase))?.Id;
+        if (mappingAugment is not null)
+        {
+            var joinNode = CreateNode(NodeStage.Augment, mappingAugment);
+            ApplyModuleDefaults(joinNode, FindCatalogModule(mappingAugment));
+            joinNode.Settings[LeftSourceKey] = lane.Id;
+        }
+
+        var jsonRender = ChooseModule(_analysis.RenderModules, requiredCapability: "Serialization", requiredFormat: "Json");
+        var httpDeliver = ChooseModule(_analysis.DeliverModules, requiredCapability: "Delivery", requiredProtocol: "Http");
+        SeedRoute(jsonRender, httpDeliver, 0);
+
+        var xmlRender = ChooseModule(_analysis.RenderModules, jsonRender, requiredCapability: "Serialization", requiredFormat: "Xml");
+        var fileDeliver = ChooseModule(_analysis.DeliverModules, httpDeliver, requiredCapability: "Delivery", requiredProtocol: "FileSystem");
+        SeedRoute(xmlRender, fileDeliver, 1);
+
+        foreach (var field in _analysis.Fields)
+        {
+            _mappingRows.Add(new FieldMappingRow
+            {
+                SourceKind = "Left",
+                SourcePath = field.SourcePath,
+                TargetField = field.SuggestedTargetField,
+                Condition = "Always",
+                LiteralValue = string.Empty
+            });
+        }
+
+        if (!IsExistingFlow)
+        {
+            _flowId = CreateDefaultFlowId(_fileName, _analysis.DetectedFormat);
+            _triggerMode = "Interval";
+        }
+
+        _seedSource = SeedSource.Sample;
+        _showSamplePanel = false;
+        AutoLayout();
+        _statusMessage = $"Populated the canvas with {_nodes.Count} node(s) from the analyzed {_analysis.DetectedFormat} sample.";
+    }
+
+    private void SeedRoute(string? renderModuleId, string? deliverModuleId, int order)
+    {
+        if (string.IsNullOrWhiteSpace(renderModuleId) || string.IsNullOrWhiteSpace(deliverModuleId))
+        {
+            return;
+        }
+
+        var routeId = Guid.NewGuid().ToString("n");
+        var render = CreateNode(NodeStage.Render, renderModuleId, order: order, routeId: routeId);
+        var deliver = CreateNode(NodeStage.Deliver, deliverModuleId, order: order, routeId: routeId);
+        ApplyModuleDefaults(render, FindCatalogModule(renderModuleId));
+        ApplyModuleDefaults(deliver, FindCatalogModule(deliverModuleId));
+    }
+
+    private void ClearSample()
+    {
+        _sampleText = string.Empty;
+        _fileName = null;
+        _contentType = null;
+        _analysis = null;
+    }
+
+    private async Task AnalyzeBizTalkAsync()
+    {
+        _isAnalyzingBizTalk = true;
         _statusMessage = null;
         _errorMessage = null;
 
         try
         {
-            if (string.IsNullOrWhiteSpace(_selectedFetchModuleId)
-                || string.IsNullOrWhiteSpace(_selectedParseModuleId)
-                || string.IsNullOrWhiteSpace(_selectedLookupAugmentModuleId)
-                || string.IsNullOrWhiteSpace(_selectedMappingAugmentModuleId)
-                || string.IsNullOrWhiteSpace(_selectedApiRenderModuleId)
-                || string.IsNullOrWhiteSpace(_selectedApiDeliverModuleId)
-                || string.IsNullOrWhiteSpace(_selectedXmlRenderModuleId)
-                || string.IsNullOrWhiteSpace(_selectedXmlDeliverModuleId))
+            _bizTalkAnalysis = await ApiClient.AnalyzeBizTalkSolutionAsync(
+                new AnalyzeBizTalkSolutionRequestViewModel(_sourcePath, SplitPaths(_additionalBindingPaths), SplitPaths(_additionalSourcePaths)),
+                CancellationToken.None);
+            _statusMessage = $"Loaded {_bizTalkAnalysis.BizTalkProjectCount} BizTalk project(s), {_bizTalkAnalysis.BindingFiles.Count} binding file(s), and {_bizTalkAnalysis.FlowCandidates.Count} draft flow candidate(s).";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to analyze BizTalk source: {exception.Message}";
+        }
+        finally
+        {
+            _isAnalyzingBizTalk = false;
+        }
+    }
+
+    private async Task DownloadBizTalkScaffoldedModulesAsync(BizTalkFlowCandidateViewModel candidate)
+    {
+        try
+        {
+            var request = new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths));
+            var file = await ApiClient.DownloadBizTalkScaffoldedModulesAsync(request, CancellationToken.None);
+            await TriggerBrowserDownloadAsync(file);
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to download scaffolded modules: {exception.Message}";
+        }
+    }
+
+    private async Task DownloadBizTalkScaffoldedModuleAsync(BizTalkFlowCandidateViewModel candidate, BizTalkScaffoldedModuleViewModel module)
+    {
+        try
+        {
+            var request = new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths));
+            var file = await ApiClient.DownloadBizTalkScaffoldedModuleAsync(module.ModuleId, request, CancellationToken.None);
+            await TriggerBrowserDownloadAsync(file);
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to download scaffolded module '{module.FileName}': {exception.Message}";
+        }
+    }
+
+    private async Task TriggerBrowserDownloadAsync(DownloadedFileViewModel file)
+    {
+        await using var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/file-download.js");
+        await module.InvokeVoidAsync("downloadFile", file.FileName, file.ContentType, Convert.ToBase64String(file.Content));
+    }
+
+    private void ApplyBizTalkCandidate(BizTalkFlowCandidateViewModel candidate)
+    {
+        var draft = candidate.DraftFlow;
+
+        _nodes.Clear();
+        _sources.Clear();
+        _joinEditors.Clear();
+        _mappingRows.Clear();
+        _selectedNodeId = null;
+
+        if (!IsExistingFlow)
+        {
+            _flowId = string.IsNullOrWhiteSpace(draft.Id) ? candidate.SuggestedFlowId : draft.Id;
+            _enabled = false;
+        }
+
+        _triggerMode = draft.Trigger.Mode;
+        _intervalText = draft.Trigger.Interval?.ToString() ?? "00:05:00";
+        _runOnStartup = draft.Trigger.RunOnStartup;
+
+        foreach (var source in draft.Sources)
+        {
+            CreateSourceLane(
+                source.Id,
+                source.Fetch.Module,
+                source.Fetch.Settings,
+                source.Parse.Module,
+                source.Parse.Settings,
+                source.InputSourceIds);
+        }
+
+        var order = 0;
+        foreach (var augment in draft.Augments)
+        {
+            CreateNode(NodeStage.Augment, augment.Module, augment.Settings, order: order++);
+        }
+
+        var routeIndex = 0;
+        foreach (var route in draft.Deliveries)
+        {
+            var routeId = Guid.NewGuid().ToString("n");
+            CreateNode(NodeStage.Render, route.Render.Module, route.Render.Settings, order: routeIndex, routeId: routeId);
+            CreateNode(NodeStage.Deliver, route.Deliver.Module, route.Deliver.Settings, order: routeIndex, routeId: routeId);
+            routeIndex++;
+        }
+
+        _bizTalkRequirements = draft.ConfigurationRequirements;
+        _bizTalkWarnings = draft.Warnings;
+        _seedSource = SeedSource.BizTalk;
+        _showBizTalkPanel = false;
+        AutoLayout();
+        _statusMessage = $"Loaded BizTalk draft flow '{candidate.SuggestedFlowId}' onto the canvas with {_sources.Count} source lane(s). It stays disabled until you review its settings and enable it.";
+    }
+
+    private void ClearBizTalk()
+    {
+        _sourcePath = string.Empty;
+        _additionalSourcePaths = string.Empty;
+        _additionalBindingPaths = string.Empty;
+        _bizTalkAnalysis = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        _isSaving = true;
+        _statusMessage = null;
+        _errorMessage = null;
+
+        try
+        {
+            var flowId = IsExistingFlow ? FlowId! : _flowId.Trim();
+            if (string.IsNullOrWhiteSpace(flowId))
             {
-                throw new InvalidOperationException("Select fetch, parse, augment, and delivery route modules before creating the flow.");
+                throw new InvalidOperationException("Enter a flow id.");
+            }
+
+            if (_sources.Count == 0)
+            {
+                throw new InvalidOperationException("Add at least one source (a fetch and parse pair) to the canvas.");
+            }
+
+            if (DescribeSourceGraphError() is { } graphError)
+            {
+                throw new InvalidOperationException(graphError);
+            }
+
+            foreach (var source in _sources)
+            {
+                if (string.IsNullOrWhiteSpace(source.Fetch.ModuleId) || string.IsNullOrWhiteSpace(source.Parse.ModuleId))
+                {
+                    throw new InvalidOperationException($"Select a fetch module and a parse module for source '{source.Id}'.");
+                }
+            }
+
+            var routes = Routes;
+            if (routes.Count == 0)
+            {
+                throw new InvalidOperationException("At least one delivery route is required.");
+            }
+
+            foreach (var route in routes)
+            {
+                if (route.Render is null || route.Deliver is null
+                    || string.IsNullOrWhiteSpace(route.Render.ModuleId)
+                    || string.IsNullOrWhiteSpace(route.Deliver.ModuleId))
+                {
+                    throw new InvalidOperationException("Every delivery route needs a render and a deliver module.");
+                }
+            }
+
+            var augments = AugmentNodes;
+            if (augments.Any(static node => string.IsNullOrWhiteSpace(node.ModuleId)))
+            {
+                throw new InvalidOperationException("Select a module for every augment node.");
+            }
+
+            if (_enabled && _unresolvedConfigCount > 0)
+            {
+                throw new InvalidOperationException($"This flow has {_unresolvedConfigCount} unresolved config/secret reference(s). Resolve them on the Config values page before enabling it.");
             }
 
             TimeSpan? interval = null;
             if (string.Equals(_triggerMode, "Interval", StringComparison.OrdinalIgnoreCase))
             {
-                if (!TimeSpan.TryParse(_intervalText, out var parsedInterval))
+                if (!TimeSpan.TryParse(_intervalText, out var parsedInterval) || parsedInterval <= TimeSpan.Zero)
                 {
                     throw new InvalidOperationException("Enter a valid interval such as 00:05:00.");
                 }
@@ -454,162 +1974,183 @@
                 interval = parsedInterval;
             }
 
-            var mappingRows = _mappingRows
-                .Where(row => !string.IsNullOrWhiteSpace(row.TargetField))
-                .Select(row => new FlowDesignFieldMappingRequestViewModel(
-                    row.SourceKind,
-                    row.SourcePath,
-                    row.TargetField,
-                    row.Condition,
-                    row.LiteralValue))
+            var trigger = new FlowTriggerRequestViewModel(_triggerMode, interval, _runOnStartup);
+            var retry = _hasDefaultRetry
+                ? new RetryPolicyRequestViewModel(_retryMaxAttempts, _retryDelaySeconds, _retryBackoff, _retryMaxDelaySeconds)
+                : null;
+            var sourceSteps = _sources
+                .Select(static source => new FlowSourceRequestViewModel(
+                    source.Id.Trim(),
+                    ToStepRequest(source.Fetch),
+                    ToStepRequest(source.Parse),
+                    source.InputSourceIds.ToArray()))
+                .ToArray();
+            var augmentSteps = augments.Select(ToStepRequest).ToArray();
+            var deliverySteps = routes
+                .Select(static route => new DeliveryRouteRequestViewModel(ToStepRequest(route.Render!), ToStepRequest(route.Deliver!)))
                 .ToArray();
 
-            var request = new CreateDesignedFlowRequestViewModel(
-                _flowId,
-                _flowEnabled,
-                new FlowTriggerRequestViewModel(_triggerMode, interval, _runOnStartup),
-                new FlowStepRequestViewModel(_selectedFetchModuleId, CreateSettingsCopy(_fetchSettings)),
-                new FlowStepRequestViewModel(_selectedParseModuleId, CreateSettingsCopy(_parseSettings)),
-                [
-                    new FlowStepRequestViewModel(_selectedLookupAugmentModuleId, CreateSettingsCopy(_lookupAugmentSettings)),
-                    new FlowStepRequestViewModel(_selectedMappingAugmentModuleId, CreateSettingsCopy(_mappingAugmentSettings))
-                ],
-                [
-                    new DeliveryRouteRequestViewModel(
-                        new FlowStepRequestViewModel(_selectedApiRenderModuleId, CreateSettingsCopy(_apiRenderSettings)),
-                        new FlowStepRequestViewModel(_selectedApiDeliverModuleId, CreateSettingsCopy(_apiDeliverSettings))),
-                    new DeliveryRouteRequestViewModel(
-                        new FlowStepRequestViewModel(_selectedXmlRenderModuleId, CreateSettingsCopy(_xmlRenderSettings)),
-                        new FlowStepRequestViewModel(_selectedXmlDeliverModuleId, CreateSettingsCopy(_xmlDeliverSettings)))
-                ],
-                mappingRows);
+            FlowViewModel saved;
+            if (IsExistingFlow)
+            {
+                saved = await ApiClient.UpdateFlowAsync(
+                    new UpdateFlowRequestViewModel(flowId, _enabled, trigger, sourceSteps, augmentSteps, deliverySteps, retry),
+                    CancellationToken.None);
+                _statusMessage = $"Saved flow '{saved.Id}' with {sourceSteps.Length} source(s).";
+            }
+            else
+            {
+                var mappings = _mappingRows
+                    .Where(static row => !string.IsNullOrWhiteSpace(row.TargetField))
+                    .Select(static row => new FlowDesignFieldMappingRequestViewModel(row.SourceKind, row.SourcePath, row.TargetField, row.Condition, row.LiteralValue))
+                    .ToArray();
+                var hasJoinAugment = augments.Any(static node => string.Equals(node.ModuleId, JoinModuleId, StringComparison.OrdinalIgnoreCase));
 
-            var created = await ApiClient.CreateDesignedFlowAsync(request, CancellationToken.None);
-            _statusMessage = $"Created flow {created.Id} with {request.Augments.Count} augment(s) and {request.Deliveries.Count} delivery route(s).";
+                if (mappings.Length > 0 && hasJoinAugment)
+                {
+                    saved = await ApiClient.CreateDesignedFlowAsync(
+                        new CreateDesignedFlowRequestViewModel(flowId, _enabled, trigger, sourceSteps, augmentSteps, deliverySteps, mappings),
+                        CancellationToken.None);
+
+                    if (retry is not null)
+                    {
+                        saved = await ApiClient.UpdateFlowAsync(
+                            new UpdateFlowRequestViewModel(saved.Id, _enabled, trigger, sourceSteps, augmentSteps, deliverySteps, retry),
+                            CancellationToken.None);
+                    }
+                }
+                else
+                {
+                    saved = await ApiClient.CreateFlowAsync(
+                        new CreateFlowRequestViewModel(flowId, _enabled, trigger, sourceSteps, augmentSteps, deliverySteps, retry),
+                        CancellationToken.None);
+                }
+
+                _statusMessage = $"Created flow '{saved.Id}' with {sourceSteps.Length} source(s), {augmentSteps.Length} augment(s), and {deliverySteps.Length} delivery route(s).";
+                _loadedFlowId = saved.Id;
+                FlowId = saved.Id;
+                _flowId = saved.Id;
+                _seedSource = SeedSource.ExistingFlow;
+                Navigation.NavigateTo($"/designer/{Uri.EscapeDataString(saved.Id)}");
+            }
+
+            _enabled = saved.Enabled;
+            await RefreshConfigUsagesAsync();
         }
         catch (Exception exception)
         {
-            _errorMessage = $"Unable to create flow: {exception.Message}";
+            _errorMessage = $"Unable to save the flow: {exception.Message}";
         }
         finally
         {
-            _isCreatingFlow = false;
+            _isSaving = false;
         }
     }
 
-    private Task ClearAsync()
+    private async Task RefreshConfigUsagesAsync()
     {
-        _sampleText = string.Empty;
-        _fileName = null;
-        _contentType = null;
-        _analysis = null;
-        _mappingRows = [];
-        _selectedFetchModuleId = null;
-        _selectedParseModuleId = null;
-        _selectedLookupAugmentModuleId = null;
-        _selectedMappingAugmentModuleId = null;
-        _selectedApiRenderModuleId = null;
-        _selectedApiDeliverModuleId = null;
-        _selectedXmlRenderModuleId = null;
-        _selectedXmlDeliverModuleId = null;
-        _fetchSettings.Clear();
-        _parseSettings.Clear();
-        _lookupAugmentSettings.Clear();
-        _mappingAugmentSettings.Clear();
-        _apiRenderSettings.Clear();
-        _apiDeliverSettings.Clear();
-        _xmlRenderSettings.Clear();
-        _xmlDeliverSettings.Clear();
-        _statusMessage = null;
-        _errorMessage = null;
-        return Task.CompletedTask;
-    }
-
-    private void AddMappingRow()
-    {
-        _mappingRows.Add(new FieldMappingRow
+        try
         {
-            SourceKind = "Lookup",
-            SourcePath = string.Empty,
-            SampleValue = string.Empty,
-            Purpose = "Output",
-            Condition = "Always",
-            TargetField = string.Empty,
-            LiteralValue = string.Empty
-        });
-    }
-
-    private void HandleFetchModuleChanged(ChangeEventArgs args)
-    {
-        _selectedFetchModuleId = args.Value?.ToString();
-        InitializeSettings(_fetchSettings, SelectedFetchModule);
-    }
-
-    private void HandleParseModuleChanged(ChangeEventArgs args)
-    {
-        _selectedParseModuleId = args.Value?.ToString();
-        InitializeSettings(_parseSettings, SelectedParseModule);
-    }
-
-    private void HandleLookupAugmentModuleChanged(ChangeEventArgs args)
-    {
-        _selectedLookupAugmentModuleId = args.Value?.ToString();
-        InitializeSettings(_lookupAugmentSettings, SelectedLookupAugmentModule);
-    }
-
-    private void HandleMappingAugmentModuleChanged(ChangeEventArgs args)
-    {
-        _selectedMappingAugmentModuleId = args.Value?.ToString();
-        InitializeSettings(_mappingAugmentSettings, SelectedMappingAugmentModule);
-    }
-
-    private void HandleApiRenderModuleChanged(ChangeEventArgs args)
-    {
-        _selectedApiRenderModuleId = args.Value?.ToString();
-        InitializeSettings(_apiRenderSettings, SelectedApiRenderModule);
-    }
-
-    private void HandleApiDeliverModuleChanged(ChangeEventArgs args)
-    {
-        _selectedApiDeliverModuleId = args.Value?.ToString();
-        InitializeSettings(_apiDeliverSettings, SelectedApiDeliverModule);
-    }
-
-    private void HandleXmlRenderModuleChanged(ChangeEventArgs args)
-    {
-        _selectedXmlRenderModuleId = args.Value?.ToString();
-        InitializeSettings(_xmlRenderSettings, SelectedXmlRenderModule);
-    }
-
-    private void HandleXmlDeliverModuleChanged(ChangeEventArgs args)
-    {
-        _selectedXmlDeliverModuleId = args.Value?.ToString();
-        InitializeSettings(_xmlDeliverSettings, SelectedXmlDeliverModule);
-    }
-
-    private void HandleRunOnStartupChanged(ChangeEventArgs args)
-    {
-        _runOnStartup = GetBooleanValue(args);
-    }
-
-    private void HandleFlowEnabledChanged(ChangeEventArgs args)
-    {
-        _flowEnabled = GetBooleanValue(args);
-    }
-
-    private void InitializeSettings(Dictionary<string, string> settings, ModuleSuggestionViewModel? module)
-    {
-        settings.Clear();
-        if (module is null)
-        {
-            return;
+            _configUsages = await ApiClient.GetConfigValueUsagesAsync(CancellationToken.None);
+            UpdateUnresolvedConfigCount();
         }
-
-        foreach (var setting in module.Settings)
+        catch (Exception exception)
         {
-            settings[setting.Key] = setting.DefaultValue ?? string.Empty;
+            _errorMessage = $"Unable to refresh config references: {exception.Message}";
         }
     }
+
+    private void UpdateUnresolvedConfigCount()
+    {
+        var flowId = IsExistingFlow ? FlowId : _flowId;
+        _unresolvedConfigCount = string.IsNullOrWhiteSpace(flowId)
+            ? 0
+            : _configUsages.Count(usage => !usage.IsResolved && string.Equals(usage.FlowId, flowId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void AddMappingRow() => _mappingRows.Add(new FieldMappingRow());
+
+    private IReadOnlyList<ModuleViewModel> ModulesForStage(NodeStage stage)
+    {
+        var kind = ModuleKindFor(stage);
+        return _modules.Where(module => string.Equals(module.Kind, kind, StringComparison.OrdinalIgnoreCase)).ToArray();
+    }
+
+    private ModuleViewModel? FindCatalogModule(string? moduleId)
+    {
+        if (string.IsNullOrWhiteSpace(moduleId))
+        {
+            return null;
+        }
+
+        return _modules.FirstOrDefault(module => string.Equals(module.Id, moduleId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ModuleKindFor(NodeStage stage) => stage switch
+    {
+        NodeStage.Fetch => "Fetch",
+        NodeStage.Parse => "Parse",
+        NodeStage.Augment => "OrchestrationAugment",
+        NodeStage.Render => "Render",
+        _ => "Deliver"
+    };
+
+    private static string StageDescription(NodeStage stage) => stage switch
+    {
+        NodeStage.Fetch => "Acquires this source's raw content. It can consume other sources' parsed output as its input.",
+        NodeStage.Parse => "Converts this source's raw content into the working payload shape.",
+        NodeStage.Augment => "Join, decision, and mapping steps executed once every source has been fetched and parsed.",
+        NodeStage.Render => "Prepares outbound content for one delivery route.",
+        _ => "Dispatches the rendered payload for one delivery route."
+    };
+
+    private string NodeHeading(FlowNode node) => node.Stage switch
+    {
+        NodeStage.Fetch => string.IsNullOrWhiteSpace(node.SourceId) ? "Fetch" : $"Fetch - {node.SourceId}",
+        NodeStage.Parse => string.IsNullOrWhiteSpace(node.SourceId) ? "Parse" : $"Parse - {node.SourceId}",
+        NodeStage.Augment => $"Augment {AugmentNodes.IndexOf(node) + 1}",
+        NodeStage.Render => $"Render {RouteNumber(node)}",
+        _ => $"Deliver {RouteNumber(node)}"
+    };
+
+    private int RouteNumber(FlowNode node)
+    {
+        var index = Routes.FindIndex(route => string.Equals(route.RouteId, node.RouteId, StringComparison.Ordinal));
+        return index < 0 ? 1 : index + 1;
+    }
+
+    private string NodeTitle(FlowNode node)
+    {
+        if (string.IsNullOrWhiteSpace(node.ModuleId))
+        {
+            return "(no module selected)";
+        }
+
+        return FindCatalogModule(node.ModuleId)?.DisplayName ?? node.ModuleId;
+    }
+
+    private static string NodeSubtitle(FlowNode node)
+    {
+        var settings = node.Settings.Count(static entry => !string.IsNullOrWhiteSpace(entry.Value));
+        return string.IsNullOrWhiteSpace(node.ModuleId)
+            ? "Click to configure"
+            : $"{Truncate(node.ModuleId, 20)} - {settings} setting(s)";
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return string.Concat(value.AsSpan(0, Math.Max(1, maxLength - 1)), "\u2026");
+    }
+
+    private static string F(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static FlowStepRequestViewModel ToStepRequest(FlowNode node)
+        => new(node.ModuleId, CreateSettingsCopy(node.Settings));
 
     private static Dictionary<string, string> CreateSettingsCopy(Dictionary<string, string> settings)
     {
@@ -618,15 +2159,11 @@
             .ToDictionary(static entry => entry.Key, static entry => entry.Value, StringComparer.OrdinalIgnoreCase);
     }
 
-    private static ModuleSuggestionViewModel? FindModule(IReadOnlyList<ModuleSuggestionViewModel>? modules, string? moduleId)
-    {
-        if (modules is null || string.IsNullOrWhiteSpace(moduleId))
-        {
-            return null;
-        }
+    private static string[] SplitPaths(string value)
+        => value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        return modules.FirstOrDefault(module => string.Equals(module.Id, moduleId, StringComparison.OrdinalIgnoreCase));
-    }
+    private static string FormatList(IReadOnlyList<string> values)
+        => values.Count == 0 ? "None" : string.Join(", ", values);
 
     private static string? ChooseModule(
         IReadOnlyList<ModuleSuggestionViewModel> modules,
@@ -666,17 +2203,15 @@
         return string.IsNullOrWhiteSpace(normalized) ? "flow-designer-workflow" : $"{normalized}-workflow";
     }
 
-    private RenderFragment RenderSettingsEditor(ModuleSuggestionViewModel? module, Dictionary<string, string> settings, ISet<string>? hiddenKeys = null) => builder =>
-    {
-        if (module is null || module.Settings.Count == 0)
-        {
-            return;
-        }
+    private static int? ParseNullableInt(string? value) => int.TryParse(value, out var parsed) ? parsed : null;
 
-        var visibleSettings = module.Settings
-            .Where(setting => hiddenKeys is null || !hiddenKeys.Contains(setting.Key))
-            .ToArray();
-        if (visibleSettings.Length == 0)
+    private static double ParseDouble(string? value, double fallback) => double.TryParse(value, out var parsed) ? parsed : fallback;
+
+    private static double? ParseNullableDouble(string? value) => double.TryParse(value, out var parsed) ? parsed : null;
+
+    private RenderFragment RenderSettingsEditor(IReadOnlyList<ModuleSettingViewModel>? settingDescriptors, Dictionary<string, string> settings) => builder =>
+    {
+        if (settingDescriptors is null || settingDescriptors.Count == 0)
         {
             return;
         }
@@ -685,7 +2220,7 @@
         builder.OpenElement(sequence++, "div");
         builder.AddAttribute(sequence++, "class", "settings-grid");
 
-        foreach (var setting in visibleSettings)
+        foreach (var setting in settingDescriptors)
         {
             builder.OpenElement(sequence++, "div");
             builder.AddAttribute(sequence++, "class", "setting-row");
@@ -760,36 +2295,300 @@
     };
 
     private static string GetSettingValue(Dictionary<string, string> settings, ModuleSettingViewModel setting)
-    {
-        return settings.TryGetValue(setting.Key, out var value)
-            ? value
-            : setting.DefaultValue ?? string.Empty;
-    }
+        => settings.TryGetValue(setting.Key, out var value) ? value : setting.DefaultValue ?? string.Empty;
 
     private void SetSettingValue(Dictionary<string, string> settings, string key, string? value)
-    {
-        settings[key] = value ?? string.Empty;
-    }
+        => settings[key] = value ?? string.Empty;
 
-    private static bool GetBooleanValue(ChangeEventArgs args)
-    {
-        return args.Value is bool booleanValue && booleanValue;
-    }
+    private static bool GetBooleanValue(ChangeEventArgs args) => args.Value is bool booleanValue && booleanValue;
 
     private void SetBooleanSettingValue(Dictionary<string, string> settings, string key, bool value)
+        => settings[key] = value.ToString().ToLowerInvariant();
+
+    private bool IsJoinNode(FlowNode node)
+        => node.Stage == NodeStage.Augment && string.Equals(node.ModuleId, JoinModuleId, StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeLeftSourceValue(string? value)
+        => string.IsNullOrWhiteSpace(value) ? WorkingDocumentSelector : value;
+
+    private static string CardinalityLabel(string cardinality) => cardinality switch
     {
-        settings[key] = value.ToString().ToLowerInvariant();
+        "Nested" => "Nested (one record per left row)",
+        _ => "Fan out (one record per matched pair)"
+    };
+
+    private string JoinSideName(FlowNode node, string side)
+    {
+        if (string.Equals(side, "Right", StringComparison.OrdinalIgnoreCase))
+        {
+            var rightSourceId = node.Settings.GetValueOrDefault(RightSourceKey);
+            return string.IsNullOrWhiteSpace(rightSourceId) ? "right source" : rightSourceId;
+        }
+
+        var leftSourceId = NormalizeLeftSourceValue(node.Settings.GetValueOrDefault(LeftSourceKey));
+        return string.Equals(leftSourceId, WorkingDocumentSelector, StringComparison.Ordinal) ? "working document" : leftSourceId;
+    }
+
+    private string JoinSideLabel(FlowNode node, string sourceKind)
+        => string.Equals(sourceKind, "Literal", StringComparison.OrdinalIgnoreCase)
+            ? "Literal"
+            : $"{sourceKind} ({JoinSideName(node, sourceKind)})";
+
+    private JoinEditorState EnsureJoinEditor(FlowNode node)
+    {
+        if (_joinEditors.TryGetValue(node.Id, out var existing))
+        {
+            return existing;
+        }
+
+        var state = new JoinEditorState();
+        state.Keys.AddRange(DeserializeJoinKeys(node.Settings.GetValueOrDefault(JoinKeysKey)));
+        state.Mappings.AddRange(DeserializeJoinMappings(node.Settings.GetValueOrDefault(MappingsKey)));
+        _joinEditors[node.Id] = state;
+        return state;
+    }
+
+    private void SetJoinSetting(FlowNode node, string key, string? value)
+    {
+        node.Settings[key] = value ?? string.Empty;
+    }
+
+    private void AddJoinKey(FlowNode node)
+    {
+        var state = EnsureJoinEditor(node);
+        state.Keys.Add(new JoinKeyRow());
+        WriteJoinKeys(node, state);
+    }
+
+    private void RemoveJoinKey(FlowNode node, JoinKeyRow row)
+    {
+        var state = EnsureJoinEditor(node);
+        state.Keys.Remove(row);
+        WriteJoinKeys(node, state);
+    }
+
+    private void SetJoinKeyPath(FlowNode node, JoinKeyRow row, bool isLeft, string? value)
+    {
+        if (isLeft)
+        {
+            row.LeftPath = value ?? string.Empty;
+        }
+        else
+        {
+            row.RightPath = value ?? string.Empty;
+        }
+
+        WriteJoinKeys(node, EnsureJoinEditor(node));
+    }
+
+    private void AddJoinMapping(FlowNode node)
+    {
+        var state = EnsureJoinEditor(node);
+        state.Mappings.Add(new FieldMappingRow { SourceKind = "Left", Condition = "Always" });
+        WriteJoinMappings(node, state);
+    }
+
+    private void RemoveJoinMapping(FlowNode node, FieldMappingRow row)
+    {
+        var state = EnsureJoinEditor(node);
+        state.Mappings.Remove(row);
+        WriteJoinMappings(node, state);
+    }
+
+    private void SetJoinMappingField(FlowNode node, FieldMappingRow row, JoinMappingField field, string? value)
+    {
+        var text = value ?? string.Empty;
+        switch (field)
+        {
+            case JoinMappingField.SourceKind:
+                row.SourceKind = string.IsNullOrWhiteSpace(text) ? "Left" : text;
+                break;
+            case JoinMappingField.SourcePath:
+                row.SourcePath = text;
+                break;
+            case JoinMappingField.TargetField:
+                row.TargetField = text;
+                break;
+            case JoinMappingField.Condition:
+                row.Condition = string.IsNullOrWhiteSpace(text) ? "Always" : text;
+                break;
+            default:
+                row.LiteralValue = text;
+                break;
+        }
+
+        WriteJoinMappings(node, EnsureJoinEditor(node));
+    }
+
+    private static void WriteJoinKeys(FlowNode node, JoinEditorState state)
+    {
+        var keys = state.Keys
+            .Select(static row => new JoinKeyDto { LeftPath = row.LeftPath, RightPath = row.RightPath })
+            .ToArray();
+        node.Settings[JoinKeysKey] = JsonSerializer.Serialize(keys, JsonOptions);
+    }
+
+    private static void WriteJoinMappings(FlowNode node, JoinEditorState state)
+    {
+        var mappings = state.Mappings
+            .Select(static row => new JoinMappingDto
+            {
+                SourceKind = row.SourceKind,
+                SourcePath = row.SourcePath,
+                TargetField = row.TargetField,
+                Condition = row.Condition,
+                LiteralValue = string.IsNullOrWhiteSpace(row.LiteralValue) ? null : row.LiteralValue
+            })
+            .ToArray();
+        node.Settings[MappingsKey] = JsonSerializer.Serialize(mappings, JsonOptions);
+    }
+
+    private static List<JoinKeyRow> DeserializeJoinKeys(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        try
+        {
+            return (JsonSerializer.Deserialize<List<JoinKeyDto>>(json, JsonOptions) ?? [])
+                .Select(static key => new JoinKeyRow { LeftPath = key.LeftPath ?? string.Empty, RightPath = key.RightPath ?? string.Empty })
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static List<FieldMappingRow> DeserializeJoinMappings(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        try
+        {
+            return (JsonSerializer.Deserialize<List<JoinMappingDto>>(json, JsonOptions) ?? [])
+                .Select(static mapping => new FieldMappingRow
+                {
+                    SourceKind = string.IsNullOrWhiteSpace(mapping.SourceKind) ? "Left" : mapping.SourceKind,
+                    SourcePath = mapping.SourcePath ?? string.Empty,
+                    TargetField = mapping.TargetField ?? string.Empty,
+                    Condition = string.IsNullOrWhiteSpace(mapping.Condition) ? "Always" : mapping.Condition,
+                    LiteralValue = mapping.LiteralValue ?? string.Empty
+                })
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private enum NodeStage
+    {
+        Fetch,
+        Parse,
+        Augment,
+        Render,
+        Deliver
+    }
+
+    private enum SeedSource
+    {
+        Manual,
+        Sample,
+        BizTalk,
+        ExistingFlow
+    }
+
+    private sealed class FlowNode
+    {
+        public string Id { get; } = Guid.NewGuid().ToString("n");
+
+        public NodeStage Stage { get; init; }
+
+        public string ModuleId { get; set; } = string.Empty;
+
+        public Dictionary<string, string> Settings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public int Order { get; set; }
+
+        public string RouteId { get; init; } = string.Empty;
+
+        public string SourceId { get; set; } = string.Empty;
+
+        public double X { get; set; }
+
+        public double Y { get; set; }
+    }
+
+    private sealed class SourceLane
+    {
+        public required string Id { get; set; }
+
+        public required FlowNode Fetch { get; init; }
+
+        public required FlowNode Parse { get; init; }
+
+        public List<string> InputSourceIds { get; } = [];
+    }
+
+    private sealed record FlowEdge(FlowNode From, FlowNode To, bool IsDependency);
+
+    private sealed record RouteView(string RouteId, int Order, FlowNode? Render, FlowNode? Deliver);
+
+    private enum JoinMappingField
+    {
+        SourceKind,
+        SourcePath,
+        TargetField,
+        Condition,
+        LiteralValue
+    }
+
+    private sealed class JoinEditorState
+    {
+        public List<JoinKeyRow> Keys { get; } = [];
+
+        public List<FieldMappingRow> Mappings { get; } = [];
+    }
+
+    private sealed class JoinKeyRow
+    {
+        public string LeftPath { get; set; } = string.Empty;
+
+        public string RightPath { get; set; } = string.Empty;
+    }
+
+    private sealed record JoinKeyDto
+    {
+        public string? LeftPath { get; init; }
+
+        public string? RightPath { get; init; }
+    }
+
+    private sealed record JoinMappingDto
+    {
+        public string? SourceKind { get; init; }
+
+        public string? SourcePath { get; init; }
+
+        public string? TargetField { get; init; }
+
+        public string? Condition { get; init; }
+
+        public string? LiteralValue { get; init; }
     }
 
     private sealed class FieldMappingRow
     {
-        public string SourceKind { get; set; } = "Source";
+        public string SourceKind { get; set; } = "Left";
 
         public string SourcePath { get; set; } = string.Empty;
-
-        public string SampleValue { get; init; } = string.Empty;
-
-        public string Purpose { get; set; } = "Output";
 
         public string Condition { get; set; } = "Always";
 

@@ -4,15 +4,18 @@ using Mulse.Modules;
 namespace Service;
 
 /// <summary>
-/// Executes configured flows as a sequence of named, independently retryable "stages": <c>fetch</c>,
-/// <c>parse</c>, <c>augment:{index}</c>, and per delivery route <c>delivery:{route}:render</c> /
+/// Executes configured flows as a sequence of named, independently retryable "stages":
+/// <c>source:{sourceId}:fetch</c> / <c>source:{sourceId}:parse</c> for every source in the flow's source graph
+/// (run in topological order of <see cref="SourceDefinition.InputSourceIds"/>), then <c>augment:{index}</c> over
+/// the merged parsed batch, then per delivery route <c>delivery:{route}:render</c> /
 /// <c>delivery:{route}:deliver</c>. Each stage's effective <see cref="RetryPolicyDefinition"/> (step override,
 /// falling back to the flow-level default, falling back to a single attempt) governs what happens when that
-/// stage throws: if another attempt is allowed, the stage's input batch (and, for delivery stages, the shared
-/// post-augment batch) is snapshotted to disk via <see cref="IFlowRetryStateStore"/> and execution returns
-/// immediately with a <see cref="FlowExecutionOutcome.Retrying"/> result; a separate background driver is
-/// responsible for waiting out the delay and calling <see cref="ResumeRetryAsync"/>. Because resumption reads
-/// the same durable state a crash would have left behind, this also provides crash/restart recovery for free.
+/// stage throws: if another attempt is allowed, the stage's input batch (plus, for source stages, the already
+/// resolved per-source batches, and for delivery stages the shared post-augment batch) is snapshotted to disk via
+/// <see cref="IFlowRetryStateStore"/> and execution returns immediately with a
+/// <see cref="FlowExecutionOutcome.Retrying"/> result; a separate background driver is responsible for waiting
+/// out the delay and calling <see cref="ResumeRetryAsync"/>. Because resumption reads the same durable state a
+/// crash would have left behind, this also provides crash/restart recovery for free.
 /// </summary>
 public sealed class FlowRuntime(
     IFlowDefinitionService flowDefinitionService,
@@ -25,6 +28,8 @@ public sealed class FlowRuntime(
 {
     private const string ConditionJsonSetting = "conditionJson";
     private const string ExpectsResponseSetting = "expectsResponse";
+    private const string SourceIdMetadataKey = "sourceId";
+    private const string SourceStagePrefix = "source:";
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _flowLocks = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyList<PipelineDefinition> GetConfiguredFlows()
@@ -45,7 +50,11 @@ public sealed class FlowRuntime(
 
             try
             {
-                return await RunFetchOnwardAsync(pipeline, context, startedAt, attemptsAlreadyMade: 0, cancellationToken).ConfigureAwait(false);
+                return await RunSourceGraphOnwardAsync(
+                    pipeline, context, startedAt,
+                    resolvedSources: new Dictionary<string, IntegrationBatch>(StringComparer.OrdinalIgnoreCase),
+                    resumeSourceId: null, resumeStage: null, resumeInput: null, resumeAttempts: 0,
+                    cancellationToken).ConfigureAwait(false);
             }
             catch (FlowRetryScheduledSignal signal)
             {
@@ -89,14 +98,14 @@ public sealed class FlowRuntime(
 
             try
             {
-                if (string.Equals(retryState.StageId, "fetch", StringComparison.Ordinal))
+                if (retryState.StageId.StartsWith(SourceStagePrefix, StringComparison.Ordinal))
                 {
-                    return await RunFetchOnwardAsync(pipeline, context, retryState.ExecutionStartedAt, retryState.AttemptsMade, cancellationToken).ConfigureAwait(false);
-                }
-
-                if (string.Equals(retryState.StageId, "parse", StringComparison.Ordinal))
-                {
-                    return await RunParseOnwardAsync(pipeline, context, retryState.ExecutionStartedAt, inputBatch, retryState.AttemptsMade, cancellationToken).ConfigureAwait(false);
+                    var (sourceId, sourceStage) = ParseSourceStageId(retryState.StageId);
+                    var resolvedSources = RestoreResolvedSources(retryState.ResolvedSourcePayloads);
+                    return await RunSourceGraphOnwardAsync(
+                        pipeline, context, retryState.ExecutionStartedAt, resolvedSources,
+                        sourceId, sourceStage, inputBatch, retryState.AttemptsMade,
+                        cancellationToken).ConfigureAwait(false);
                 }
 
                 if (retryState.StageId.StartsWith("augment:", StringComparison.Ordinal))
@@ -132,37 +141,239 @@ public sealed class FlowRuntime(
         }
     }
 
-    private async Task<FlowExecutionResult> RunFetchOnwardAsync(
-        PipelineDefinition pipeline, FlowExecutionContext context, DateTimeOffset startedAt, int attemptsAlreadyMade, CancellationToken cancellationToken)
+    /// <summary>
+    /// Resolves every source in the flow's graph (fetch then parse, in topological order of
+    /// <see cref="SourceDefinition.InputSourceIds"/>) and then hands the merged, <c>sourceId</c>-tagged parsed
+    /// payloads to the augment chain. <paramref name="resolvedSources"/> carries sources already resolved by an
+    /// earlier attempt of this same execution, so a resumed run never re-fetches upstream sources.
+    /// </summary>
+    private async Task<FlowExecutionResult> RunSourceGraphOnwardAsync(
+        PipelineDefinition pipeline,
+        FlowExecutionContext context,
+        DateTimeOffset startedAt,
+        Dictionary<string, IntegrationBatch> resolvedSources,
+        string? resumeSourceId,
+        string? resumeStage,
+        IntegrationBatch? resumeInput,
+        int resumeAttempts,
+        CancellationToken cancellationToken)
     {
-        var fetchedBatch = await RunStageAsync(
-            pipeline, context, startedAt, "fetch", EffectiveRetry(pipeline, pipeline.Fetch), attemptsAlreadyMade,
-            IntegrationBatch.Empty, committedAtomicDeliveries: [], postAugmentBatchForSnapshot: null,
-            invoke: async ct =>
-            {
-                await using var fetch = await moduleCatalog.LeaseFetchAsync(pipeline.Fetch.Module, ct).ConfigureAwait(false);
-                return await fetch.Module.FetchAsync(context, pipeline.Fetch, ct).ConfigureAwait(false);
-            },
-            cancellationToken).ConfigureAwait(false);
+        var orderedSources = OrderSourcesTopologically(pipeline);
 
-        return await RunParseOnwardAsync(pipeline, context, startedAt, fetchedBatch, attemptsAlreadyMade: 0, cancellationToken).ConfigureAwait(false);
+        foreach (var source in orderedSources)
+        {
+            if (resolvedSources.ContainsKey(source.Id))
+            {
+                continue;
+            }
+
+            var isResumedSource = resumeSourceId is not null
+                && string.Equals(source.Id, resumeSourceId, StringComparison.OrdinalIgnoreCase);
+
+            IntegrationBatch fetchedBatch;
+            if (isResumedSource && string.Equals(resumeStage, "parse", StringComparison.Ordinal) && resumeInput is not null)
+            {
+                // The fetch sub-stage already succeeded before the failure; jump straight to parse.
+                fetchedBatch = resumeInput;
+            }
+            else
+            {
+                var fetchInput = isResumedSource && string.Equals(resumeStage, "fetch", StringComparison.Ordinal) && resumeInput is not null
+                    ? resumeInput
+                    : MergeBatches(source.InputSourceIds.Select(inputSourceId => ResolveInputSource(pipeline, resolvedSources, source, inputSourceId)));
+
+                var fetchAttempts = isResumedSource && string.Equals(resumeStage, "fetch", StringComparison.Ordinal) ? resumeAttempts : 0;
+                var fetchStep = source.Fetch;
+                fetchedBatch = await RunStageAsync(
+                    pipeline, context, startedAt, $"{SourceStagePrefix}{source.Id}:fetch", EffectiveRetry(pipeline, fetchStep), fetchAttempts,
+                    fetchInput, committedAtomicDeliveries: [], postAugmentBatchForSnapshot: null, resolvedSourcesForSnapshot: resolvedSources,
+                    invoke: async ct =>
+                    {
+                        await using var fetch = await moduleCatalog.LeaseFetchAsync(fetchStep.Module, ct).ConfigureAwait(false);
+                        return await fetch.Module.FetchAsync(context, fetchInput, fetchStep, ct).ConfigureAwait(false);
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            var parseAttempts = isResumedSource && string.Equals(resumeStage, "parse", StringComparison.Ordinal) ? resumeAttempts : 0;
+            var parseStep = source.Parse;
+            var parsedBatch = await RunStageAsync(
+                pipeline, context, startedAt, $"{SourceStagePrefix}{source.Id}:parse", EffectiveRetry(pipeline, parseStep), parseAttempts,
+                fetchedBatch, committedAtomicDeliveries: [], postAugmentBatchForSnapshot: null, resolvedSourcesForSnapshot: resolvedSources,
+                invoke: async ct =>
+                {
+                    await using var parse = await moduleCatalog.LeaseParseAsync(parseStep.Module, ct).ConfigureAwait(false);
+                    return await ProcessConditionalStepAsync(
+                        fetchedBatch, parseStep, applicableBatch => parse.Module.ParseAsync(context, applicableBatch, parseStep, ct), ct).ConfigureAwait(false);
+                },
+                cancellationToken).ConfigureAwait(false);
+
+            resolvedSources[source.Id] = TagWithSourceId(parsedBatch, source.Id);
+        }
+
+        // Every source's parsed payloads (each tagged with its originating sourceId) form the augment input.
+        var mergedBatch = MergeBatches(orderedSources.Select(source => resolvedSources[source.Id]));
+        return await RunAugmentOnwardAsync(pipeline, context, startedAt, augmentIndex: 0, mergedBatch, attemptsAlreadyMade: 0, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<FlowExecutionResult> RunParseOnwardAsync(
-        PipelineDefinition pipeline, FlowExecutionContext context, DateTimeOffset startedAt, IntegrationBatch fetchedBatch, int attemptsAlreadyMade, CancellationToken cancellationToken)
+    private static IntegrationBatch ResolveInputSource(
+        PipelineDefinition pipeline,
+        IReadOnlyDictionary<string, IntegrationBatch> resolvedSources,
+        SourceDefinition source,
+        string inputSourceId)
     {
-        var parsedBatch = await RunStageAsync(
-            pipeline, context, startedAt, "parse", EffectiveRetry(pipeline, pipeline.Parse), attemptsAlreadyMade,
-            fetchedBatch, committedAtomicDeliveries: [], postAugmentBatchForSnapshot: null,
-            invoke: async ct =>
-            {
-                await using var parse = await moduleCatalog.LeaseParseAsync(pipeline.Parse.Module, ct).ConfigureAwait(false);
-                return await ProcessConditionalStepAsync(
-                    fetchedBatch, pipeline.Parse, applicableBatch => parse.Module.ParseAsync(context, applicableBatch, pipeline.Parse, ct), ct).ConfigureAwait(false);
-            },
-            cancellationToken).ConfigureAwait(false);
+        if (resolvedSources.TryGetValue(inputSourceId, out var batch))
+        {
+            return batch;
+        }
 
-        return await RunAugmentOnwardAsync(pipeline, context, startedAt, augmentIndex: 0, parsedBatch, attemptsAlreadyMade: 0, cancellationToken).ConfigureAwait(false);
+        throw new InvalidOperationException(
+            $"Flow '{pipeline.Id}' source '{source.Id}' declares input source '{inputSourceId}', which is not a source of this flow.");
+    }
+
+    /// <summary>
+    /// Orders a flow's sources so that every source runs after the sources it consumes (Kahn's algorithm).
+    /// Source graphs are validated when a flow is created or updated, but the runtime defends against a stale or
+    /// externally edited definition by failing fast with a clear message.
+    /// </summary>
+    private static IReadOnlyList<SourceDefinition> OrderSourcesTopologically(PipelineDefinition pipeline)
+    {
+        var sourcesById = new Dictionary<string, SourceDefinition>(StringComparer.OrdinalIgnoreCase);
+        foreach (var source in pipeline.Sources)
+        {
+            if (string.IsNullOrWhiteSpace(source.Id))
+            {
+                throw new InvalidOperationException($"Flow '{pipeline.Id}' has a source with no id.");
+            }
+
+            if (!sourcesById.TryAdd(source.Id, source))
+            {
+                throw new InvalidOperationException($"Flow '{pipeline.Id}' declares more than one source with id '{source.Id}'.");
+            }
+        }
+
+        var remainingDependencies = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var source in pipeline.Sources)
+        {
+            var distinctInputs = source.InputSourceIds
+                .Where(static inputId => !string.IsNullOrWhiteSpace(inputId))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            foreach (var inputId in distinctInputs)
+            {
+                if (!sourcesById.ContainsKey(inputId))
+                {
+                    throw new InvalidOperationException(
+                        $"Flow '{pipeline.Id}' source '{source.Id}' references unknown input source '{inputId}'.");
+                }
+
+                if (!dependents.TryGetValue(inputId, out var list))
+                {
+                    list = [];
+                    dependents[inputId] = list;
+                }
+
+                list.Add(source.Id);
+            }
+
+            remainingDependencies[source.Id] = distinctInputs.Length;
+        }
+
+        var ready = new Queue<string>(pipeline.Sources
+            .Where(source => remainingDependencies[source.Id] == 0)
+            .Select(static source => source.Id));
+        var ordered = new List<SourceDefinition>(pipeline.Sources.Count);
+
+        while (ready.Count > 0)
+        {
+            var sourceId = ready.Dequeue();
+            ordered.Add(sourcesById[sourceId]);
+
+            if (!dependents.TryGetValue(sourceId, out var sourceDependents))
+            {
+                continue;
+            }
+
+            foreach (var dependentId in sourceDependents)
+            {
+                if (--remainingDependencies[dependentId] == 0)
+                {
+                    ready.Enqueue(dependentId);
+                }
+            }
+        }
+
+        if (ordered.Count != pipeline.Sources.Count)
+        {
+            var cyclicIds = pipeline.Sources
+                .Select(static source => source.Id)
+                .Where(id => remainingDependencies[id] > 0)
+                .ToArray();
+            throw new InvalidOperationException(
+                $"Flow '{pipeline.Id}' has a cyclic source graph involving: {string.Join(", ", cyclicIds)}.");
+        }
+
+        return ordered;
+    }
+
+    /// <summary>
+    /// Stamps every payload leaving a source's parse stage with the id of the source it came from, so downstream
+    /// fetch modules (for chained sources) and the join engine can tell the merged payloads apart.
+    /// </summary>
+    private static IntegrationBatch TagWithSourceId(IntegrationBatch batch, string sourceId)
+    {
+        return new IntegrationBatch(batch.Payloads.Select(payload =>
+        {
+            var metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.OrdinalIgnoreCase)
+            {
+                [SourceIdMetadataKey] = sourceId
+            };
+            return payload with { Metadata = metadata };
+        }).ToArray());
+    }
+
+    /// <summary>
+    /// Merges several source batches by simple payload concatenation. Fetch or augment modules that need more
+    /// structure than a flat list should read <c>payload.Metadata["sourceId"]</c> to disambiguate which source
+    /// each payload came from.
+    /// </summary>
+    private static IntegrationBatch MergeBatches(IEnumerable<IntegrationBatch> batches)
+    {
+        var payloads = new List<IntegrationPayload>();
+        foreach (var batch in batches)
+        {
+            payloads.AddRange(batch.Payloads);
+        }
+
+        return payloads.Count == 0 ? IntegrationBatch.Empty : new IntegrationBatch(payloads);
+    }
+
+    private static (string SourceId, string Stage) ParseSourceStageId(string stageId)
+    {
+        // "source:{sourceId}:fetch" / "source:{sourceId}:parse" - the source id itself never contains ':'.
+        var remainder = stageId[SourceStagePrefix.Length..];
+        var separatorIndex = remainder.LastIndexOf(':');
+        if (separatorIndex <= 0)
+        {
+            throw new InvalidOperationException($"Unrecognized source stage id '{stageId}'.");
+        }
+
+        return (remainder[..separatorIndex], remainder[(separatorIndex + 1)..]);
+    }
+
+    private static Dictionary<string, IntegrationBatch> RestoreResolvedSources(
+        IReadOnlyDictionary<string, List<FlowOrchestrationPayloadSnapshot>> snapshots)
+    {
+        var resolved = new Dictionary<string, IntegrationBatch>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (sourceId, payloads) in snapshots)
+        {
+            resolved[sourceId] = RestoreBatch(payloads);
+        }
+
+        return resolved;
     }
 
     private async Task<FlowExecutionResult> RunAugmentOnwardAsync(
@@ -179,7 +390,7 @@ public sealed class FlowRuntime(
         var augment = pipeline.Augments[augmentIndex];
         var outputBatch = await RunStageAsync(
             pipeline, context, startedAt, $"augment:{augmentIndex}", EffectiveRetry(pipeline, augment), attemptsAlreadyMade,
-            batch, committedAtomicDeliveries: [], postAugmentBatchForSnapshot: null,
+            batch, committedAtomicDeliveries: [], postAugmentBatchForSnapshot: null, resolvedSourcesForSnapshot: null,
             invoke: async ct =>
             {
                 await using var augmentModule = await moduleCatalog.LeaseOrchestrationAugmentAsync(augment.Module, ct).ConfigureAwait(false);
@@ -241,7 +452,7 @@ public sealed class FlowRuntime(
                     var renderAttempts = isResumedRoute ? resumeRenderAttempts : 0;
                     renderedBatch = await RunStageAsync(
                         pipeline, context, startedAt, $"delivery:{routeIndex}:render", EffectiveRetry(pipeline, delivery.Render), renderAttempts,
-                        renderApplicableBatch, committedAtomicDeliveries, postAugmentBatchForSnapshot: postAugmentBatch,
+                        renderApplicableBatch, committedAtomicDeliveries, postAugmentBatchForSnapshot: postAugmentBatch, resolvedSourcesForSnapshot: null,
                         invoke: async ct =>
                         {
                             await using var renderModule = await moduleCatalog.LeaseRenderAsync(delivery.Render.Module, ct).ConfigureAwait(false);
@@ -259,7 +470,7 @@ public sealed class FlowRuntime(
                 var deliverAttempts = isResumedRoute && resumeDeliverInput is not null ? resumeDeliverAttempts : 0;
                 await RunStageAsync(
                     pipeline, context, startedAt, $"delivery:{routeIndex}:deliver", EffectiveRetry(pipeline, delivery.Deliver), deliverAttempts,
-                    deliverApplicableBatch, committedAtomicDeliveries, postAugmentBatchForSnapshot: postAugmentBatch,
+                    deliverApplicableBatch, committedAtomicDeliveries, postAugmentBatchForSnapshot: postAugmentBatch, resolvedSourcesForSnapshot: null,
                     invoke: async ct =>
                     {
                         await using var deliverModule = await moduleCatalog.LeaseDeliverAsync(delivery.Deliver.Module, ct).ConfigureAwait(false);
@@ -347,6 +558,7 @@ public sealed class FlowRuntime(
         IntegrationBatch inputBatch,
         IReadOnlyList<FlowRetryCommittedDelivery> committedAtomicDeliveries,
         IntegrationBatch? postAugmentBatchForSnapshot,
+        IReadOnlyDictionary<string, IntegrationBatch>? resolvedSourcesForSnapshot,
         Func<CancellationToken, Task<IntegrationBatch>> invoke,
         CancellationToken cancellationToken)
     {
@@ -372,6 +584,7 @@ public sealed class FlowRuntime(
                     LastError = exception.Message,
                     ExecutionStartedAt = executionStartedAt,
                     InputPayloads = SnapshotBatch(inputBatch),
+                    ResolvedSourcePayloads = SnapshotResolvedSources(resolvedSourcesForSnapshot),
                     PostAugmentPayloads = postAugmentBatchForSnapshot is null ? null : SnapshotBatch(postAugmentBatchForSnapshot),
                     CommittedAtomicDeliveries = committedAtomicDeliveries.ToList()
                 };
@@ -423,6 +636,23 @@ public sealed class FlowRuntime(
             ContentType = payload.ContentType,
             Metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.OrdinalIgnoreCase)
         }).ToList();
+
+    private static Dictionary<string, List<FlowOrchestrationPayloadSnapshot>> SnapshotResolvedSources(
+        IReadOnlyDictionary<string, IntegrationBatch>? resolvedSources)
+    {
+        var snapshots = new Dictionary<string, List<FlowOrchestrationPayloadSnapshot>>(StringComparer.OrdinalIgnoreCase);
+        if (resolvedSources is null)
+        {
+            return snapshots;
+        }
+
+        foreach (var (sourceId, batch) in resolvedSources)
+        {
+            snapshots[sourceId] = SnapshotBatch(batch);
+        }
+
+        return snapshots;
+    }
 
     private static IntegrationBatch RestoreBatch(IReadOnlyList<FlowOrchestrationPayloadSnapshot> snapshots)
         => new(snapshots.Select(snapshot => new IntegrationPayload(
@@ -548,14 +778,22 @@ public sealed class FlowRuntime(
             throw new InvalidOperationException($"Flow '{flowId}' is disabled.");
         }
 
-        if (string.IsNullOrWhiteSpace(pipeline.Fetch.Module))
+        if (pipeline.Sources.Count == 0)
         {
-            throw new InvalidOperationException($"Flow '{flowId}' does not define a fetch module.");
+            throw new InvalidOperationException($"Flow '{flowId}' does not define any sources.");
         }
 
-        if (string.IsNullOrWhiteSpace(pipeline.Parse.Module))
+        foreach (var source in pipeline.Sources)
         {
-            throw new InvalidOperationException($"Flow '{flowId}' does not define a parse module.");
+            if (string.IsNullOrWhiteSpace(source.Fetch.Module))
+            {
+                throw new InvalidOperationException($"Flow '{flowId}' source '{source.Id}' does not define a fetch module.");
+            }
+
+            if (string.IsNullOrWhiteSpace(source.Parse.Module))
+            {
+                throw new InvalidOperationException($"Flow '{flowId}' source '{source.Id}' does not define a parse module.");
+            }
         }
 
         // Resolve {{config:...}}/{{secret:...}} placeholder tokens (generated by the BizTalk importer or

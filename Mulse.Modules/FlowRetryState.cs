@@ -14,8 +14,8 @@ public sealed class FlowRetryState
     public string ExecutionId { get; init; } = string.Empty;
 
     /// <summary>
-    /// Identifies which stage of the flow is stalled: "fetch", "parse", "augment:{index}",
-    /// "delivery:{routeIndex}:render", or "delivery:{routeIndex}:deliver".
+    /// Identifies which stage of the flow is stalled: "source:{sourceId}:fetch", "source:{sourceId}:parse",
+    /// "augment:{index}", "delivery:{routeIndex}:render", or "delivery:{routeIndex}:deliver".
     /// </summary>
     public string StageId { get; init; } = string.Empty;
 
@@ -31,6 +31,13 @@ public sealed class FlowRetryState
 
     /// <summary>The batch this stage should be (re)invoked with when it is retried.</summary>
     public List<FlowOrchestrationPayloadSnapshot> InputPayloads { get; init; } = [];
+
+    /// <summary>
+    /// For a stalled source-graph stage only: the PARSED batches of every source that had already been resolved
+    /// before the stalled stage ran, keyed by source id. Lets a resume pick up mid-graph without re-fetching or
+    /// re-parsing upstream sources (which may have side effects, such as deleting the files they consumed).
+    /// </summary>
+    public Dictionary<string, List<FlowOrchestrationPayloadSnapshot>> ResolvedSourcePayloads { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// For a stalled delivery route stage (render or deliver) only: the batch produced by the last augment (or

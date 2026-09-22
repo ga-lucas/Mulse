@@ -6,7 +6,7 @@ public sealed class SqlServerModuleInstaller : IModuleInstaller
 {
     public void Install(IModuleRegistryBuilder builder)
     {
-        builder.AddOrchestrationAugment<SqlServerLookupAugmentModule>();
+        builder.AddFetch<SqlServerLookupFetchModule>();
         builder.AddDeliver<SqlServerExecuteDeliverModule>();
     }
 }

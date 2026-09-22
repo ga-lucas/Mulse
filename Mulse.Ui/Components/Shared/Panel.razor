@@ -1,0 +1,35 @@
+<article class="panel">
+    <div class="panel-header">
+        <div>
+            <h2>@Title</h2>
+            @if (Description is not null)
+            {
+                <p>@Description</p>
+            }
+        </div>
+        @if (HeaderActions is not null)
+        {
+            @HeaderActions
+        }
+    </div>
+
+    @ChildContent
+</article>
+
+@code {
+    /// <summary>The panel's heading text.</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>Optional descriptive text rendered under the title.</summary>
+    [Parameter]
+    public string? Description { get; set; }
+
+    /// <summary>Optional content rendered on the right side of the panel header (e.g. an action button).</summary>
+    [Parameter]
+    public RenderFragment? HeaderActions { get; set; }
+
+    /// <summary>The panel body.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

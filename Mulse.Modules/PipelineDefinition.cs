@@ -8,9 +8,12 @@ public sealed class PipelineDefinition
 
     public PipelineTriggerOptions Trigger { get; init; } = new();
 
-    public ModuleStepDefinition Fetch { get; init; } = new();
-
-    public ModuleStepDefinition Parse { get; init; } = new();
+    /// <summary>
+    /// The flow's source graph. Every source runs its own fetch then parse stage; sources are executed in
+    /// topological order of <see cref="SourceDefinition.InputSourceIds"/> and every source's parsed payloads are
+    /// tagged with a <c>sourceId</c> metadata entry before being merged into the augment stage input.
+    /// </summary>
+    public List<SourceDefinition> Sources { get; init; } = [];
 
     public List<ModuleStepDefinition> Augments { get; init; } = [];
 

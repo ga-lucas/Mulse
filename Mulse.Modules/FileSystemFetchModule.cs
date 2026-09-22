@@ -24,8 +24,10 @@ public sealed class FileSystemFetchModule : IFetchModule
         SettingDescriptors,
         Recommendation);
 
+    /// <summary><paramref name="input"/> is unused: this is a root source that reads from the file system only.</summary>
     public async Task<IntegrationBatch> FetchAsync(
         FlowExecutionContext context,
+        IntegrationBatch input,
         ModuleStepDefinition step,
         CancellationToken cancellationToken)
     {
@@ -71,13 +73,6 @@ public sealed class FileSystemFetchModule : IFetchModule
 
     private static string ResolveContentType(string filePath)
     {
-        return Path.GetExtension(filePath).ToLowerInvariant() switch
-        {
-            ".json" => "application/json",
-            ".xml" => "application/xml",
-            ".csv" => "text/csv",
-            ".txt" => "text/plain",
-            _ => "application/octet-stream"
-        };
+        return ContentTypeResolver.FromFileName(filePath);
     }
 }

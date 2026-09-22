@@ -6,22 +6,31 @@ namespace Mulse.Ui.Services;
 
 public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
 {
-    public async Task<IReadOnlyList<ModuleViewModel>> GetModulesAsync(CancellationToken cancellationToken)
+    public Task<IReadOnlyList<ModuleViewModel>> GetModulesAsync(CancellationToken cancellationToken)
+        => GetListAsync<ModuleViewModel>("/api/modules", cancellationToken);
+
+    public Task<IReadOnlyList<ModulePackageViewModel>> GetModulePackagesAsync(CancellationToken cancellationToken)
+        => GetListAsync<ModulePackageViewModel>("/api/module-packages", cancellationToken);
+
+    public Task<IReadOnlyList<FlowViewModel>> GetFlowsAsync(CancellationToken cancellationToken)
+        => GetListAsync<FlowViewModel>("/api/flows", cancellationToken);
+
+    public async Task<FlowViewModel> GetFlowAsync(string flowId, CancellationToken cancellationToken)
     {
-        return await httpClient.GetFromJsonAsync<ModuleViewModel[]>("/api/modules", cancellationToken).ConfigureAwait(false)
-            ?? [];
+        return await httpClient.GetFromJsonAsync<FlowViewModel>($"/api/flows/{Uri.EscapeDataString(flowId)}", cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The API returned an empty flow response.");
     }
 
-    public async Task<IReadOnlyList<ModulePackageViewModel>> GetModulePackagesAsync(CancellationToken cancellationToken)
+    public async Task<FlowViewModel> CreateFlowAsync(CreateFlowRequestViewModel request, CancellationToken cancellationToken)
     {
-        return await httpClient.GetFromJsonAsync<ModulePackageViewModel[]>("/api/module-packages", cancellationToken).ConfigureAwait(false)
-            ?? [];
+        using var response = await httpClient.PostAsJsonAsync("/api/flows", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<FlowViewModel>(response, cancellationToken, "created flow response").ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<FlowViewModel>> GetFlowsAsync(CancellationToken cancellationToken)
+    public async Task<FlowViewModel> UpdateFlowAsync(UpdateFlowRequestViewModel request, CancellationToken cancellationToken)
     {
-        return await httpClient.GetFromJsonAsync<FlowViewModel[]>("/api/flows", cancellationToken).ConfigureAwait(false)
-            ?? [];
+        using var response = await httpClient.PutAsJsonAsync($"/api/flows/{Uri.EscapeDataString(request.Id)}", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<FlowViewModel>(response, cancellationToken, "updated flow response").ConfigureAwait(false);
     }
 
     public async Task<FlowDesignAnalysisViewModel> AnalyzeFlowDesignAsync(FlowDesignAnalysisRequestViewModel request, CancellationToken cancellationToken)
@@ -42,6 +51,18 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<FlowViewModel>(response, cancellationToken, "imported BizTalk flow response").ConfigureAwait(false);
     }
 
+    public async Task<DownloadedFileViewModel> DownloadBizTalkScaffoldedModulesAsync(CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/biztalk-import/scaffolded-modules/download", request, cancellationToken).ConfigureAwait(false);
+        return await ReadDownloadedFileAsync(response, cancellationToken, "scaffolded modules zip").ConfigureAwait(false);
+    }
+
+    public async Task<DownloadedFileViewModel> DownloadBizTalkScaffoldedModuleAsync(string moduleId, CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync($"/api/biztalk-import/scaffolded-modules/{Uri.EscapeDataString(moduleId)}/download", request, cancellationToken).ConfigureAwait(false);
+        return await ReadDownloadedFileAsync(response, cancellationToken, "scaffolded module file").ConfigureAwait(false);
+    }
+
     public async Task<FlowViewModel> CreateDesignedFlowAsync(CreateDesignedFlowRequestViewModel request, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PostAsJsonAsync("/api/flow-designer/flows", request, cancellationToken).ConfigureAwait(false);
@@ -60,17 +81,11 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<FlowViewModel>(response, cancellationToken, "updated flow response").ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<ConfigValueViewModel>> GetConfigValuesAsync(CancellationToken cancellationToken)
-    {
-        return await httpClient.GetFromJsonAsync<ConfigValueViewModel[]>("/api/config-values", cancellationToken).ConfigureAwait(false)
-            ?? [];
-    }
+    public Task<IReadOnlyList<ConfigValueViewModel>> GetConfigValuesAsync(CancellationToken cancellationToken)
+        => GetListAsync<ConfigValueViewModel>("/api/config-values", cancellationToken);
 
-    public async Task<IReadOnlyList<ConfigReferenceUsageViewModel>> GetConfigValueUsagesAsync(CancellationToken cancellationToken)
-    {
-        return await httpClient.GetFromJsonAsync<ConfigReferenceUsageViewModel[]>("/api/config-values/usages", cancellationToken).ConfigureAwait(false)
-            ?? [];
-    }
+    public Task<IReadOnlyList<ConfigReferenceUsageViewModel>> GetConfigValueUsagesAsync(CancellationToken cancellationToken)
+        => GetListAsync<ConfigReferenceUsageViewModel>("/api/config-values/usages", cancellationToken);
 
     public async Task<ConfigValueViewModel> SetConfigValueAsync(string reference, string value, CancellationToken cancellationToken)
     {
@@ -94,6 +109,12 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<ModulePackageViewModel>(response, cancellationToken, "module package response").ConfigureAwait(false);
     }
 
+    private async Task<IReadOnlyList<TModel>> GetListAsync<TModel>(string url, CancellationToken cancellationToken)
+    {
+        return await httpClient.GetFromJsonAsync<TModel[]>(url, cancellationToken).ConfigureAwait(false)
+            ?? [];
+    }
+
     private static async Task<TModel> ReadRequiredAsync<TModel>(HttpResponseMessage response, CancellationToken cancellationToken, string responseName)
     {
         if (response.IsSuccessStatusCode)
@@ -105,5 +126,25 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>(cancellationToken).ConfigureAwait(false);
         var detail = problem?.Detail ?? problem?.Title ?? $"The API returned status code {(int)response.StatusCode}.";
         throw new InvalidOperationException(detail);
+    }
+
+    private static async Task<DownloadedFileViewModel> ReadDownloadedFileAsync(HttpResponseMessage response, CancellationToken cancellationToken, string responseName)
+    {
+        if (!response.IsSuccessStatusCode)
+        {
+            // The download endpoints return a plain-text 404 body (rather than JSON) when no scaffolded module
+            // matches, so fall back to reading it as text instead of attempting JSON deserialization.
+            var errorText = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(errorText)
+                ? $"The API returned status code {(int)response.StatusCode} while downloading the {responseName}."
+                : errorText);
+        }
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        var fileName = response.Content.Headers.ContentDisposition?.FileNameStar
+            ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"')
+            ?? $"{responseName.Replace(' ', '-')}.dat";
+        var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+        return new DownloadedFileViewModel(fileName, contentType, bytes);
     }
 }

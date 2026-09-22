@@ -30,8 +30,10 @@ public sealed class SftpFetchModule : IFetchModule
         SettingDescriptors,
         Recommendation);
 
+    /// <summary><paramref name="input"/> is unused: this is a root source that polls an SFTP location only.</summary>
     public async Task<IntegrationBatch> FetchAsync(
         FlowExecutionContext context,
+        IntegrationBatch input,
         ModuleStepDefinition step,
         CancellationToken cancellationToken)
     {
@@ -109,13 +111,6 @@ public sealed class SftpFetchModule : IFetchModule
 
     private static string ResolveContentType(string fileName)
     {
-        return Path.GetExtension(fileName).ToLowerInvariant() switch
-        {
-            ".json" => "application/json",
-            ".xml" => "application/xml",
-            ".csv" => "text/csv",
-            ".txt" => "text/plain",
-            _ => "application/octet-stream"
-        };
+        return ContentTypeResolver.FromFileName(fileName);
     }
 }

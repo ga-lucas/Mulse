@@ -49,8 +49,7 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
             Id = pipeline.Id,
             Enabled = pipeline.Enabled,
             Trigger = pipeline.Trigger,
-            Fetch = ResolveStep(pipeline.Fetch, configValues, missingReferences),
-            Parse = ResolveStep(pipeline.Parse, configValues, missingReferences),
+            Sources = pipeline.Sources.Select(source => ResolveSource(source, configValues, missingReferences)).ToList(),
             Augments = pipeline.Augments.Select(step => ResolveStep(step, configValues, missingReferences)).ToList(),
             Deliveries = pipeline.Deliveries.Select(route => ResolveDelivery(route, configValues, missingReferences)).ToList(),
             Retry = pipeline.Retry
@@ -66,6 +65,17 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
         }
 
         return resolved;
+    }
+
+    private static SourceDefinition ResolveSource(SourceDefinition source, IReadOnlyDictionary<string, string> configValues, List<string> missingReferences)
+    {
+        return new SourceDefinition
+        {
+            Id = source.Id,
+            Fetch = ResolveStep(source.Fetch, configValues, missingReferences),
+            Parse = ResolveStep(source.Parse, configValues, missingReferences),
+            InputSourceIds = source.InputSourceIds.ToList()
+        };
     }
 
     private static ModuleStepDefinition ResolveStep(ModuleStepDefinition step, IReadOnlyDictionary<string, string> configValues, List<string> missingReferences)
@@ -122,8 +132,12 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
 
         foreach (var pipeline in pipelines)
         {
-            ScanStep(pipeline.Fetch, pipeline.Id, "fetch.settings", configValues, usages);
-            ScanStep(pipeline.Parse, pipeline.Id, "parse.settings", configValues, usages);
+            for (var i = 0; i < pipeline.Sources.Count; i++)
+            {
+                var source = pipeline.Sources[i];
+                ScanStep(source.Fetch, pipeline.Id, $"sources[{i}].fetch.settings", configValues, usages);
+                ScanStep(source.Parse, pipeline.Id, $"sources[{i}].parse.settings", configValues, usages);
+            }
 
             for (var i = 0; i < pipeline.Augments.Count; i++)
             {

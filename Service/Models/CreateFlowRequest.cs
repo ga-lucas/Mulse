@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations;
 namespace Service.Models;
 
 /// <summary>Payload for creating a runtime-configurable flow.</summary>
-public sealed record CreateFlowRequest
+public sealed record CreateFlowRequest : IFlowPipelineRequest
 {
     /// <summary>The unique flow id.</summary>
     [Required]
@@ -16,13 +16,13 @@ public sealed record CreateFlowRequest
     [Required]
     public required FlowTriggerRequest Trigger { get; init; }
 
-    /// <summary>The fetch step that acquires raw source content.</summary>
+    /// <summary>
+    /// The flow's source graph: each entry is a fetch/parse pair, optionally consuming other sources' parsed
+    /// output. Ids must be unique and non-empty, input source ids must reference sources in this same list, and
+    /// the resulting graph must be acyclic.
+    /// </summary>
     [Required]
-    public required FlowStepRequest Fetch { get; init; }
-
-    /// <summary>The parse step that converts raw content into the working payload shape.</summary>
-    [Required]
-    public required FlowStepRequest Parse { get; init; }
+    public required IReadOnlyList<FlowSourceRequest> Sources { get; init; }
 
     /// <summary>The orchestration augment steps executed after parsing.</summary>
     public IReadOnlyList<FlowStepRequest> Augments { get; init; } = [];

@@ -61,6 +61,11 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
             throw new ArgumentException("At least one delivery route is required.", nameof(request));
         }
 
+        if (request.Sources.Count == 0)
+        {
+            throw new ArgumentException("At least one source is required.", nameof(request));
+        }
+
         var pipeline = new PipelineDefinition
         {
             Id = request.Id,
@@ -71,8 +76,7 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
                 Interval = request.Trigger.Interval,
                 RunOnStartup = request.Trigger.RunOnStartup
             },
-            Fetch = MapStep(request.Fetch),
-            Parse = MapStep(request.Parse),
+            Sources = request.Sources.Select(MapSource).ToList(),
             Augments = request.Augments.Select(MapStep).ToList(),
             Deliveries = request.Deliveries.Select(MapDelivery).ToList()
         };
@@ -404,6 +408,17 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
         return normalized[..MaxSampleLength];
     }
 
+    private static SourceDefinition MapSource(FlowSourceRequest source)
+    {
+        return new SourceDefinition
+        {
+            Id = source.Id,
+            Fetch = MapStep(source.Fetch),
+            Parse = MapStep(source.Parse),
+            InputSourceIds = source.InputSourceIds.ToList()
+        };
+    }
+
     private static ModuleStepDefinition MapStep(FlowStepRequest step)
     {
         return new ModuleStepDefinition
@@ -437,12 +452,12 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
         }
 
         var mappingSteps = augments
-            .Where(static step => string.Equals(step.Module, "conditional-join-map-augment", StringComparison.OrdinalIgnoreCase))
+            .Where(static step => string.Equals(step.Module, "multi-source-join-map-augment", StringComparison.OrdinalIgnoreCase))
             .ToArray();
 
         if (mappingSteps.Length == 0)
         {
-            throw new ArgumentException("Designer mappings require the conditional-join-map-augment module to be configured.", nameof(mappings));
+            throw new ArgumentException("Designer mappings require the multi-source-join-map-augment module to be configured.", nameof(mappings));
         }
 
         var mappingDefinitions = mappings.Select(static mapping => new WorkflowFieldMappingDefinition

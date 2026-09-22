@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Mulse.Modules;
 
 namespace Mulse.CompatibilityPack;
 
@@ -168,14 +169,14 @@ internal static class FlatFileCodec
                 case JsonObject jsonObject:
                     records.Add(jsonObject.ToDictionary(
                         static property => property.Key,
-                        static property => CompatibilityPayloadNavigator.ExtractScalarText(property.Value) ?? string.Empty,
+                        static property => JsonPayloadNavigator.ExtractScalarText(property.Value) ?? string.Empty,
                         StringComparer.OrdinalIgnoreCase));
                     break;
                 case JsonArray jsonArray:
                     var indexed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     for (var index = 0; index < jsonArray.Count; index++)
                     {
-                        indexed[$"Column{index + 1}"] = CompatibilityPayloadNavigator.ExtractScalarText(jsonArray[index]) ?? string.Empty;
+                        indexed[$"Column{index + 1}"] = JsonPayloadNavigator.ExtractScalarText(jsonArray[index]) ?? string.Empty;
                     }
 
                     records.Add(indexed);

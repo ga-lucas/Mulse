@@ -33,3 +33,11 @@ app.MapConfigValueEndpoints();
 app.MapHttpInboundEndpoints();
 
 app.Run();
+
+/// <summary>
+/// Exposes the top-level-statement-generated <c>Program</c> class so <c>Service.Tests</c> can host this
+/// application in-memory via <c>WebApplicationFactory&lt;Program&gt;</c> for integration tests, without
+/// needing to rely on <c>InternalsVisibleTo</c> for the entry point itself.
+/// </summary>
+public partial class Program;
+

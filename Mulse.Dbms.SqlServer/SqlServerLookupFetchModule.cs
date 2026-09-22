@@ -6,8 +6,25 @@ using Mulse.Modules;
 
 namespace Mulse.Dbms.SqlServer;
 
-public sealed class SqlServerLookupAugmentModule : IOrchestrationAugmentModule
+/// <summary>
+/// Source-fetch module that queries SQL Server for reference data keyed off another source's parsed payloads.
+/// <para>
+/// Declare it as a non-root <see cref="SourceDefinition"/> whose <see cref="SourceDefinition.InputSourceIds"/>
+/// name the upstream source(s) to key off: the merged parsed batch of those sources arrives as
+/// <c>input</c>, and the configured <c>idPaths</c> are evaluated against every input payload to build the
+/// distinct id list passed to the query.
+/// </para>
+/// <para>
+/// Output convention: exactly ONE payload named <c>sql-lookup-rows.json</c> whose content is a top-level JSON
+/// array of result rows (one object per row, column name to value). The join engine's row-set convention turns
+/// that array into one row per element, so no envelope wrapping happens here - joining is the job of
+/// <c>multi-source-join-map-augment</c>.
+/// </para>
+/// </summary>
+public sealed class SqlServerLookupFetchModule : IFetchModule
 {
+    private const string OutputPayloadName = "sql-lookup-rows.json";
+
     private static readonly ModuleRecommendationProfile Recommendation = new(
         [ModuleDataFormat.Json],
         [ModuleProtocol.SqlServer],
@@ -16,22 +33,22 @@ public sealed class SqlServerLookupAugmentModule : IOrchestrationAugmentModule
     private static readonly IReadOnlyList<ModuleSettingDescriptor> SettingDescriptors =
     [
         new("connectionString", "Connection string", "The SQL Server connection string used for lookup queries.", true, ModuleSettingInputKind.TextArea),
-        new("idPaths", "ID paths", "A comma-separated list of JSON paths used to extract lookup IDs from the source payload.", true),
+        new("idPaths", "ID paths", "A comma-separated list of JSON paths evaluated against this source's input payloads (the parsed output of its input sources) to extract lookup IDs.", true),
         new("queryText", "Query text", "The SQL query to execute. Use an @ids parameter and SQL Server STRING_SPLIT for the extracted IDs.", true, ModuleSettingInputKind.TextArea),
         new("idsParameterName", "IDs parameter name", "The SQL parameter that receives the comma-separated ID list.", false, ModuleSettingInputKind.Text, "@ids")
     ];
 
     public ModuleDescriptor Descriptor { get; } = new(
-        "sql-server-lookup-augment",
-        "SQL Server lookup augment",
-        ModuleKind.OrchestrationAugment,
-        "Executes a SQL Server lookup based on IDs extracted from the source JSON payload and attaches the result set to the working document.",
+        "sql-server-lookup-fetch",
+        "SQL Server lookup fetch",
+        ModuleKind.Fetch,
+        "Fetches SQL Server reference rows using IDs extracted from an upstream source's parsed payloads, emitting one JSON array payload of rows for a downstream join.",
         SettingDescriptors,
         Recommendation);
 
-    public async Task<IntegrationBatch> AugmentAsync(
+    public async Task<IntegrationBatch> FetchAsync(
         FlowExecutionContext context,
-        IntegrationBatch batch,
+        IntegrationBatch input,
         ModuleStepDefinition step,
         CancellationToken cancellationToken)
     {
@@ -41,48 +58,59 @@ public sealed class SqlServerLookupAugmentModule : IOrchestrationAugmentModule
         var queryText = ModuleSettingReader.GetRequired(step.Settings, "queryText", Descriptor.Id);
         var idsParameterName = NormalizeParameterName(ModuleSettingReader.GetOptional(step.Settings, "idsParameterName") ?? "@ids");
 
-        var transformedPayloads = new List<IntegrationPayload>(batch.Payloads.Count);
+        var ids = ExtractIds(input, idPaths);
+        if (ids.Count == 0)
+        {
+            return new IntegrationBatch([CreatePayload(new JsonArray(), ids, context)]);
+        }
 
         await using var connection = new SqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-        foreach (var payload in batch.Payloads)
+        var rows = await ExecuteLookupAsync(connection, queryText, idsParameterName, ids, context, cancellationToken).ConfigureAwait(false);
+        return new IntegrationBatch([CreatePayload(rows, ids, context)]);
+    }
+
+    private IReadOnlyList<string> ExtractIds(IntegrationBatch input, IReadOnlyList<string> idPaths)
+    {
+        var ids = new List<string>();
+        foreach (var payload in input.Payloads)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            var node = JsonPayloadNavigator.Parse(payload.Content, Descriptor.Id, payload.Name);
 
-            var sourceNode = JsonPayloadNavigator.Parse(payload.Content, Descriptor.Id, payload.Name);
-            var ids = idPaths
-                .SelectMany(path => JsonPayloadNavigator.ReadStringValues(sourceNode, path))
-                .Where(static value => !string.IsNullOrWhiteSpace(value))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-
-            var rows = await ExecuteLookupAsync(connection, queryText, idsParameterName, ids, context, payload, cancellationToken).ConfigureAwait(false);
-            var envelope = new JsonObject
+            // Each input payload may itself be a row-set (a top-level array), so evaluate the id paths against
+            // every logical row rather than only the document root.
+            foreach (var row in JsonPayloadNavigator.ReadRows(node))
             {
-                ["source"] = sourceNode.DeepClone(),
-                ["lookup"] = new JsonObject
+                foreach (var idPath in idPaths)
                 {
-                    ["ids"] = new JsonArray(ids.Select(static id => (JsonNode?)JsonValue.Create(id)).ToArray()),
-                    ["count"] = rows.Count,
-                    ["rows"] = rows
+                    ids.AddRange(JsonPayloadNavigator.ReadStringValues(row, idPath));
                 }
-            };
-
-            var metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.OrdinalIgnoreCase)
-            {
-                ["lookupIds"] = string.Join(',', ids),
-                ["lookupRowCount"] = rows.Count.ToString(CultureInfo.InvariantCulture)
-            };
-
-            transformedPayloads.Add(new IntegrationPayload(
-                Path.ChangeExtension(payload.Name, ".json"),
-                BinaryData.FromString(envelope.ToJsonString()),
-                "application/json",
-                metadata));
+            }
         }
 
-        return new IntegrationBatch(transformedPayloads);
+        return ids
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private IntegrationPayload CreatePayload(JsonArray rows, IReadOnlyList<string> ids, FlowExecutionContext context)
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["flowId"] = context.FlowId,
+            ["executionId"] = context.ExecutionId,
+            ["fetchedBy"] = Descriptor.Id,
+            ["lookupIds"] = string.Join(',', ids),
+            ["lookupRowCount"] = rows.Count.ToString(CultureInfo.InvariantCulture)
+        };
+
+        return new IntegrationPayload(
+            OutputPayloadName,
+            BinaryData.FromString(rows.ToJsonString()),
+            "application/json",
+            metadata);
     }
 
     private static async Task<JsonArray> ExecuteLookupAsync(
@@ -91,20 +119,14 @@ public sealed class SqlServerLookupAugmentModule : IOrchestrationAugmentModule
         string idsParameterName,
         IReadOnlyList<string> ids,
         FlowExecutionContext context,
-        IntegrationPayload payload,
         CancellationToken cancellationToken)
     {
         var rows = new JsonArray();
-        if (ids.Count == 0)
-        {
-            return rows;
-        }
 
         var parameters = new DynamicParameters();
         parameters.Add(idsParameterName, string.Join(',', ids));
         parameters.Add("@flowId", context.FlowId);
         parameters.Add("@executionId", context.ExecutionId);
-        parameters.Add("@payloadName", payload.Name);
 
         var command = new CommandDefinition(queryText, parameters, cancellationToken: cancellationToken);
         var reader = await connection.ExecuteReaderAsync(command).ConfigureAwait(false);

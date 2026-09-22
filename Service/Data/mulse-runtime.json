@@ -5,6 +5,176 @@
   "managedPackages": [],
   "pipelines": [
     {
+      "id": "custom-uhs-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:custom-uhs-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "xml-xsd-parse",
+            "settings": {
+              "schemaPaths": "C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Custom\\Shs.SpaceTrax2.Interfaces.Core.Custom.Partners\\Custom.UHS\\Custom.UHS\\UHSCustomAudit.xsd"
+            },
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [],
+      "deliveries": [
+        {
+          "render": {
+            "module": "xml-render",
+            "settings": {
+              "rootElement": "CustomUHS",
+              "itemElement": "Item"
+            },
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:custom-uhs-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "interfaces-proofs-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:interfaces-proofs-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "flat-file-parse",
+            "settings": {
+              "delimiter": "Comma",
+              "hasHeader": "true"
+            },
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [],
+      "deliveries": [
+        {
+          "render": {
+            "module": "flat-file-render",
+            "settings": {
+              "delimiter": "Comma",
+              "includeHeader": "true"
+            },
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:interfaces-proofs-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "interfaces-proofs-partners-x-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:interfaces-proofs-partners-x-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "flat-file-parse",
+            "settings": {
+              "delimiter": "Comma",
+              "hasHeader": "true"
+            },
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [],
+      "deliveries": [
+        {
+          "render": {
+            "module": "flat-file-render",
+            "settings": {
+              "delimiter": "Comma",
+              "includeHeader": "true"
+            },
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:interfaces-proofs-partners-x-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
       "id": "sample-file-pipeline",
       "enabled": true,
       "trigger": {
@@ -12,20 +182,26 @@
         "interval": "00:05:00",
         "runOnStartup": false
       },
-      "fetch": {
-        "module": "file-system-fetch",
-        "settings": {
-          "path": "SampleData\\Inbox",
-          "searchPattern": "*.json",
-          "recursive": "false"
-        },
-        "retry": null
-      },
-      "parse": {
-        "module": "json-parse",
-        "settings": {},
-        "retry": null
-      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "file-system-fetch",
+            "settings": {
+              "path": "SampleData\\Inbox",
+              "searchPattern": "*.json",
+              "recursive": "false"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
       "augments": [
         {
           "module": "json-envelope-augment",
@@ -68,6 +244,807 @@
               "extension": ".json"
             },
             "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "sample-multi-source-join-pipeline",
+      "enabled": true,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "orders",
+          "fetch": {
+            "module": "file-system-fetch",
+            "settings": {
+              "path": "SampleData\\Inbox",
+              "searchPattern": "*.json",
+              "recursive": "false"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        },
+        {
+          "id": "customers",
+          "fetch": {
+            "module": "file-system-fetch",
+            "settings": {
+              "path": "SampleData\\Reference",
+              "searchPattern": "customers.json",
+              "recursive": "false"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": [
+            "orders"
+          ]
+        }
+      ],
+      "augments": [
+        {
+          "module": "multi-source-join-map-augment",
+          "settings": {
+            "leftSourceId": "orders",
+            "rightSourceId": "customers",
+            "joinKeysJson": "[{\u0022leftPath\u0022:\u0022$.customer\u0022,\u0022rightPath\u0022:\u0022$.customerName\u0022}]",
+            "joinKind": "Left",
+            "resultCardinality": "FanOut",
+            "mappingJson": "[{\u0022sourceKind\u0022:\u0022Left\u0022,\u0022sourcePath\u0022:\u0022$.orderId\u0022,\u0022targetField\u0022:\u0022order.id\u0022,\u0022condition\u0022:\u0022Always\u0022},{\u0022sourceKind\u0022:\u0022Left\u0022,\u0022sourcePath\u0022:\u0022$.customer\u0022,\u0022targetField\u0022:\u0022order.customerName\u0022,\u0022condition\u0022:\u0022Always\u0022},{\u0022sourceKind\u0022:\u0022Left\u0022,\u0022sourcePath\u0022:\u0022$.priority\u0022,\u0022targetField\u0022:\u0022order.priority\u0022,\u0022condition\u0022:\u0022Always\u0022},{\u0022sourceKind\u0022:\u0022Left\u0022,\u0022sourcePath\u0022:\u0022$.items\u0022,\u0022targetField\u0022:\u0022order.items\u0022,\u0022condition\u0022:\u0022Always\u0022},{\u0022sourceKind\u0022:\u0022Right\u0022,\u0022sourcePath\u0022:\u0022$.customerId\u0022,\u0022targetField\u0022:\u0022customer.id\u0022,\u0022condition\u0022:\u0022WhenMatched\u0022},{\u0022sourceKind\u0022:\u0022Right\u0022,\u0022sourcePath\u0022:\u0022$.tier\u0022,\u0022targetField\u0022:\u0022customer.tier\u0022,\u0022condition\u0022:\u0022WhenMatched\u0022},{\u0022sourceKind\u0022:\u0022Right\u0022,\u0022sourcePath\u0022:\u0022$.accountManager\u0022,\u0022targetField\u0022:\u0022customer.accountManager\u0022,\u0022condition\u0022:\u0022WhenMatched\u0022},{\u0022sourceKind\u0022:\u0022Literal\u0022,\u0022literalValue\u0022:\u0022\\\u0022enriched\\\u0022\u0022,\u0022targetField\u0022:\u0022customer.status\u0022,\u0022condition\u0022:\u0022WhenMatched\u0022},{\u0022sourceKind\u0022:\u0022Literal\u0022,\u0022literalValue\u0022:\u0022\\\u0022unknown-customer\\\u0022\u0022,\u0022targetField\u0022:\u0022customer.status\u0022,\u0022condition\u0022:\u0022WhenUnmatched\u0022}]"
+          },
+          "retry": null
+        }
+      ],
+      "deliveries": [
+        {
+          "render": {
+            "module": "json-render",
+            "settings": {
+              "indented": "true"
+            },
+            "retry": null
+          },
+          "deliver": {
+            "module": "logging-deliver",
+            "settings": {
+              "previewLength": "800"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        },
+        {
+          "render": {
+            "module": "json-render",
+            "settings": {
+              "indented": "true"
+            },
+            "retry": null
+          },
+          "deliver": {
+            "module": "file-system-deliver",
+            "settings": {
+              "path": "SampleData\\Outbox",
+              "extension": ".json"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "sample-sql-lookup-join-pipeline",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "file-system-fetch",
+            "settings": {
+              "path": "SampleData\\Inbox",
+              "searchPattern": "*.json",
+              "recursive": "false"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        },
+        {
+          "id": "sqlContracts",
+          "fetch": {
+            "module": "sql-server-lookup-fetch",
+            "settings": {
+              "connectionString": "Server=tcp:sql.example.test,1433;Database=Orders;User ID=integration-user;Password=replace-me;TrustServerCertificate=True",
+              "idPaths": "$.customer",
+              "queryText": "select value as CustomerName, concat(\u0027CON-\u0027, value) as ContractId, concat(value, \u0027 master agreement\u0027) as ContractName from string_split(@ids, \u0027,\u0027)",
+              "idsParameterName": "@ids"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": [
+            "primary"
+          ]
+        }
+      ],
+      "augments": [
+        {
+          "module": "multi-source-join-map-augment",
+          "settings": {
+            "leftSourceId": "primary",
+            "rightSourceId": "sqlContracts",
+            "joinKeysJson": "[{\u0022leftPath\u0022:\u0022$.customer\u0022,\u0022rightPath\u0022:\u0022$.CustomerName\u0022}]",
+            "joinKind": "Left",
+            "resultCardinality": "Nested",
+            "nestedTargetPath": "order.contracts",
+            "mappingJson": "[{\u0022sourceKind\u0022:\u0022Left\u0022,\u0022sourcePath\u0022:\u0022$.orderId\u0022,\u0022targetField\u0022:\u0022order.id\u0022,\u0022condition\u0022:\u0022Always\u0022},{\u0022sourceKind\u0022:\u0022Left\u0022,\u0022sourcePath\u0022:\u0022$.customer\u0022,\u0022targetField\u0022:\u0022order.customerName\u0022,\u0022condition\u0022:\u0022Always\u0022},{\u0022sourceKind\u0022:\u0022Right\u0022,\u0022sourcePath\u0022:\u0022$.ContractId\u0022,\u0022targetField\u0022:\u0022contractId\u0022,\u0022condition\u0022:\u0022Always\u0022},{\u0022sourceKind\u0022:\u0022Right\u0022,\u0022sourcePath\u0022:\u0022$.ContractName\u0022,\u0022targetField\u0022:\u0022contractName\u0022,\u0022condition\u0022:\u0022Always\u0022}]"
+          },
+          "retry": null
+        }
+      ],
+      "deliveries": [
+        {
+          "render": {
+            "module": "json-render",
+            "settings": {
+              "indented": "true"
+            },
+            "retry": null
+          },
+          "deliver": {
+            "module": "logging-deliver",
+            "settings": {
+              "previewLength": "800"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "shs-spacetrax2-interfaces-core-process-billing-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-billing-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [
+        {
+          "module": "decision-augment",
+          "settings": {
+            "decisionJson": "[\r\n  {\r\n    \u0022name\u0022: \u0022output-format-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output-format\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-format-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output-format\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-billing-single\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsFalse\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022billing-single\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-batch-non-hl7\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchTime\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchTime\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsFalse\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022HL7Debatched\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.BatchType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022HL7Batch\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022batch-non-hl7\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-batch-hl7-mllp\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.BatchType\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7Batch\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MSH3SendingApplication\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MSH3SendingApplication\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MSH3SendingApplication\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022batch-hl7-mllp\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-single-hl7-mllp\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsFalse\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022single-hl7-mllp\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-debatched-hl7-mllp\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsFalse\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7Debatched\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022debatched-hl7-mllp\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-batched-debatch-hl7-mllp\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7Debatched\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.BatchType\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7Batch\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MSH3SendingApplication\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MSH3SendingApplication\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MSH3SendingApplication\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022batched-debatch-hl7-mllp\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022target-schema-hl7\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:target-schema\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022hl7\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022preprocessing-required-yes\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:preprocessing-required\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022yes\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022preprocessing-required-yes\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:preprocessing-required\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022yes\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022non-hl7-target-schema-multi-part\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsFalse\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:non-hl7-target-schema\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022multi-part\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022preprocessing-required-yes\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:preprocessing-required\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022yes\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022preprocessing-required-yes\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:preprocessing-required\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022yes\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022preprocessing-required-yes\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:preprocessing-required\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022yes\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022preprocessing-required-yes\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:preprocessing-required\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022yes\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022preprocessing-required-yes\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.PreprocessingMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:preprocessing-required\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022yes\u0022\r\n      }\r\n    ]\r\n  }\r\n]",
+            "stopAfterFirstMatch": "true"
+          },
+          "retry": null
+        },
+        {
+          "module": "stateful-orchestration-augment",
+          "settings": {
+            "mode": "ResumeOrWait",
+            "correlationSource": "Metadata",
+            "correlationPath": "{{config:shs-spacetrax2-interfaces-core-process-billing-flow.augments-stateful-correlationpath}}"
+          },
+          "retry": null
+        }
+      ],
+      "deliveries": [
+        {
+          "render": {
+            "module": "json-render",
+            "settings": {},
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-billing-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "shs-spacetrax2-interfaces-core-process-consumption-consumptionprocess-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-consumption-consumptionprocess-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [
+        {
+          "module": "decision-augment",
+          "settings": {
+            "decisionJson": "{{config:shs-spacetrax2-interfaces-core-process-consumption-consumptionprocess-flow.augments-decision-decisionjson}}",
+            "stopAfterFirstMatch": "true"
+          },
+          "retry": null
+        },
+        {
+          "module": "stateful-orchestration-augment",
+          "settings": {
+            "mode": "ResumeOrWait",
+            "correlationSource": "Metadata",
+            "correlationPath": "{{config:shs-spacetrax2-interfaces-core-process-consumption-consumptionprocess-flow.augments-stateful-correlationpath}}"
+          },
+          "retry": null
+        }
+      ],
+      "deliveries": [
+        {
+          "render": {
+            "module": "json-render",
+            "settings": {},
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-consumption-consumptionprocess-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "shs-spacetrax2-interfaces-core-process-consumption-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-consumption-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [
+        {
+          "module": "decision-augment",
+          "settings": {
+            "decisionJson": "{{config:shs-spacetrax2-interfaces-core-process-consumption-flow.augments-decision-decisionjson}}",
+            "stopAfterFirstMatch": "true"
+          },
+          "retry": null
+        },
+        {
+          "module": "stateful-orchestration-augment",
+          "settings": {
+            "mode": "ResumeOrWait",
+            "correlationSource": "Metadata",
+            "correlationPath": "{{config:shs-spacetrax2-interfaces-core-process-consumption-flow.augments-stateful-correlationpath}}"
+          },
+          "retry": null
+        }
+      ],
+      "deliveries": [
+        {
+          "render": {
+            "module": "json-render",
+            "settings": {},
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-consumption-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "shs-spacetrax2-interfaces-core-process-import-bulkitemoperations-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-import-bulkitemoperations-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [
+        {
+          "module": "decision-augment",
+          "settings": {
+            "decisionJson": "{{config:shs-spacetrax2-interfaces-core-process-import-bulkitemoperations-flow.augments-decision-decisionjson}}",
+            "stopAfterFirstMatch": "true"
+          },
+          "retry": null
+        },
+        {
+          "module": "stateful-orchestration-augment",
+          "settings": {
+            "mode": "ResumeOrWait",
+            "correlationSource": "Metadata",
+            "correlationPath": "{{config:shs-spacetrax2-interfaces-core-process-import-bulkitemoperations-flow.augments-stateful-correlationpath}}"
+          },
+          "retry": null
+        }
+      ],
+      "deliveries": [
+        {
+          "render": {
+            "module": "json-render",
+            "settings": {},
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-import-bulkitemoperations-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "shs-spacetrax2-interfaces-core-process-import-importprocess-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-import-importprocess-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [
+        {
+          "module": "decision-augment",
+          "settings": {
+            "decisionJson": "[\r\n  {\r\n    \u0022name\u0022: \u0022flat-or-xml-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:flat-or-xml\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  }\r\n]",
+            "stopAfterFirstMatch": "true"
+          },
+          "retry": null
+        },
+        {
+          "module": "stateful-orchestration-augment",
+          "settings": {
+            "mode": "ResumeOrWait",
+            "correlationSource": "Metadata",
+            "correlationPath": "{{config:shs-spacetrax2-interfaces-core-process-import-importprocess-flow.augments-stateful-correlationpath}}"
+          },
+          "retry": null
+        }
+      ],
+      "deliveries": [
+        {
+          "render": {
+            "module": "xslt-render",
+            "settings": {
+              "xsltPath": "{{config:shs-spacetrax2-interfaces-core-process-import-importprocess-flow.deliveries-0-render-settings-xsltpath}}",
+              "outputExtension": ".xml"
+            },
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-import-importprocess-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "shs-spacetrax2-interfaces-core-process-procedureimport-bulkprocedureoperations-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-procedureimport-bulkprocedureoperations-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [
+        {
+          "module": "decision-augment",
+          "settings": {
+            "decisionJson": "{{config:shs-spacetrax2-interfaces-core-process-procedureimport-bulkprocedureoperations-flow.augments-decision-decisionjson}}",
+            "stopAfterFirstMatch": "true"
+          },
+          "retry": null
+        },
+        {
+          "module": "stateful-orchestration-augment",
+          "settings": {
+            "mode": "ResumeOrWait",
+            "correlationSource": "Metadata",
+            "correlationPath": "{{config:shs-spacetrax2-interfaces-core-process-procedureimport-bulkprocedureoperations-flow.augments-stateful-correlationpath}}"
+          },
+          "retry": null
+        }
+      ],
+      "deliveries": [
+        {
+          "render": {
+            "module": "json-render",
+            "settings": {},
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-procedureimport-bulkprocedureoperations-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "shs-spacetrax2-interfaces-core-process-procedureimport-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-procedureimport-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [
+        {
+          "module": "stateful-orchestration-augment",
+          "settings": {
+            "mode": "ResumeOrWait",
+            "correlationSource": "Metadata",
+            "correlationPath": "{{config:shs-spacetrax2-interfaces-core-process-procedureimport-flow.augments-stateful-correlationpath}}"
+          },
+          "retry": null
+        }
+      ],
+      "deliveries": [
+        {
+          "render": {
+            "module": "xslt-render",
+            "settings": {
+              "xsltPath": "{{config:shs-spacetrax2-interfaces-core-process-procedureimport-flow.deliveries-0-render-settings-xsltpath}}",
+              "outputExtension": ".xml"
+            },
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-procedureimport-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "shs-spacetrax2-interfaces-core-process-requisition-requisitionserviceprocess-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-requisition-requisitionserviceprocess-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "json-parse",
+            "settings": {},
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [
+        {
+          "module": "decision-augment",
+          "settings": {
+            "decisionJson": "[\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-requisition-single\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsFalse\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022requisition-single\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-batch-non-hl7\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchTime\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchTime\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsFalse\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.BatchType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022HL7Batch\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.BatchType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022EDIBatch\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022batch-non-hl7\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-batch-hl7-mllp\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.BatchType\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7Batch\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MSH3SendingApplication\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MSH3SendingApplication\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MSH3SendingApplication\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.BatchType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022EDIBatch\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022batch-hl7-mllp\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-single-hl7-mllp\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsFalse\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TargetLocation\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.BatchType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022EDIBatch\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022single-hl7-mllp\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022processing-mode-batch-edi\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.IsBatch\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.BatchType\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022EDIBatch\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.BatchGroup\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.ConfigurationInfo.TransportType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022MLLP\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsFalse\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.BatchType\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022HL7Batch\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.EDIPartyName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.EDIPartyName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.EDIPartyName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:processing-mode\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022batch-edi\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022target-schema-hl7\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsTrue\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:target-schema\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022hl7\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022non-hl7-target-schema-multi-part\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.IsHL7TargetSchema\u0022,\r\n        \u0022operator\u0022: \u0022IsFalse\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.HeaderMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.TrailerMapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022HL7\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:non-hl7-target-schema\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022multi-part\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022non-hl7-target-schema-edi\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.MapName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.EDIPartyName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022NONE\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.EDIPartyName\u0022,\r\n        \u0022operator\u0022: \u0022NotEquals\u0022,\r\n        \u0022value\u0022: \u0022\u0022\r\n      },\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.EDIPartyName\u0022,\r\n        \u0022operator\u0022: \u0022Exists\u0022,\r\n        \u0022value\u0022: null\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:non-hl7-target-schema\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022edi\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-edi\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022edi\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-edi\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022edi\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-edi\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022edi\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-edi\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022edi\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-flat\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022FLAT\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022flat\u0022\r\n      }\r\n    ]\r\n  },\r\n  {\r\n    \u0022name\u0022: \u0022output-edi\u0022,\r\n    \u0022conditions\u0022: [\r\n      {\r\n        \u0022source\u0022: \u0022Payload\u0022,\r\n        \u0022path\u0022: \u0022$.OutputFormat\u0022,\r\n        \u0022operator\u0022: \u0022Equals\u0022,\r\n        \u0022value\u0022: \u0022EDI\u0022\r\n      }\r\n    ],\r\n    \u0022actions\u0022: [\r\n      {\r\n        \u0022kind\u0022: \u0022SetMetadata\u0022,\r\n        \u0022target\u0022: \u0022biztalk:output\u0022,\r\n        \u0022valueSource\u0022: \u0022Literal\u0022,\r\n        \u0022sourcePath\u0022: null,\r\n        \u0022value\u0022: \u0022edi\u0022\r\n      }\r\n    ]\r\n  }\r\n]",
+            "stopAfterFirstMatch": "true"
+          },
+          "retry": null
+        },
+        {
+          "module": "stateful-orchestration-augment",
+          "settings": {
+            "mode": "ResumeOrWait",
+            "correlationSource": "Metadata",
+            "correlationPath": "{{config:shs-spacetrax2-interfaces-core-process-requisition-requisitionserviceprocess-flow.augments-stateful-correlationpath}}"
+          },
+          "retry": null
+        }
+      ],
+      "deliveries": [
+        {
+          "render": {
+            "module": "json-render",
+            "settings": {},
+            "retry": null
+          },
+          "deliver": {
+            "module": "document-repository-store",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-process-requisition-requisitionserviceprocess-flow.deliveries-0-deliver-settings-path}}",
+              "writeMetadataSidecar": "true"
+            },
+            "retry": null
+          },
+          "atomicScope": null,
+          "compensation": null
+        }
+      ],
+      "retry": null
+    },
+    {
+      "id": "shs-spacetrax2-interfaces-core-schemas-flow",
+      "enabled": false,
+      "trigger": {
+        "mode": "OnDemand",
+        "interval": null,
+        "runOnStartup": false
+      },
+      "sources": [
+        {
+          "id": "primary",
+          "fetch": {
+            "module": "document-repository-fetch",
+            "settings": {
+              "path": "{{config:shs-spacetrax2-interfaces-core-schemas-flow.fetch-settings-path}}",
+              "searchPattern": "*.*",
+              "includeMetadataSidecars": "true",
+              "afterProcessing": "MoveToArchive"
+            },
+            "retry": null
+          },
+          "parse": {
+            "module": "xml-xsd-parse",
+            "settings": {
+              "schemaPaths": "C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\BaseStructures.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\BatchTrailer.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\IntegrationRules.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\ServiceResult.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Properties\\BillingProperties.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Properties\\ConsumptionProperties.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Properties\\CoreProperties.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Properties\\ImportProperties.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Properties\\ItemSynchronizationProperties.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Properties\\RequisitionProperties.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.Billing\\CommonBilling.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.Consumption\\CommonConsumption.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ItemImport\\CommonItemImport.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ItemImport\\GlobalItem.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ItemImport\\ImportControlAction.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ItemImport\\ImportOptions.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ItemImport\\ImportPayload.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ItemImport\\ImportResult.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ItemImport\\ImportSession.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ItemImport\\OrganizationItem.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.Requisition\\CommonRequisition.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.Billing\\BillingMessageIndexer.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.PatientRegistration\\PatientRegistrationService_schemas_microsoft_com_2003_10_Serialization.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.PatientRegistration\\PatientRegistrationService_schemas_microsoft_com_2003_10_Serialization_Arrays.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.PatientRegistration\\PatientRegistrationService_shs_spacetrax2_interfaces_core_schemas_patientregistration.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.PatientRegistration\\PatientRegistrationService__SpaceTrax_Services_DataContracts_PatientRegistrationService.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ProcedureImport\\ImportOptions.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ProcedureImport\\CommonProcedureImport.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ProcedureImport\\ImportControlAction.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ProcedureImport\\ImportSession.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ProcedureImport\\ImportPayload.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.ProcedureImport\\ImportResult.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Properties\\ProcedureImportProperties.xsd;C:\\Users\\LXS0610\\source\\repos\\SpaceTRAX Interface\\Shs.SpaceTrax2.Interfaces\\Shs.SpaceTrax2.Interfaces.Core.Schemas\\Services.PatientRegistration\\CommonPatientRegistration.xsd"
+            },
+            "retry": null
+          },
+          "inputSourceIds": []
+        }
+      ],
+      "augments": [],
+      "deliveries": [
+        {
+          "render": {
+            "module": "soap-envelope-render",
+            "settings": {
+              "soapVersion": "1.2",
+              "actionMappingsJson": "{\u0022InsertPatientRegistration\u0022:\u0022http://Shs.SpaceTrax2.Interfaces.Core.Schemas.PatientRegistration/PatientRegistrationService/InsertPatientRegistration\u0022,\u0022UpdatePatientRegistration\u0022:\u0022http://Shs.SpaceTrax2.Interfaces.Core.Schemas.PatientRegistration/PatientRegistrationService/UpdatePatientRegistration\u0022,\u0022GetPatientRegistrationsBySearchCriteria\u0022:\u0022http://Shs.SpaceTrax2.Interfaces.Core.Schemas.PatientRegistration/PatientRegistrationService/GetPatientRegistrationsBySearchCriteria\u0022}"
+            },
+            "retry": null
+          },
+          "deliver": {
+            "module": "http-deliver",
+            "settings": {
+              "url": "http://knt-mlb0102.americas.swk.pri:8882/Services/PatientRegistrationService.svc",
+              "method": "POST",
+              "expectsResponse": "true"
+            },
+            "retry": {
+              "maxAttempts": 4,
+              "delay": "00:05:00",
+              "backoff": "Fixed",
+              "maxDelay": null
+            }
           },
           "atomicScope": null,
           "compensation": null

@@ -26,4 +26,41 @@ public sealed record BizTalkProjectResponse(
     /// recognized shape types were found. See <see cref="OrchestrationControlFlowSignalResponse"/>.
     /// </summary>
     public IReadOnlyList<OrchestrationControlFlowSignalResponse> OrchestrationControlFlowSignals { get; init; } = [];
+
+    /// <summary>
+    /// Per-orchestration Decision/DecisionBranch classification results (which branches were auto-translated
+    /// into declarative decision-augment rules versus scaffolded as a starter custom module). Empty for
+    /// projects without orchestrations, or when the orchestration's designer metadata couldn't be parsed.
+    /// See <see cref="BizTalkOrchestrationDecisionAnalysisResponse"/>.
+    /// </summary>
+    public IReadOnlyList<BizTalkOrchestrationDecisionAnalysisResponse> OrchestrationDecisionAnalyses { get; init; } = [];
+
+    /// <summary>
+    /// Per-orchestration breakdown of <see cref="OrchestrationControlFlowSignals"/>, one entry per orchestration
+    /// artifact. Used to split a project with multiple orchestrations into one draft flow candidate per
+    /// orchestration (each with its own decision rules/scaffolded modules) instead of collapsing every
+    /// orchestration's control-flow logic into a single flow. Empty for projects without orchestrations.
+    /// </summary>
+    public IReadOnlyList<BizTalkOrchestrationSignalsResponse> OrchestrationSignalsByOrchestration { get; init; } = [];
+
+    /// <summary>
+    /// Number of this project's pipeline artifacts classified as receive-direction (Decode/Disassemble/Validate
+    /// stages present) by inspecting the pipeline's well-known BizTalk stage category GUIDs. Projects with only
+    /// receive pipelines and no orchestration or send pipeline are inbound-only interfaces (a producer, not a
+    /// two-way integration) - see <see cref="SendPipelineCount"/>.
+    /// </summary>
+    public int ReceivePipelineCount { get; init; }
+
+    /// <summary>
+    /// Number of this project's pipeline artifacts classified as send-direction (PreAssemble/Assemble/Encode
+    /// stages present). See <see cref="ReceivePipelineCount"/>.
+    /// </summary>
+    public int SendPipelineCount { get; init; }
+
+    /// <summary>
+    /// Best-effort XSLT translation results for this project's BizTalk map (.btm) artifacts. See
+    /// <see cref="Service.BizTalkMapAnalyzer"/>. Empty for projects without map artifacts, or when none of a
+    /// project's maps could be parsed.
+    /// </summary>
+    public IReadOnlyList<BizTalkMapAnalysisResponse> MapAnalyses { get; init; } = [];
 }

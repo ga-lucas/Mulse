@@ -7,5 +7,6 @@
   <Project Path="Mulse.SamplePlugin/Mulse.SamplePlugin.csproj" />
   <Project Path="Mulse.ServiceDefaults/Mulse.ServiceDefaults.csproj" />
   <Project Path="Mulse.Ui/Mulse.Ui.csproj" />
+  <Project Path="Service.Tests/Service.Tests.csproj" />
   <Project Path="Service/Service.csproj" />
 </Solution>

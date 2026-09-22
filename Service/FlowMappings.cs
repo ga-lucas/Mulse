@@ -13,20 +13,25 @@ internal static class FlowMappings
             flow.Trigger.Mode,
             flow.Trigger.Interval,
             flow.Trigger.RunOnStartup,
-            flow.Fetch.Module,
-            flow.Parse.Module,
+            flow.Sources.Select(static source => source.Id).ToArray(),
+            flow.Sources.Select(static source => source.Fetch.Module).ToArray(),
+            flow.Sources.Select(static source => source.Parse.Module).ToArray(),
             flow.Augments.Select(static step => step.Module).ToArray(),
             flow.Deliveries.Select(static route => route.Render.Module).ToArray(),
             flow.Deliveries.Select(static route => route.Deliver.Module).ToArray(),
-            MapStep(flow.Fetch),
-            MapStep(flow.Parse),
+            flow.Sources.Select(MapSource).ToArray(),
             flow.Augments.Select(MapStep).ToArray(),
             flow.Deliveries.Select(MapDelivery).ToArray(),
             MapRetry(flow.Retry),
             new FlowTriggerResponse(flow.Trigger.Mode, flow.Trigger.Interval, flow.Trigger.RunOnStartup));
     }
 
-    public static PipelineDefinition MapPipeline(CreateFlowRequest request)
+    /// <summary>
+    /// Maps either a <see cref="CreateFlowRequest"/> or <see cref="UpdateFlowRequest"/> (both implement
+    /// <see cref="IFlowPipelineRequest"/> and are otherwise structurally identical) to a runtime
+    /// <see cref="PipelineDefinition"/>.
+    /// </summary>
+    public static PipelineDefinition MapPipeline(IFlowPipelineRequest request)
     {
         return new PipelineDefinition
         {
@@ -38,28 +43,7 @@ internal static class FlowMappings
                 Interval = request.Trigger.Interval,
                 RunOnStartup = request.Trigger.RunOnStartup
             },
-            Fetch = MapStep(request.Fetch),
-            Parse = MapStep(request.Parse),
-            Augments = request.Augments.Select(MapStep).ToList(),
-            Deliveries = request.Deliveries.Select(MapDelivery).ToList(),
-            Retry = MapRetry(request.Retry)
-        };
-    }
-
-    public static PipelineDefinition MapPipeline(UpdateFlowRequest request)
-    {
-        return new PipelineDefinition
-        {
-            Id = request.Id,
-            Enabled = request.Enabled,
-            Trigger = new PipelineTriggerOptions
-            {
-                Mode = request.Trigger.Mode,
-                Interval = request.Trigger.Interval,
-                RunOnStartup = request.Trigger.RunOnStartup
-            },
-            Fetch = MapStep(request.Fetch),
-            Parse = MapStep(request.Parse),
+            Sources = request.Sources.Select(MapSource).ToList(),
             Augments = request.Augments.Select(MapStep).ToList(),
             Deliveries = request.Deliveries.Select(MapDelivery).ToList(),
             Retry = MapRetry(request.Retry)
@@ -69,7 +53,7 @@ internal static class FlowMappings
     /// <summary>
     /// Returns a copy of <paramref name="pipeline"/> with only <see cref="PipelineDefinition.Enabled"/>
     /// changed. Used by the dedicated enable/disable endpoint so callers can toggle a flow without
-    /// resending its entire fetch/parse/augment/delivery definition.
+    /// resending its entire source/augment/delivery definition.
     /// </summary>
     public static PipelineDefinition WithEnabled(PipelineDefinition pipeline, bool enabled)
     {
@@ -78,8 +62,7 @@ internal static class FlowMappings
             Id = pipeline.Id,
             Enabled = enabled,
             Trigger = pipeline.Trigger,
-            Fetch = pipeline.Fetch,
-            Parse = pipeline.Parse,
+            Sources = pipeline.Sources,
             Augments = pipeline.Augments,
             Deliveries = pipeline.Deliveries,
             Retry = pipeline.Retry
@@ -98,10 +81,34 @@ internal static class FlowMappings
                 Interval = draft.Trigger.Interval,
                 RunOnStartup = draft.Trigger.RunOnStartup
             },
-            Fetch = MapStep(draft.Fetch),
-            Parse = MapStep(draft.Parse),
+            Sources = draft.Sources.Select(MapSource).ToList(),
             Augments = draft.Augments.Select(MapStep).ToList(),
             Deliveries = draft.Deliveries.Select(MapDelivery).ToList()
+        };
+    }
+
+    private static FlowSourceResponse MapSource(SourceDefinition source)
+        => new(source.Id, MapStep(source.Fetch), MapStep(source.Parse), source.InputSourceIds.ToArray());
+
+    private static SourceDefinition MapSource(FlowSourceRequest source)
+    {
+        return new SourceDefinition
+        {
+            Id = source.Id,
+            Fetch = MapStep(source.Fetch),
+            Parse = MapStep(source.Parse),
+            InputSourceIds = source.InputSourceIds.ToList()
+        };
+    }
+
+    private static SourceDefinition MapSource(BizTalkDraftSourceResponse source)
+    {
+        return new SourceDefinition
+        {
+            Id = source.Id,
+            Fetch = MapStep(source.Fetch),
+            Parse = MapStep(source.Parse),
+            InputSourceIds = source.InputSourceIds.ToList()
         };
     }
 

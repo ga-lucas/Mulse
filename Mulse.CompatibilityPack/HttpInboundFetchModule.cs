@@ -32,8 +32,10 @@ public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogge
         SettingDescriptors,
         Recommendation);
 
+    /// <summary><paramref name="input"/> is unused: this is a root source fed by pushed inbound HTTP requests.</summary>
     public Task<IntegrationBatch> FetchAsync(
         FlowExecutionContext context,
+        IntegrationBatch input,
         ModuleStepDefinition step,
         CancellationToken cancellationToken)
     {

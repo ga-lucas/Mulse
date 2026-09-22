@@ -40,13 +40,7 @@ public static class ModuleEndpoints
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var response = moduleCatalog.GetPackages()
-                    .Select(static package => new ModulePackageResponse(
-                        package.Id,
-                        package.AssemblyPath,
-                        package.SourceKind,
-                        package.IsLoaded,
-                        package.LastLoadedAt,
-                        package.ModuleCount))
+                    .Select(ModulePackageResponse.From)
                     .ToArray();
                 return TypedResults.Ok(response);
             })
@@ -65,13 +59,7 @@ public static class ModuleEndpoints
 
                 return package is null
                     ? TypedResults.NotFound()
-                    : TypedResults.Ok(new ModulePackageResponse(
-                        package.Id,
-                        package.AssemblyPath,
-                        package.SourceKind,
-                        package.IsLoaded,
-                        package.LastLoadedAt,
-                        package.ModuleCount));
+                    : TypedResults.Ok(ModulePackageResponse.From(package));
             })
             .WithName("GetModulePackageById")
             .WithSummary("Get a runtime module package")
@@ -89,13 +77,7 @@ public static class ModuleEndpoints
                     Enabled = request.Enabled
                 }, cancellationToken).ConfigureAwait(false);
 
-                return TypedResults.Created($"/api/module-packages/{package.Id}", new ModulePackageResponse(
-                    package.Id,
-                    package.AssemblyPath,
-                    package.SourceKind,
-                    package.IsLoaded,
-                    package.LastLoadedAt,
-                    package.ModuleCount));
+                return TypedResults.Created($"/api/module-packages/{package.Id}", ModulePackageResponse.From(package));
             })
             .WithName("CreateModulePackage")
             .WithSummary("Create a managed runtime module package")
@@ -120,13 +102,7 @@ public static class ModuleEndpoints
                     Enabled = request.Enabled
                 }, cancellationToken).ConfigureAwait(false);
 
-                return TypedResults.Ok(new ModulePackageResponse(
-                    package.Id,
-                    package.AssemblyPath,
-                    package.SourceKind,
-                    package.IsLoaded,
-                    package.LastLoadedAt,
-                    package.ModuleCount));
+                return TypedResults.Ok(ModulePackageResponse.From(package));
             })
             .WithName("UpdateModulePackage")
             .WithSummary("Update a managed runtime module package")
@@ -141,13 +117,7 @@ public static class ModuleEndpoints
         app.MapPost("/api/module-packages/{packageId}/reload", async Task<Ok<ModulePackageResponse>> (string packageId, IModuleCatalog moduleCatalog, CancellationToken cancellationToken) =>
             {
                 var package = await moduleCatalog.ReloadPackageAsync(packageId, cancellationToken).ConfigureAwait(false);
-                return TypedResults.Ok(new ModulePackageResponse(
-                    package.Id,
-                    package.AssemblyPath,
-                    package.SourceKind,
-                    package.IsLoaded,
-                    package.LastLoadedAt,
-                    package.ModuleCount));
+                return TypedResults.Ok(ModulePackageResponse.From(package));
             })
             .WithName("ReloadModulePackage")
             .WithSummary("Reload a runtime module package")

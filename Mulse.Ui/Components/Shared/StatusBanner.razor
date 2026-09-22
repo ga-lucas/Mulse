@@ -1,0 +1,39 @@
+@if (!string.IsNullOrWhiteSpace(Error) || ErrorContent is not null)
+{
+    <div class="status-banner error@(Compact ? " compact" : string.Empty)">
+        @if (ErrorContent is not null)
+        {
+            @ErrorContent
+        }
+        else
+        {
+            @Error
+        }
+    </div>
+}
+
+@if (!string.IsNullOrWhiteSpace(Success))
+{
+    <div class="status-banner success@(Compact ? " compact" : string.Empty)">@Success</div>
+}
+
+@code {
+    /// <summary>Error message to render as plain text. Renders nothing when null/whitespace (unless <see cref="ErrorContent"/> is set).</summary>
+    [Parameter]
+    public string? Error { get; set; }
+
+    /// <summary>
+    /// Optional rich content for the error banner (e.g. a message with an embedded link). Takes precedence
+    /// over <see cref="Error"/> when provided.
+    /// </summary>
+    [Parameter]
+    public RenderFragment? ErrorContent { get; set; }
+
+    /// <summary>Success message to render. Renders nothing when null/whitespace.</summary>
+    [Parameter]
+    public string? Success { get; set; }
+
+    /// <summary>When true, applies the "compact" modifier class (used for inline, per-item banners).</summary>
+    [Parameter]
+    public bool Compact { get; set; }
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "customerName": "Contoso Health",
+    "customerId": "CUST-4471",
+    "tier": "Gold",
+    "accountManager": "A. Rivera"
+  },
+  {
+    "customerName": "Fabrikam Clinics",
+    "customerId": "CUST-8820",
+    "tier": "Silver",
+    "accountManager": "J. Okafor"
+  },
+  {
+    "customerName": "Northwind Labs",
+    "customerId": "CUST-1033",
+    "tier": "Bronze",
+    "accountManager": "M. Lindqvist"
+  }
+]

@@ -7,12 +7,18 @@ public sealed record BizTalkDraftFlowResponse(
     string Id,
     bool Enabled,
     BizTalkDraftTriggerResponse Trigger,
-    BizTalkDraftStepResponse Fetch,
-    BizTalkDraftStepResponse Parse,
+    IReadOnlyList<BizTalkDraftSourceResponse> Sources,
     IReadOnlyList<BizTalkDraftStepResponse> Augments,
     IReadOnlyList<BizTalkDraftDeliveryRouteResponse> Deliveries,
     IReadOnlyList<BizTalkSettingRequirementResponse> ConfigurationRequirements,
     IReadOnlyList<string> Warnings);
+
+/// <summary>Represents one generated fetch/parse source in a draft flow's source graph.</summary>
+public sealed record BizTalkDraftSourceResponse(
+    string Id,
+    BizTalkDraftStepResponse Fetch,
+    BizTalkDraftStepResponse Parse,
+    IReadOnlyList<string> InputSourceIds);
 
 /// <summary>Represents the generated trigger settings for a draft flow.</summary>
 public sealed record BizTalkDraftTriggerResponse(

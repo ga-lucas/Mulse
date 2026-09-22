@@ -4,8 +4,7 @@ public sealed record CreateDesignedFlowRequestViewModel(
     string Id,
     bool Enabled,
     FlowTriggerRequestViewModel Trigger,
-    FlowStepRequestViewModel Fetch,
-    FlowStepRequestViewModel Parse,
+    IReadOnlyList<FlowSourceRequestViewModel> Sources,
     IReadOnlyList<FlowStepRequestViewModel> Augments,
     IReadOnlyList<DeliveryRouteRequestViewModel> Deliveries,
     IReadOnlyList<FlowDesignFieldMappingRequestViewModel> Mappings);

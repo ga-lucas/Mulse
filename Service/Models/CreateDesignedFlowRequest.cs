@@ -16,13 +16,9 @@ public sealed record CreateDesignedFlowRequest
     [Required]
     public required FlowTriggerRequest Trigger { get; init; }
 
-    /// <summary>The configured fetch step.</summary>
+    /// <summary>The configured source graph (fetch/parse pairs). The designer emits a single "primary" source by default.</summary>
     [Required]
-    public required FlowStepRequest Fetch { get; init; }
-
-    /// <summary>The configured parse step.</summary>
-    [Required]
-    public required FlowStepRequest Parse { get; init; }
+    public required IReadOnlyList<FlowSourceRequest> Sources { get; init; }
 
     /// <summary>The configured orchestration augment steps.</summary>
     public IReadOnlyList<FlowStepRequest> Augments { get; init; } = [];

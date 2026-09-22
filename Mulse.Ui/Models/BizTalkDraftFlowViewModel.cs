@@ -4,12 +4,17 @@ public sealed record BizTalkDraftFlowViewModel(
     string Id,
     bool Enabled,
     BizTalkDraftTriggerViewModel Trigger,
-    BizTalkDraftStepViewModel Fetch,
-    BizTalkDraftStepViewModel Parse,
+    IReadOnlyList<BizTalkDraftSourceViewModel> Sources,
     IReadOnlyList<BizTalkDraftStepViewModel> Augments,
     IReadOnlyList<BizTalkDraftDeliveryRouteViewModel> Deliveries,
     IReadOnlyList<BizTalkSettingRequirementViewModel> ConfigurationRequirements,
     IReadOnlyList<string> Warnings);
+
+public sealed record BizTalkDraftSourceViewModel(
+    string Id,
+    BizTalkDraftStepViewModel Fetch,
+    BizTalkDraftStepViewModel Parse,
+    IReadOnlyList<string> InputSourceIds);
 
 public sealed record BizTalkDraftTriggerViewModel(
     string Mode,

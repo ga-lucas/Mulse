@@ -45,25 +45,73 @@ public sealed class BizTalkImportService : IBizTalkImportService
         cancellationToken.ThrowIfCancellationRequested();
 
         var resolvedPath = Path.GetFullPath(request.SourcePath);
-        var scope = ResolveScope(resolvedPath);
-        if (scope.BizTalkProjects.Count == 0)
-        {
-            throw new InvalidOperationException($"The source '{resolvedPath}' does not contain any BizTalk project files.");
-        }
 
         var warnings = new List<string>
         {
             "Generated draft flows are imported disabled so placeholder configuration and secrets can be reviewed before runtime use.",
-            "BizTalk orchestrations are inventoried for guidance, but ODX control flow is not auto-translated yet."
+            "BizTalk orchestration Decision shapes are auto-translated into declarative decision-augment rules where the branch expression is simple enough to translate confidently; convoys, correlation sets, atomic transactions, loops, and anything else too complex are scaffolded as starter C# modules instead."
         };
 
-        var bizTalkProjects = new List<BizTalkProjectAnalysis>(scope.BizTalkProjects.Count);
-        foreach (var projectPath in scope.BizTalkProjects)
+        var scope = ResolveScope(resolvedPath);
+        var scopes = new List<AnalysisScope> { scope };
+        foreach (var additionalSourcePath in request.AdditionalSourcePaths)
+        {
+            if (string.IsNullOrWhiteSpace(additionalSourcePath))
+            {
+                continue;
+            }
+
+            var additionalResolvedPath = Path.GetFullPath(additionalSourcePath);
+            if (scopes.Any(existing => string.Equals(existing.SourcePath, additionalResolvedPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            try
+            {
+                scopes.Add(ResolveScope(additionalResolvedPath));
+            }
+            catch (ArgumentException exception)
+            {
+                warnings.Add($"Additional source path '{additionalSourcePath}' was skipped: {exception.Message}");
+            }
+        }
+
+        // Each scope keeps its own root directory: artifact relative paths stay meaningful per source, and a
+        // referenced project living in a different solution still resolves to a real path on disk.
+        var bizTalkProjectPaths = new List<(string ProjectPath, string RootDirectory)>();
+        var customProjectPaths = new List<(string ProjectPath, string RootDirectory)>();
+        var seenProjectPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var analysisScope in scopes)
+        {
+            foreach (var projectPath in analysisScope.BizTalkProjects.Where(projectPath => seenProjectPaths.Add(projectPath)))
+            {
+                bizTalkProjectPaths.Add((projectPath, analysisScope.RootDirectory));
+            }
+
+            foreach (var projectPath in analysisScope.CustomProjects.Where(projectPath => seenProjectPaths.Add(projectPath)))
+            {
+                customProjectPaths.Add((projectPath, analysisScope.RootDirectory));
+            }
+        }
+
+        if (bizTalkProjectPaths.Count == 0)
+        {
+            throw new InvalidOperationException($"The source '{resolvedPath}' does not contain any BizTalk project files.");
+        }
+
+        if (scopes.Count > 1)
+        {
+            warnings.Add($"{scopes.Count} source paths were analyzed as one combined migration workspace, so cross-solution project references (shared schema, map, and pipeline libraries) resolve instead of falling back to generic guesses.");
+        }
+
+        var bizTalkProjects = new List<BizTalkProjectAnalysis>(bizTalkProjectPaths.Count);
+        foreach (var (projectPath, projectRootDirectory) in bizTalkProjectPaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                bizTalkProjects.Add(AnalyzeBizTalkProject(projectPath, scope.RootDirectory));
+                bizTalkProjects.Add(AnalyzeBizTalkProject(projectPath, projectRootDirectory));
             }
             catch (XmlException exception)
             {
@@ -71,13 +119,13 @@ public sealed class BizTalkImportService : IBizTalkImportService
             }
         }
 
-        var customAssemblies = new List<BizTalkCustomAssemblyResponse>(scope.CustomProjects.Count);
-        foreach (var projectPath in scope.CustomProjects)
+        var customAssemblies = new List<BizTalkCustomAssemblyResponse>(customProjectPaths.Count);
+        foreach (var (projectPath, projectRootDirectory) in customProjectPaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                customAssemblies.Add(AnalyzeCustomProject(projectPath, scope.RootDirectory, bizTalkProjects, _assemblyKindClassifiers));
+                customAssemblies.Add(AnalyzeCustomProject(projectPath, projectRootDirectory, bizTalkProjects, _assemblyKindClassifiers));
             }
             catch (XmlException exception)
             {
@@ -86,7 +134,10 @@ public sealed class BizTalkImportService : IBizTalkImportService
         }
 
         var bindingAnalyses = new List<BindingFileAnalysis>();
-        var bindingFilePaths = DiscoverBindingFiles(scope.RootDirectory)
+        var bindingFilePaths = scopes
+            .Select(static analysisScope => analysisScope.RootDirectory)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .SelectMany(DiscoverBindingFiles)
             .Concat(ResolveAdditionalBindingFiles(request.AdditionalBindingPaths, warnings))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase);
@@ -131,18 +182,19 @@ public sealed class BizTalkImportService : IBizTalkImportService
         var candidateProjects = hydratedAnalyses
             .Where(project => ShouldCreateFlowCandidate(project.Response, bindingAnalyses))
             .ToArray();
-        if (candidateProjects.Length == 0)
-        {
-            candidateProjects = hydratedAnalyses;
-        }
 
         if (candidateProjects.Length < hydratedAnalyses.Length)
         {
-            warnings.Add($"{hydratedAnalyses.Length - candidateProjects.Length} BizTalk support project(s) were inventoried but not turned into standalone draft flows because they look like shared schema or pipeline libraries without direct bindings, maps, or orchestrations.");
+            warnings.Add($"{hydratedAnalyses.Length - candidateProjects.Length} BizTalk support project(s) were inventoried but not turned into standalone draft flows because they look like shared schema libraries without direct bindings, maps, pipelines, or orchestrations.");
+        }
+
+        if (candidateProjects.Length == 0)
+        {
+            warnings.Add("No draft flows were generated: every analyzed project looks like a shared schema library (no orchestrations, maps, pipelines, or matching binding file). Point the importer at the project or solution that owns the orchestration/pipeline, or supply its binding export via AdditionalBindingPaths.");
         }
 
         var flowCandidates = candidateProjects
-            .Select(project => CreateFlowCandidate(project, customAssemblies, bindingAnalyses, scope.RootDirectory))
+            .SelectMany(project => CreateFlowCandidates(project, customAssemblies, bindingAnalyses))
             .ToArray();
 
         return Task.FromResult(new BizTalkSolutionAnalysisResponse(
@@ -268,6 +320,9 @@ public sealed class BizTalkImportService : IBizTalkImportService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        var orchestrationSignals = DetectOrchestrationControlFlowSignalsByOrchestration(artifacts);
+        var (receivePipelineCount, sendPipelineCount) = ClassifyPipelineDirections(artifacts);
+
         return new BizTalkProjectAnalysis(
             new BizTalkProjectResponse(
                 projectName,
@@ -279,7 +334,12 @@ public sealed class BizTalkImportService : IBizTalkImportService
                 [],
                 artifacts)
             {
-                OrchestrationControlFlowSignals = DetectOrchestrationControlFlowSignals(artifacts, rootDirectory)
+                OrchestrationControlFlowSignals = AggregateOrchestrationControlFlowSignals(orchestrationSignals),
+                OrchestrationSignalsByOrchestration = orchestrationSignals,
+                OrchestrationDecisionAnalyses = AnalyzeOrchestrationDecisions(artifacts, projectName),
+                MapAnalyses = AnalyzeMaps(artifacts),
+                ReceivePipelineCount = receivePipelineCount,
+                SendPipelineCount = sendPipelineCount
             },
             references);
     }
@@ -302,46 +362,205 @@ public sealed class BizTalkImportService : IBizTalkImportService
         ("Loop", "Loop shape(s)"),
     ];
 
-    private static IReadOnlyList<OrchestrationControlFlowSignalResponse> DetectOrchestrationControlFlowSignals(
-        IReadOnlyList<BizTalkArtifactResponse> artifacts,
-        string rootDirectory)
+    /// <summary>
+    /// Detects control-flow shape signals for each orchestration artifact individually (rather than only as a
+    /// project-wide total), so a project containing several orchestrations can be split into one draft flow per
+    /// orchestration with correctly scoped complexity reporting. See
+    /// <see cref="AggregateOrchestrationControlFlowSignals"/> for the project-wide roll-up.
+    /// </summary>
+    private static IReadOnlyList<BizTalkOrchestrationSignalsResponse> DetectOrchestrationControlFlowSignalsByOrchestration(
+        IReadOnlyList<BizTalkArtifactResponse> artifacts)
     {
-        var orchestrationPaths = artifacts
-            .Where(static artifact => string.Equals(artifact.Kind, "Orchestration", StringComparison.OrdinalIgnoreCase))
-            .Select(artifact => Path.GetFullPath(Path.Combine(rootDirectory, artifact.RelativePath.Replace('/', Path.DirectorySeparatorChar))))
-            .ToArray();
-        if (orchestrationPaths.Length == 0)
-        {
-            return [];
-        }
-
-        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var path in orchestrationPaths)
+        var results = new List<BizTalkOrchestrationSignalsResponse>();
+        foreach (var artifact in OrchestrationArtifacts(artifacts))
         {
             string content;
             try
             {
-                content = File.ReadAllText(path);
+                content = File.ReadAllText(artifact.FullPath);
             }
-            catch (IOException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 continue;
             }
 
-            foreach (var (shapeType, _) in OrchestrationControlFlowShapes)
+            var signals = new List<OrchestrationControlFlowSignalResponse>();
+            foreach (var (shapeType, description) in OrchestrationControlFlowShapes)
             {
                 var matchCount = Regex.Matches(content, $"Type=\"{Regex.Escape(shapeType)}\"", RegexOptions.None).Count;
                 if (matchCount > 0)
                 {
-                    counts[shapeType] = counts.GetValueOrDefault(shapeType) + matchCount;
+                    signals.Add(new OrchestrationControlFlowSignalResponse(shapeType, description, matchCount));
                 }
             }
+
+            results.Add(new BizTalkOrchestrationSignalsResponse(OrchestrationName(artifact), signals));
         }
+
+        return results;
+    }
+
+    /// <summary>Sums per-orchestration control-flow signals into the project-wide totals.</summary>
+    private static IReadOnlyList<OrchestrationControlFlowSignalResponse> AggregateOrchestrationControlFlowSignals(
+        IReadOnlyList<BizTalkOrchestrationSignalsResponse> orchestrationSignals)
+    {
+        var counts = orchestrationSignals
+            .SelectMany(static orchestration => orchestration.Signals)
+            .GroupBy(static signal => signal.ShapeType, StringComparer.Ordinal)
+            .ToDictionary(static group => group.Key, static group => group.Sum(static signal => signal.Count), StringComparer.Ordinal);
 
         return OrchestrationControlFlowShapes
             .Where(shape => counts.ContainsKey(shape.ShapeType))
             .Select(shape => new OrchestrationControlFlowSignalResponse(shape.ShapeType, shape.Description, counts[shape.ShapeType]))
             .ToArray();
+    }
+
+    /// <summary>
+    /// Runs <see cref="BizTalkOrchestrationDecisionAnalyzer"/> over every orchestration artifact, translating
+    /// simple BizTalk Decision branches into real <c>decision-augment</c> rules and scaffolding a starter C#
+    /// module for anything too complex. Never throws: the analyzer degrades to an empty result per file, and
+    /// orchestrations with nothing to report are dropped so the response stays signal-only.
+    /// </summary>
+    private static IReadOnlyList<BizTalkOrchestrationDecisionAnalysisResponse> AnalyzeOrchestrationDecisions(
+        IReadOnlyList<BizTalkArtifactResponse> artifacts,
+        string projectName)
+    {
+        var namespaceHint = $"Mulse.Migrated.{CreatePascalCaseNamespaceSegment(projectName)}";
+        return OrchestrationArtifacts(artifacts)
+            .Select(artifact => BizTalkOrchestrationDecisionAnalyzer.Analyze(artifact.FullPath, OrchestrationName(artifact), namespaceHint))
+            .Where(static analysis => analysis.GeneratedDecisionJson is not null
+                || analysis.ComplexBranches.Count > 0
+                || analysis.ComplexControlFlowShapeCounts.Count > 0)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Runs <see cref="BizTalkMapAnalyzer"/> over every map (.btm) artifact, producing a best-effort XSLT 1.0
+    /// translation of the map's direct field links and constant assignments. Maps that can't be parsed are
+    /// skipped (the analyzer returns null) so an unreadable map never fails the whole analysis.
+    /// </summary>
+    private static IReadOnlyList<BizTalkMapAnalysisResponse> AnalyzeMaps(IReadOnlyList<BizTalkArtifactResponse> artifacts)
+    {
+        return artifacts
+            .Where(static artifact => string.Equals(artifact.Kind, "Map", StringComparison.OrdinalIgnoreCase))
+            .Select(artifact => BizTalkMapAnalyzer.Analyze(artifact.FullPath, Path.GetFileNameWithoutExtension(artifact.Name)))
+            .Where(static analysis => analysis is not null)
+            .Select(static analysis => analysis!)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Well-known BizTalk pipeline stage category GUIDs that only appear in receive pipelines
+    /// (Decode, Disassemble, Validate, Resolve Party).
+    /// </summary>
+    private static readonly IReadOnlyList<string> ReceivePipelineStageCategoryIds =
+    [
+        "9d0e4103-4cce-4536-83fa-4a5040674ad6",
+        "9d0e4105-4cce-4536-83fa-4a5040674ad6",
+        "9d0e410d-4cce-4536-83fa-4a5040674ad6",
+        "9d0e410e-4cce-4536-83fa-4a5040674ad6",
+    ];
+
+    /// <summary>
+    /// Well-known BizTalk pipeline stage category GUIDs that only appear in send pipelines
+    /// (Pre-Assemble, Assemble, Encode).
+    /// </summary>
+    private static readonly IReadOnlyList<string> SendPipelineStageCategoryIds =
+    [
+        "9d0e4101-4cce-4536-83fa-4a5040674ad6",
+        "9d0e4107-4cce-4536-83fa-4a5040674ad6",
+        "9d0e4108-4cce-4536-83fa-4a5040674ad6",
+    ];
+
+    /// <summary>
+    /// Classifies each pipeline (.btp) artifact as receive- or send-direction by inspecting the stage category
+    /// GUIDs it declares, so a project that only receives messages isn't given a bogus bidirectional draft. A
+    /// pipeline's file name is a hint at best ("XReceivePipeline"), but its stage categories are authoritative:
+    /// BizTalk only allows Decode/Disassemble/Validate/ResolveParty stages in receive pipelines and
+    /// Pre-Assemble/Assemble/Encode stages in send pipelines.
+    /// </summary>
+    private static (int ReceiveCount, int SendCount) ClassifyPipelineDirections(IReadOnlyList<BizTalkArtifactResponse> artifacts)
+    {
+        var receiveCount = 0;
+        var sendCount = 0;
+
+        foreach (var artifact in artifacts.Where(static artifact => string.Equals(artifact.Kind, "Pipeline", StringComparison.OrdinalIgnoreCase)))
+        {
+            string content;
+            try
+            {
+                content = File.ReadAllText(artifact.FullPath);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            if (SendPipelineStageCategoryIds.Any(categoryId => content.Contains(categoryId, StringComparison.OrdinalIgnoreCase)))
+            {
+                sendCount++;
+            }
+            else if (ReceivePipelineStageCategoryIds.Any(categoryId => content.Contains(categoryId, StringComparison.OrdinalIgnoreCase)))
+            {
+                receiveCount++;
+            }
+        }
+
+        return (receiveCount, sendCount);
+    }
+
+    private static IEnumerable<BizTalkArtifactResponse> OrchestrationArtifacts(IReadOnlyList<BizTalkArtifactResponse> artifacts)
+        => artifacts.Where(static artifact => string.Equals(artifact.Kind, "Orchestration", StringComparison.OrdinalIgnoreCase));
+
+    private static string OrchestrationName(BizTalkArtifactResponse artifact)
+        => Path.GetFileNameWithoutExtension(artifact.Name);
+
+    /// <summary>
+    /// Name fragments that mark an orchestration (or project) as a test, debug, or scratch artifact rather
+    /// than a production process. Real BizTalk solutions routinely keep such orchestrations checked in next to
+    /// production ones, so flagging them lets a reviewer deprioritize their migration.
+    /// </summary>
+    private static readonly IReadOnlyList<string> TestArtifactNameFragments =
+    [
+        "test", "debug", "scratch", "poc", "temp", "sandbox", "sample", "obsolete", "deprecated", "backup"
+    ];
+
+    /// <summary>
+    /// Returns true when <paramref name="name"/> looks like a test/debug/scratch artifact. Matching is done on
+    /// word-ish boundaries (PascalCase segments, separators) rather than raw substring containment so genuine
+    /// production names such as "Consumption", "Attempt", or "Protocol" aren't flagged by accident.
+    /// </summary>
+    private static bool IsLikelyTestArtifactName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        var segments = Regex.Split(name, "(?<=[a-z0-9])(?=[A-Z])|[^A-Za-z0-9]+")
+            .Where(static segment => segment.Length > 0)
+            .Select(static segment => segment.ToLowerInvariant())
+            .ToArray();
+
+        return segments.Any(segment => TestArtifactNameFragments.Contains(segment, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Turns a BizTalk project name into a single PascalCase namespace segment for generated module source
+    /// (e.g. "Shs.SpaceTrax2.Interfaces.Core.Process.Billing" becomes "ShsSpaceTrax2InterfacesCoreProcessBilling").
+    /// </summary>
+    private static string CreatePascalCaseNamespaceSegment(string projectName)
+    {
+        var slug = CreateSlug(projectName);
+        var segment = string.Concat(slug
+            .Split('-', StringSplitOptions.RemoveEmptyEntries)
+            .Select(static part => char.ToUpperInvariant(part[0]) + part[1..]));
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            return "Imported";
+        }
+
+        return char.IsDigit(segment[0]) ? $"Project{segment}" : segment;
     }
 
     /// <summary>
@@ -445,13 +664,45 @@ public sealed class BizTalkImportService : IBizTalkImportService
         return "OrchestrationAugment";
     }
 
+    /// <summary>
+    /// Produces the draft flow candidate(s) for one BizTalk project. A project containing more than one
+    /// orchestration is split into one candidate per orchestration (each scoped to just that orchestration's
+    /// control-flow signals, decision rules, and scaffolded modules) instead of collapsing every
+    /// orchestration's logic into a single flow, which produced unusable merged rule sets for real projects.
+    /// </summary>
+    private static IReadOnlyList<BizTalkFlowCandidateResponse> CreateFlowCandidates(
+        BizTalkProjectAnalysis project,
+        IReadOnlyList<BizTalkCustomAssemblyResponse> customAssemblies,
+        IReadOnlyList<BindingFileAnalysis> bindingFiles)
+    {
+        var orchestrationNames = OrchestrationArtifacts(project.Response.Artifacts)
+            .Select(OrchestrationName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (orchestrationNames.Length <= 1)
+        {
+            return [CreateFlowCandidate(project, customAssemblies, bindingFiles, split: null)];
+        }
+
+        return orchestrationNames
+            .Select(orchestrationName => CreateFlowCandidate(
+                project,
+                customAssemblies,
+                bindingFiles,
+                new OrchestrationSplit(orchestrationName, orchestrationNames.Length)))
+            .ToArray();
+    }
+
     private static BizTalkFlowCandidateResponse CreateFlowCandidate(
         BizTalkProjectAnalysis project,
         IReadOnlyList<BizTalkCustomAssemblyResponse> customAssemblies,
         IReadOnlyList<BindingFileAnalysis> bindingFiles,
-        string rootDirectory)
+        OrchestrationSplit? split)
     {
-        var flowId = CreateFlowId(project.Response.Name);
+        var effectiveProject = ScopeProjectToOrchestration(project.Response, split);
+        var flowId = split is null
+            ? CreateFlowId(project.Response.Name)
+            : CreateFlowId($"{project.Response.Name}-{split.OrchestrationName}");
         var relatedAssemblies = customAssemblies
             .Where(assembly => assembly.UsedByProjects.Contains(project.Response.Name, StringComparer.OrdinalIgnoreCase))
             .ToArray();
@@ -466,11 +717,25 @@ public sealed class BizTalkImportService : IBizTalkImportService
                 $"Manually migrate '{assembly.Name}' into a native Mulse {assembly.SuggestedModuleKind} module."));
         }
 
-        if (project.Response.MapCount > 0)
+        if (effectiveProject.MapCount > 0)
         {
-            augmentGuidance.Add(project.Response.MapCount == 1
+            augmentGuidance.Add(effectiveProject.MapCount == 1
                 ? "Convert the BizTalk map into XSLT or an equivalent render step before enabling the draft flow."
-                : $"Convert the {project.Response.MapCount} BizTalk maps into XSLT or explicit render steps and review which one belongs on each delivery route.");
+                : $"Convert the {effectiveProject.MapCount} BizTalk maps into XSLT or explicit render steps and review which one belongs on each delivery route.");
+        }
+
+        var translatedMaps = effectiveProject.MapAnalyses
+            .Where(static analysis => analysis.GeneratedXsltSourceCode is not null)
+            .ToArray();
+        if (translatedMaps.Length > 0)
+        {
+            augmentGuidance.Add($"{translatedMaps.Length} BizTalk map(s) were auto-translated into starter XSLT stylesheets ({string.Join(", ", translatedMaps.Select(static map => map.ScaffoldedModuleFileName))}). Download them with the scaffolded-module endpoints, review the generated XPath, then point the render step's xsltPath at the saved file.");
+        }
+
+        var untranslatedMapLinks = effectiveProject.MapAnalyses.Sum(static analysis => analysis.FunctoidInvolvedLinkCount);
+        if (untranslatedMapLinks > 0)
+        {
+            augmentGuidance.Add($"{untranslatedMapLinks} BizTalk map link(s) route through functoids (transformation logic) rather than a direct field-to-field assignment and were NOT translated. Implement them by hand in the generated XSLT, or replace the render step with a custom module.");
         }
 
         var deliveryGuidance = new List<string>
@@ -481,14 +746,14 @@ public sealed class BizTalkImportService : IBizTalkImportService
         };
 
         var openQuestions = new List<string>();
-        if (project.Response.OrchestrationCount > 0)
+        if (effectiveProject.OrchestrationCount > 0)
         {
-            openQuestions.Add(project.Response.OrchestrationControlFlowSignals.Count > 0
-                ? $"Which orchestration branches, subscriptions, and correlations should become separate Mulse flows versus augment steps? Detected {string.Join(", ", project.Response.OrchestrationControlFlowSignals.Select(static signal => $"{signal.Count} {signal.Description}"))} that were used to scaffold placeholder decision/stateful-orchestration augment steps below \u2014 review and configure the real rules and correlation values before enabling the flow."
+            openQuestions.Add(effectiveProject.OrchestrationControlFlowSignals.Count > 0
+                ? $"Which orchestration branches, subscriptions, and correlations should become separate Mulse flows versus augment steps? Detected {string.Join(", ", effectiveProject.OrchestrationControlFlowSignals.Select(static signal => $"{signal.Count} {signal.Description}"))} that were used to scaffold decision/stateful-orchestration augment steps below - review the generated rules and correlation values before enabling the flow."
                 : "Which orchestration branches, subscriptions, and correlations should become separate Mulse flows versus augment steps?");
         }
 
-        if (project.Response.PipelineCount > 0)
+        if (effectiveProject.PipelineCount > 0)
         {
             openQuestions.Add("Which pipeline components should become parse modules, and which belong in render or deliver stages?");
         }
@@ -504,7 +769,7 @@ public sealed class BizTalkImportService : IBizTalkImportService
         }
         else if (relatedBindings.Any(static binding => binding.SendPorts.Any(static sendPort => sendPort.IsTwoWay) || binding.ReceivePorts.Any(static receivePort => receivePort.IsTwoWay)))
         {
-            openQuestions.Add("This project uses two-way (solicit-response) WCF ports. Mulse's fetch/deliver module contracts are currently one-way — decide whether to add a response-capturing module, model the reply as a separate inbound flow, or keep this route in a temporary wrapper during cutover.");
+            openQuestions.Add("This project uses two-way (solicit-response) WCF ports. Mulse's fetch/deliver module contracts are currently one-way - decide whether to add a response-capturing module, model the reply as a separate inbound flow, or keep this route in a temporary wrapper during cutover.");
         }
 
         var requirements = new List<BizTalkSettingRequirementResponse>();
@@ -513,10 +778,15 @@ public sealed class BizTalkImportService : IBizTalkImportService
             "This draft is disabled by default so imported addresses, credentials, and map paths can be reviewed safely before execution."
         };
 
+        if (split is not null)
+        {
+            draftWarnings.Add($"The source project contains {split.TotalOrchestrations} orchestrations, so it was split into one draft flow per orchestration. This draft covers '{split.OrchestrationName}' only; the others are separate candidates that share the same bindings and artifacts.");
+        }
+
         var fetchStep = CreateFetchStep(flowId, relatedBindings, requirements, draftWarnings);
-        var parseStep = CreateParseStep(flowId, project.Response, rootDirectory, requirements, draftWarnings);
-        var deliveries = CreateDeliveryRoutes(flowId, project.Response, relatedBindings, requirements, draftWarnings);
-        var augments = CreateAugments(flowId, project.Response, relatedAssemblies, deliveries.Count, requirements, draftWarnings);
+        var parseStep = CreateParseStep(flowId, effectiveProject, requirements, draftWarnings);
+        var deliveries = CreateDeliveryRoutes(flowId, effectiveProject, relatedBindings, requirements, draftWarnings);
+        var augments = CreateAugments(flowId, effectiveProject, relatedAssemblies, deliveries.Count, requirements, draftWarnings);
 
         var isPushTriggeredFetch = string.Equals(fetchStep.Module, "http-inbound-fetch", StringComparison.OrdinalIgnoreCase)
             || string.Equals(fetchStep.Module, "file-system-watcher-fetch", StringComparison.OrdinalIgnoreCase);
@@ -537,32 +807,55 @@ public sealed class BizTalkImportService : IBizTalkImportService
 
         var parseGuidance = parseStep.Module switch
         {
+            "xml-envelope-debatch-parse" => "The draft debatches an XML envelope because the imported receive pipeline configures an envelope schema (EnvelopeSpecNames).",
             "hl7-parse" => "The draft uses HL7 parsing because the project name or assets look HL7-specific.",
             "flat-file-parse" => "The draft uses flat-file parsing because the project appears to process delimited or flat-file content.",
             "xml-xsd-parse" => "The draft uses XML/XSD-aware parsing and preloads discovered schema paths where available.",
             _ => "The draft uses JSON parsing as a fallback and should be replaced if the inbound message shape is not JSON."
         };
 
-        if (project.Response.Artifacts.Count == 0 && project.Response.ReferencedArtifacts.Count > 0)
+        if (effectiveProject.Artifacts.Count == 0 && effectiveProject.ReferencedArtifacts.Count > 0)
         {
             parseGuidance += " This project doesn't ship its own schemas or pipelines, so the signal was inferred from a referenced BizTalk library project; confirm the correct schema/pipeline library is in scope.";
+        }
+
+        AddPipelineDirectionGuidance(effectiveProject, relatedBindings, deliveryGuidance, openQuestions, draftWarnings);
+
+        var scaffoldedModules = CollectScaffoldedModules(effectiveProject);
+        if (scaffoldedModules.Count > 0)
+        {
+            openQuestions.Add($"{scaffoldedModules.Count} starter artifact(s) were scaffolded for logic that could not be auto-translated ({string.Join(", ", scaffoldedModules.Select(static module => module.FileName))}). Each one compiles or parses as-is; who owns implementing and registering them before this flow is enabled?");
+        }
+
+        var isLikelyTestArtifact = split is not null
+            ? IsLikelyTestArtifactName(split.OrchestrationName)
+            : IsLikelyTestArtifactName(project.Response.Name)
+                || OrchestrationArtifacts(project.Response.Artifacts).Any(artifact => IsLikelyTestArtifactName(OrchestrationName(artifact)));
+        if (isLikelyTestArtifact)
+        {
+            draftWarnings.Add("The source orchestration or project name looks like a test, debug, or scratch artifact rather than a production process. Confirm it is worth migrating before spending review effort on this draft.");
         }
 
         var draftFlow = new BizTalkDraftFlowResponse(
             flowId,
             false,
             new BizTalkDraftTriggerResponse(isPushTriggeredFetch ? PipelineTriggerMode.Push : PipelineTriggerMode.OnDemand, null, false),
-            fetchStep,
-            parseStep,
+            [new BizTalkDraftSourceResponse(PrimarySourceId, fetchStep, parseStep, [])],
             augments,
             deliveries,
             requirements,
             draftWarnings);
 
+        var summary = $"{effectiveProject.OrchestrationCount} orchestration(s), {effectiveProject.MapCount} map(s), {effectiveProject.SchemaCount} schema(s), {effectiveProject.PipelineCount} pipeline(s), {relatedBindings.Sum(static binding => binding.SendPorts.Count)} send port(s).";
+        if (split is not null)
+        {
+            summary = $"Orchestration '{split.OrchestrationName}' (1 of {split.TotalOrchestrations} in the project): {summary}";
+        }
+
         return new BizTalkFlowCandidateResponse(
             flowId,
             project.Response.Name,
-            $"{project.Response.OrchestrationCount} orchestration(s), {project.Response.MapCount} map(s), {project.Response.SchemaCount} schema(s), {project.Response.PipelineCount} pipeline(s), {relatedBindings.Sum(static binding => binding.SendPorts.Count)} send port(s).",
+            summary,
             relatedBindings.Length > 0
                 ? "Receive and send bindings were imported into the draft flow. Review the generated transport settings and trigger strategy."
                 : "No receive binding was found for this project, so the draft fetch step uses a repository-style staging inbox placeholder.",
@@ -572,12 +865,119 @@ public sealed class BizTalkImportService : IBizTalkImportService
             openQuestions,
             project.Response.Artifacts.Select(static artifact => artifact.Name).ToArray(),
             relatedBindings.Select(static binding => binding.Name).ToArray(),
-            draftFlow);
+            draftFlow)
+        {
+            ScaffoldedModules = scaffoldedModules,
+            IsLikelyTestArtifact = isLikelyTestArtifact
+        };
     }
 
-    private static bool ShouldCreateFlowCandidate(BizTalkProjectResponse project, IReadOnlyList<BindingFileAnalysis> bindingFiles)
+    /// <summary>
+    /// The single generated source id used by BizTalk-derived drafts. A BizTalk receive port maps to exactly
+    /// one inbound transport, so the generated source graph has one root source; additional sources (lookups,
+    /// joins) are something a reviewer adds deliberately in the designer after import.
+    /// </summary>
+    private const string PrimarySourceId = "primary";
+
+    /// <summary>
+    /// Narrows a project response to a single orchestration's view of itself (orchestration count, control-flow
+    /// signals, and decision analyses), so a split candidate reports and scaffolds only what belongs to its own
+    /// orchestration. Returns the project unchanged when it is not being split.
+    /// </summary>
+    private static BizTalkProjectResponse ScopeProjectToOrchestration(BizTalkProjectResponse project, OrchestrationSplit? split)
     {
-        if (project.OrchestrationCount > 0 || project.MapCount > 0)
+        if (split is null)
+        {
+            return project;
+        }
+
+        var orchestrationSignals = project.OrchestrationSignalsByOrchestration
+            .Where(signals => string.Equals(signals.OrchestrationName, split.OrchestrationName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        return project with
+        {
+            OrchestrationCount = 1,
+            OrchestrationSignalsByOrchestration = orchestrationSignals,
+            OrchestrationControlFlowSignals = AggregateOrchestrationControlFlowSignals(orchestrationSignals),
+            OrchestrationDecisionAnalyses = project.OrchestrationDecisionAnalyses
+                .Where(analysis => string.Equals(analysis.OrchestrationName, split.OrchestrationName, StringComparison.OrdinalIgnoreCase))
+                .ToArray()
+        };
+    }
+
+    /// <summary>
+    /// Collects every starter artifact generated for a candidate: C# module skeletons for orchestrations whose
+    /// control flow could not be auto-translated, plus XSLT stylesheets generated from BizTalk maps. Both reuse
+    /// <see cref="BizTalkScaffoldedModuleResponse"/> (and therefore the existing zip/single-file download
+    /// endpoints) because that contract is content-agnostic.
+    /// </summary>
+    private static IReadOnlyList<BizTalkScaffoldedModuleResponse> CollectScaffoldedModules(BizTalkProjectResponse project)
+    {
+        var modules = project.OrchestrationDecisionAnalyses
+            .Where(static analysis => analysis.ScaffoldedModuleSourceCode is not null)
+            .Select(static analysis => new BizTalkScaffoldedModuleResponse(
+                analysis.ScaffoldedModuleFileName ?? $"{analysis.OrchestrationName}.cs",
+                analysis.ScaffoldedModuleId ?? analysis.OrchestrationName,
+                analysis.OrchestrationName,
+                analysis.ScaffoldedModuleSourceCode!))
+            .ToList();
+
+        modules.AddRange(project.MapAnalyses
+            .Where(static analysis => analysis.GeneratedXsltSourceCode is not null)
+            .Select(static analysis => new BizTalkScaffoldedModuleResponse(
+                analysis.ScaffoldedModuleFileName ?? $"{analysis.MapName}.xslt",
+                analysis.ScaffoldedModuleId ?? analysis.MapName,
+                analysis.MapName,
+                analysis.GeneratedXsltSourceCode!)));
+
+        return modules;
+    }
+
+    /// <summary>
+    /// Adds direction-aware guidance when a project's pipelines say it only ever receives (or only ever sends)
+    /// messages. Without this, an inbound-only interface still gets a full bidirectional draft whose delivery
+    /// route is pure placeholder noise, with nothing telling the reviewer that is expected.
+    /// </summary>
+    private static void AddPipelineDirectionGuidance(
+        BizTalkProjectResponse project,
+        IReadOnlyList<BindingFileAnalysis> relatedBindings,
+        List<string> deliveryGuidance,
+        List<string> openQuestions,
+        List<string> draftWarnings)
+    {
+        if (project.PipelineCount == 0 || project.OrchestrationCount > 0)
+        {
+            return;
+        }
+
+        var hasSendBindings = relatedBindings.Any(static binding => binding.SendPorts.Count > 0);
+        if (project.ReceivePipelineCount > 0 && project.SendPipelineCount == 0 && !hasSendBindings)
+        {
+            deliveryGuidance.Add($"This project only contains receive-direction pipeline(s) ({project.ReceivePipelineCount}) and has no send pipeline or send-port binding, so it looks like an inbound-only interface. The generated delivery route is a placeholder that probably does not correspond to anything in the source system.");
+            openQuestions.Add("This inbound-only BizTalk project has no outbound counterpart. Where should the received messages actually be delivered in Mulse, or should this draft become the fetch/parse half of an existing flow instead of a standalone one?");
+            draftWarnings.Add("Inbound-only project detected from pipeline stage categories: review or remove the placeholder delivery route before enabling this flow.");
+        }
+        else if (project.SendPipelineCount > 0 && project.ReceivePipelineCount == 0)
+        {
+            deliveryGuidance.Add($"This project only contains send-direction pipeline(s) ({project.SendPipelineCount}), so the generated fetch step is a placeholder: the real message source is whichever flow or orchestration routed messages to this send port in BizTalk.");
+        }
+    }
+
+    /// <summary>
+    /// Decides whether a BizTalk project represents real message-handling behavior worth turning into a draft
+    /// flow, or is a shared library (schemas/types only) that should just be inventoried. Orchestrations, maps,
+    /// and pipelines all represent genuine behavior; so does a binding file that names this project. A project
+    /// with none of those yields no candidate even when it is the only project in scope - a pure schema library
+    /// analyzed in isolation legitimately has nothing to migrate, and inventing a placeholder flow for it only
+    /// produces noise the reviewer has to recognize and discard.
+    /// </summary>
+    /// <remarks>
+    /// Internal (rather than private) so <c>Service.Tests</c> can regression-test this heuristic directly.
+    /// </remarks>
+    internal static bool ShouldCreateFlowCandidate(BizTalkProjectResponse project, IReadOnlyList<BindingFileAnalysis> bindingFiles)
+    {
+        if (project.OrchestrationCount > 0 || project.MapCount > 0 || project.PipelineCount > 0)
         {
             return true;
         }
@@ -816,7 +1216,7 @@ public sealed class BizTalkImportService : IBizTalkImportService
                 ["expectsResponse"] = "true"
             };
             fetchStep = fetchStep with { Settings = twoWaySettings };
-            draftWarnings.Add($"Receive port '{portLocation.Port.Name}' is a two-way (request-response) service. Mulse's fetch modules are currently fire-and-forget, so this draft cannot yet return a synchronous reply to the caller — plan a response-capable fetch module (or an inline synchronous augment) before enabling this flow.");
+            draftWarnings.Add($"Receive port '{portLocation.Port.Name}' is a two-way (request-response) service. Mulse's fetch modules are currently fire-and-forget, so this draft cannot yet return a synchronous reply to the caller - plan a response-capable fetch module (or an inline synchronous augment) before enabling this flow.");
         }
 
         return fetchStep;
@@ -825,11 +1225,10 @@ public sealed class BizTalkImportService : IBizTalkImportService
     private static BizTalkDraftStepResponse CreateParseStep(
         string flowId,
         BizTalkProjectResponse project,
-        string rootDirectory,
         List<BizTalkSettingRequirementResponse> requirements,
         List<string> draftWarnings)
     {
-        var module = SelectParseModule(project, rootDirectory);
+        var module = SelectParseModule(project);
         var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         if (string.Equals(module, "xml-envelope-debatch-parse", StringComparison.OrdinalIgnoreCase))
@@ -841,7 +1240,7 @@ public sealed class BizTalkImportService : IBizTalkImportService
         {
             var schemaPaths = AllArtifacts(project)
                 .Where(static artifact => string.Equals(artifact.Kind, "Schema", StringComparison.OrdinalIgnoreCase))
-                .Select(artifact => Path.GetFullPath(Path.Combine(rootDirectory, artifact.RelativePath.Replace('/', Path.DirectorySeparatorChar))))
+                .Select(static artifact => artifact.FullPath)
                 .ToArray();
             if (schemaPaths.Length > 0)
             {
@@ -917,11 +1316,13 @@ public sealed class BizTalkImportService : IBizTalkImportService
 
     /// <summary>
     /// Scaffolds draft augment steps from detected orchestration control-flow signals (see
-    /// <see cref="DetectOrchestrationControlFlowSignals"/>) instead of only surfacing them as open questions.
-    /// Decision/branch shapes become a placeholder <c>decision-augment</c> step; convoy, correlation, loop, and
-    /// atomic-transaction shapes become a placeholder <c>stateful-orchestration-augment</c> step. Both are added
-    /// disabled-by-default draft scaffolding: real rule/correlation configuration still requires manual review,
-    /// but the architecture (which module family applies) is now pre-selected rather than left fully open.
+    /// <see cref="DetectOrchestrationControlFlowSignalsByOrchestration"/>) instead of only surfacing them as
+    /// open questions. Decision/branch shapes become a <c>decision-augment</c> step, pre-populated with real
+    /// rules auto-translated from the orchestration's simple branch expressions (see
+    /// <see cref="BizTalkOrchestrationDecisionAnalyzer"/>) and falling back to a config placeholder only when no
+    /// branch could be translated. Convoy, correlation, loop, and atomic-transaction shapes become a placeholder
+    /// <c>stateful-orchestration-augment</c> step; the matching scaffolded C# module carries the details that
+    /// can't be expressed declaratively.
     /// </summary>
     private static void AddControlFlowAugments(
         string flowId,
@@ -939,15 +1340,32 @@ public sealed class BizTalkImportService : IBizTalkImportService
 
         if (signalsByShape.TryGetValue("Decision", out var decisionSignal))
         {
-            var decisionRulesPath = AddRequirement(requirements, flowId, "augments.decision.decisionJson", "Config", $"Detected {decisionSignal.Count} {decisionSignal.Description} in the orchestration. Replace the placeholder decision rules with the real branch conditions before enabling the flow.", appliedToDraft: true);
+            var generatedDecisionJson = BizTalkOrchestrationDecisionAnalyzer.MergeDecisionJson(project.OrchestrationDecisionAnalyses);
+            var complexBranchCount = project.OrchestrationDecisionAnalyses.Sum(static analysis => analysis.ComplexBranches.Count);
+
+            string decisionJson;
+            if (generatedDecisionJson is not null)
+            {
+                decisionJson = generatedDecisionJson;
+                draftWarnings.Add($"Detected {decisionSignal.Count} {decisionSignal.Description} in the source orchestration. Branch conditions simple enough to translate were auto-converted into real decision-augment rules that tag the matched branch via metadata ('biztalk:<decision>' = '<branch>'); they do not reproduce each branch's side effects, so review them and wire up the downstream behavior before enabling the flow.");
+                if (complexBranchCount > 0)
+                {
+                    draftWarnings.Add($"{complexBranchCount} decision branch(es) were too complex to auto-translate (method calls, non-equality operators, or assignments). Their original BizTalk expressions are quoted in the scaffolded C# module for this orchestration.");
+                }
+            }
+            else
+            {
+                decisionJson = AddRequirement(requirements, flowId, "augments.decision.decisionJson", "Config", $"Detected {decisionSignal.Count} {decisionSignal.Description} in the orchestration. Replace the placeholder decision rules with the real branch conditions before enabling the flow.", appliedToDraft: true);
+                draftWarnings.Add($"Detected {decisionSignal.Count} {decisionSignal.Description} in the source orchestration, but none of the branch expressions were simple enough to auto-translate. A decision-augment step was scaffolded with placeholder rules; replace them with the real branch conditions.");
+            }
+
             augments.Add(new BizTalkDraftStepResponse(
                 "decision-augment",
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    ["decisionJson"] = decisionRulesPath,
+                    ["decisionJson"] = decisionJson,
                     ["stopAfterFirstMatch"] = "true"
                 }));
-            draftWarnings.Add($"Detected {decisionSignal.Count} {decisionSignal.Description} in the source orchestration. A decision-augment step was scaffolded with placeholder rules; replace them with the real branch conditions.");
         }
 
         var statefulSignals = StatefulOrchestrationShapeTypes
@@ -1010,7 +1428,7 @@ public sealed class BizTalkImportService : IBizTalkImportService
     /// Tags all delivery routes with a shared atomic scope, and adds a compensation-module requirement for each,
     /// when the source orchestration used a BizTalk <c>AtomicTransaction</c> scope and there is more than one
     /// delivery route to roll back between. With a single route there is nothing to compensate, so tagging is
-    /// skipped. This closes the loop between <see cref="DetectOrchestrationControlFlowSignals"/> and the
+    /// skipped. This closes the loop between <see cref="DetectOrchestrationControlFlowSignalsByOrchestration"/> and the
     /// <see cref="Mulse.Modules.DeliveryRouteDefinition.AtomicScope"/>/<see cref="Mulse.Modules.DeliveryRouteDefinition.Compensation"/>
     /// runtime model: the draft flow is pre-wired for all-or-nothing delivery, and the operator only needs to
     /// supply real compensation module settings before enabling it.
@@ -1067,7 +1485,7 @@ public sealed class BizTalkImportService : IBizTalkImportService
                 ["expectsResponse"] = "true"
             };
             deliverSettings = deliverSettings with { Settings = twoWaySettings };
-            draftWarnings.Add($"Send port '{sendPort.Name}' is a two-way (solicit-response) WCF port. Mulse's deliver modules are currently fire-and-forget, so the synchronous reply from '{sendPort.Address}' is not captured yet — plan a response-capturing deliver module (or a follow-up augment step) before enabling this route.");
+            draftWarnings.Add($"Send port '{sendPort.Name}' is a two-way (solicit-response) WCF port. Mulse's deliver modules are currently fire-and-forget, so the synchronous reply from '{sendPort.Address}' is not captured yet - plan a response-capturing deliver module (or a follow-up augment step) before enabling this route.");
         }
 
         if (routeIndex > 0)
@@ -1097,7 +1515,16 @@ public sealed class BizTalkImportService : IBizTalkImportService
         switch (module)
         {
             case "xslt-render":
-                settings["xsltPath"] = AddRequirement(requirements, referencePrefix, $"{settingPrefix}.xsltPath", "Config", "Convert the BizTalk map or BTM asset into an XSLT file and update this path before enabling the flow.", appliedToDraft: true);
+                var generatedStylesheet = project.MapAnalyses.FirstOrDefault(static analysis => analysis.GeneratedXsltSourceCode is not null);
+                settings["xsltPath"] = AddRequirement(
+                    requirements,
+                    referencePrefix,
+                    $"{settingPrefix}.xsltPath",
+                    "Config",
+                    generatedStylesheet is null
+                        ? "Convert the BizTalk map or BTM asset into an XSLT file and update this path before enabling the flow."
+                        : $"A starter XSLT stylesheet ('{generatedStylesheet.ScaffoldedModuleFileName}') was auto-generated from map '{generatedStylesheet.MapName}' ({generatedStylesheet.DirectLinkCount} direct link(s), {generatedStylesheet.ConstantValueCount} constant(s), {generatedStylesheet.FunctoidInvolvedLinkCount} functoid-involved link(s) left untranslated). Download it from the scaffolded-module endpoints, save it, then set this path to the saved file.",
+                    appliedToDraft: true);
                 settings["outputExtension"] = ".xml";
                 break;
             case "xml-render":
@@ -1312,9 +1739,9 @@ public sealed class BizTalkImportService : IBizTalkImportService
         return "document-repository-store";
     }
 
-    private static string SelectParseModule(BizTalkProjectResponse project, string rootDirectory)
+    private static string SelectParseModule(BizTalkProjectResponse project)
     {
-        if (ProjectHasConfiguredEnvelope(project, rootDirectory))
+        if (ProjectHasConfiguredEnvelope(project))
         {
             return "xml-envelope-debatch-parse";
         }
@@ -1341,11 +1768,11 @@ public sealed class BizTalkImportService : IBizTalkImportService
         """<Property\s+Name="EnvelopeSpecNames">\s*<Value[^>]*>([^<]+)</Value>""",
         System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.Singleline);
 
-    private static bool ProjectHasConfiguredEnvelope(BizTalkProjectResponse project, string rootDirectory)
+    private static bool ProjectHasConfiguredEnvelope(BizTalkProjectResponse project)
     {
         var pipelineFiles = AllArtifacts(project)
             .Where(static artifact => string.Equals(artifact.Kind, "Pipeline", StringComparison.OrdinalIgnoreCase))
-            .Select(artifact => Path.GetFullPath(Path.Combine(rootDirectory, artifact.RelativePath.Replace('/', Path.DirectorySeparatorChar))));
+            .Select(static artifact => artifact.FullPath);
 
         foreach (var pipelineFile in pipelineFiles)
         {
@@ -1528,7 +1955,8 @@ public sealed class BizTalkImportService : IBizTalkImportService
             artifacts.Add(new BizTalkArtifactResponse(
                 artifactKind,
                 Path.GetFileName(includePath) ?? Path.GetFileName(fullPath),
-                Path.GetRelativePath(rootDirectory, fullPath)));
+                Path.GetRelativePath(rootDirectory, fullPath),
+                fullPath));
         }
     }
 
@@ -1661,16 +2089,13 @@ public sealed class BizTalkImportService : IBizTalkImportService
         return "Comma";
     }
 
+    /// <summary>
+    /// Resolves the content type a rendered payload should be delivered with, derived from the render module's
+    /// own output extension via the shared <see cref="ContentTypeResolver"/> so this never drifts from the
+    /// extension-to-content-type mapping every file-based module already agrees on.
+    /// </summary>
     private static string ResolveContentType(string renderModule)
-    {
-        return renderModule switch
-        {
-            "hl7-render" => "text/hl7-v2",
-            "flat-file-render" => "text/plain",
-            "json-render" => "application/json",
-            _ => "application/xml"
-        };
-    }
+        => ContentTypeResolver.FromFileName($"payload{ResolveExtension(renderModule)}");
 
     private static string ResolveExtension(string renderModule)
     {
@@ -1686,7 +2111,7 @@ public sealed class BizTalkImportService : IBizTalkImportService
     private static BizTalkProjectResponse CreateDefaultProjectProfile()
         => new("ImportedBinding", string.Empty, 0, 0, 1, 0, [], []);
 
-    private sealed record AnalysisScope(
+    internal sealed record AnalysisScope(
         string SourcePath,
         string SourceType,
         string DisplayName,
@@ -1694,31 +2119,39 @@ public sealed class BizTalkImportService : IBizTalkImportService
         IReadOnlyList<string> BizTalkProjects,
         IReadOnlyList<string> CustomProjects);
 
-    private sealed record SolutionProjectSet(
+    /// <summary>
+    /// Identifies one orchestration's slice of a multi-orchestration BizTalk project when that project is split
+    /// into one draft flow candidate per orchestration.
+    /// </summary>
+    /// <param name="OrchestrationName">The orchestration file name (without extension) this candidate covers.</param>
+    /// <param name="TotalOrchestrations">How many orchestrations the source project contains in total.</param>
+    internal sealed record OrchestrationSplit(string OrchestrationName, int TotalOrchestrations);
+
+    internal sealed record SolutionProjectSet(
         IReadOnlyList<string> BizTalkProjects,
         IReadOnlyList<string> CustomProjects);
 
-    private sealed record BizTalkProjectAnalysis(BizTalkProjectResponse Response, IReadOnlyList<string> References);
+    internal sealed record BizTalkProjectAnalysis(BizTalkProjectResponse Response, IReadOnlyList<string> References);
 
-    private sealed record BindingFileAnalysis(
+    internal sealed record BindingFileAnalysis(
         string Name,
         string FilePath,
         IReadOnlyList<ReceivePortAnalysis> ReceivePorts,
         IReadOnlyList<SendPortAnalysis> SendPorts);
 
-    private sealed record ReceivePortAnalysis(
+    internal sealed record ReceivePortAnalysis(
         string Name,
         bool IsTwoWay,
         IReadOnlyList<ReceiveLocationAnalysis> ReceiveLocations);
 
-    private sealed record ReceiveLocationAnalysis(
+    internal sealed record ReceiveLocationAnalysis(
         string Name,
         string TransportType,
         string Address,
         string ReceivePipeline,
         IReadOnlyDictionary<string, string> TransportProperties);
 
-    private sealed record SendPortAnalysis(
+    internal sealed record SendPortAnalysis(
         string Name,
         string Description,
         string TransportType,

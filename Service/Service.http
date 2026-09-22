@@ -57,21 +57,27 @@ Content-Type: application/json
     "mode": "Push",
     "runOnStartup": false
   },
-  "fetch": {
-    "module": "file-system-watcher-fetch",
-    "settings": {
-      "path": "SampleData\\WatchInbox",
-      "searchPattern": "*.json",
-      "recursive": "false",
-      "includeExistingOnFirstRun": "true",
-      "includeChanged": "true",
-      "settleSeconds": "2"
+  "sources": [
+    {
+      "id": "primary",
+      "fetch": {
+        "module": "file-system-watcher-fetch",
+        "settings": {
+          "path": "SampleData\\WatchInbox",
+          "searchPattern": "*.json",
+          "recursive": "false",
+          "includeExistingOnFirstRun": "true",
+          "includeChanged": "true",
+          "settleSeconds": "2"
+        }
+      },
+      "parse": {
+        "module": "json-parse",
+        "settings": {}
+      },
+      "inputSourceIds": []
     }
-  },
-  "parse": {
-    "module": "json-parse",
-    "settings": {}
-  },
+  ],
   "augments": [],
   "deliveries": [
     {
@@ -102,21 +108,27 @@ Content-Type: application/json
     "mode": "Push",
     "runOnStartup": false
   },
-  "fetch": {
-    "module": "file-system-watcher-fetch",
-    "settings": {
-      "path": "SampleData\\StatefulInbox",
-      "searchPattern": "*.json",
-      "recursive": "false",
-      "includeExistingOnFirstRun": "false",
-      "includeChanged": "true",
-      "settleSeconds": "1"
+  "sources": [
+    {
+      "id": "primary",
+      "fetch": {
+        "module": "file-system-watcher-fetch",
+        "settings": {
+          "path": "SampleData\\StatefulInbox",
+          "searchPattern": "*.json",
+          "recursive": "false",
+          "includeExistingOnFirstRun": "false",
+          "includeChanged": "true",
+          "settleSeconds": "1"
+        }
+      },
+      "parse": {
+        "module": "json-parse",
+        "settings": {}
+      },
+      "inputSourceIds": []
     }
-  },
-  "parse": {
-    "module": "json-parse",
-    "settings": {}
-  },
+  ],
   "augments": [
     {
       "module": "stateful-orchestration-augment",
@@ -168,17 +180,23 @@ Content-Type: application/json
     "mode": "OnDemand",
     "runOnStartup": false
   },
-  "fetch": {
-    "module": "file-system-fetch",
-    "settings": {
-      "path": "SampleData\\Inbox",
-      "searchPattern": "*.json"
+  "sources": [
+    {
+      "id": "primary",
+      "fetch": {
+        "module": "file-system-fetch",
+        "settings": {
+          "path": "SampleData\\Inbox",
+          "searchPattern": "*.json"
+        }
+      },
+      "parse": {
+        "module": "json-parse",
+        "settings": {}
+      },
+      "inputSourceIds": []
     }
-  },
-  "parse": {
-    "module": "json-parse",
-    "settings": {}
-  },
+  ],
   "augments": [
     {
       "module": "decision-augment",
@@ -233,34 +251,53 @@ Content-Type: application/json
     "interval": "00:05:00",
     "runOnStartup": false
   },
-  "fetch": {
-    "module": "sftp-fetch",
-    "settings": {
-      "host": "sftp.example.test",
-      "port": "22",
-      "username": "integration-user",
-      "password": "replace-me",
-      "remotePath": "/orders/inbox",
-      "searchPattern": "*.json"
-    }
-  },
-  "parse": {
-    "module": "json-parse",
-    "settings": {}
-  },
-  "augments": [
+  "sources": [
     {
-      "module": "sql-server-lookup-augment",
-      "settings": {
-        "connectionString": "Server=tcp:sql.example.test,1433;Database=Orders;User ID=integration-user;Password=replace-me;TrustServerCertificate=True",
-        "idPaths": "$.customerId",
-        "queryText": "select value as CustomerId from string_split(@ids, ',')"
-      }
+      "id": "primary",
+      "fetch": {
+        "module": "sftp-fetch",
+        "settings": {
+          "host": "sftp.example.test",
+          "port": "22",
+          "username": "integration-user",
+          "password": "replace-me",
+          "remotePath": "/orders/inbox",
+          "searchPattern": "*.json"
+        }
+      },
+      "parse": {
+        "module": "json-parse",
+        "settings": {}
+      },
+      "inputSourceIds": []
     },
     {
-      "module": "conditional-join-map-augment",
+      "id": "sqlCustomers",
+      "fetch": {
+        "module": "sql-server-lookup-fetch",
+        "settings": {
+          "connectionString": "Server=tcp:sql.example.test,1433;Database=Orders;User ID=integration-user;Password=replace-me;TrustServerCertificate=True",
+          "idPaths": "$.customerId",
+          "queryText": "select value as CustomerId from string_split(@ids, ',')"
+        }
+      },
+      "parse": {
+        "module": "json-parse",
+        "settings": {}
+      },
+      "inputSourceIds": ["primary"]
+    }
+  ],
+  "augments": [
+    {
+      "module": "multi-source-join-map-augment",
       "settings": {
-        "joinMode": "LeftJoin"
+        "leftSourceId": "primary",
+        "rightSourceId": "sqlCustomers",
+        "joinKeysJson": "[{\"leftPath\":\"$.customerId\",\"rightPath\":\"CustomerId\"}]",
+        "joinKind": "Left",
+        "resultCardinality": "FanOut",
+        "mappingJson": "[{\"sourceKind\":\"Left\",\"sourcePath\":\"$.orderId\",\"targetField\":\"order.id\",\"condition\":\"Always\"},{\"sourceKind\":\"Right\",\"sourcePath\":\"CustomerId\",\"targetField\":\"customer.id\",\"condition\":\"WhenMatched\"}]"
       }
     }
   ],
@@ -300,16 +337,16 @@ Content-Type: application/json
   ],
   "mappings": [
     {
-      "sourceKind": "Source",
+      "sourceKind": "Left",
       "sourcePath": "$.orderId",
       "targetField": "order.id",
       "condition": "Always"
     },
     {
-      "sourceKind": "Lookup",
+      "sourceKind": "Right",
       "sourcePath": "CustomerId",
       "targetField": "customer.id",
-      "condition": "WhenLookupFound"
+      "condition": "WhenMatched"
     }
   ]
 }
@@ -331,18 +368,24 @@ Content-Type: application/json
     "mode": "OnDemand",
     "runOnStartup": false
   },
-  "fetch": {
-    "module": "file-system-fetch",
-    "settings": {
-      "path": "SampleData\\Inbox",
-      "searchPattern": "*.json",
-      "recursive": "false"
+  "sources": [
+    {
+      "id": "primary",
+      "fetch": {
+        "module": "file-system-fetch",
+        "settings": {
+          "path": "SampleData\\Inbox",
+          "searchPattern": "*.json",
+          "recursive": "false"
+        }
+      },
+      "parse": {
+        "module": "json-parse",
+        "settings": {}
+      },
+      "inputSourceIds": []
     }
-  },
-  "parse": {
-    "module": "json-parse",
-    "settings": {}
-  },
+  ],
   "augments": [
     {
       "module": "sample-plugin-augment",
@@ -394,18 +437,24 @@ Content-Type: application/json
     "interval": "00:10:00",
     "runOnStartup": true
   },
-  "fetch": {
-    "module": "file-system-fetch",
-    "settings": {
-      "path": "SampleData\\Inbox",
-      "searchPattern": "*.json",
-      "recursive": "false"
+  "sources": [
+    {
+      "id": "primary",
+      "fetch": {
+        "module": "file-system-fetch",
+        "settings": {
+          "path": "SampleData\\Inbox",
+          "searchPattern": "*.json",
+          "recursive": "false"
+        }
+      },
+      "parse": {
+        "module": "json-parse",
+        "settings": {}
+      },
+      "inputSourceIds": []
     }
-  },
-  "parse": {
-    "module": "json-parse",
-    "settings": {}
-  },
+  ],
   "augments": [
     {
       "module": "sample-plugin-augment",

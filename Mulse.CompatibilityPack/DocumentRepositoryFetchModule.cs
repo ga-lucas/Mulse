@@ -27,8 +27,10 @@ public sealed class DocumentRepositoryFetchModule : IFetchModule
         SettingDescriptors,
         Recommendation);
 
+    /// <summary><paramref name="input"/> is unused: this is a root source that reads from a repository directory only.</summary>
     public async Task<IntegrationBatch> FetchAsync(
         FlowExecutionContext context,
+        IntegrationBatch input,
         ModuleStepDefinition step,
         CancellationToken cancellationToken)
     {
@@ -99,14 +101,6 @@ public sealed class DocumentRepositoryFetchModule : IFetchModule
 
     private static string ResolveContentType(string filePath)
     {
-        return Path.GetExtension(filePath).ToLowerInvariant() switch
-        {
-            ".json" => "application/json",
-            ".xml" => "application/xml",
-            ".csv" => "text/csv",
-            ".hl7" or ".adt" => "text/hl7-v2",
-            ".txt" => "text/plain",
-            _ => "application/octet-stream"
-        };
+        return ContentTypeResolver.FromFileName(filePath);
     }
 }

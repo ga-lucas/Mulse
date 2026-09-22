@@ -91,6 +91,9 @@
     font-weight: 700;
     padding: 0.8rem 1rem;
     cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
 }
 
 .run-button:disabled {
@@ -124,6 +127,29 @@
 .status-banner.error {
     background: rgba(239, 68, 68, 0.15);
     color: #fecaca;
+}
+
+.status-banner.compact {
+    padding: 0.6rem 0.85rem;
+    margin: 0.5rem 0;
+    font-size: 0.9rem;
+    border-radius: 0.6rem;
+}
+
+.source-list {
+    margin: 0.25rem 0 0;
+    padding-left: 1.1rem;
+    color: #cbd5f5;
+    font-size: 0.9rem;
+}
+
+.source-list li {
+    margin-bottom: 0.15rem;
+}
+
+.source-inputs {
+    color: #fbbf24;
+    margin-left: 0.35rem;
 }
 
 @media (max-width: 720px) {

@@ -12,15 +12,7 @@
         </div>
     </header>
 
-    @if (!string.IsNullOrWhiteSpace(_errorMessage))
-    {
-        <div class="status-banner error">@_errorMessage</div>
-    }
-
-    @if (!string.IsNullOrWhiteSpace(_lastRunMessage))
-    {
-        <div class="status-banner success">@_lastRunMessage</div>
-    }
+    <StatusBanner Error="@_errorMessage" Success="@_lastRunMessage" />
 
     @if (_isLoading)
     {
@@ -29,13 +21,11 @@
     else
     {
         <section class="dashboard-grid">
-            <article class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h2>Configured flows</h2>
-                        <p>Flows remain in the API service, while this UI drives orchestration separately.</p>
-                    </div>
-                </div>
+            <Panel Title="Configured flows" Description="Flows remain in the API service, while this UI drives orchestration separately.">
+                <HeaderActions>
+                    <a class="run-button" href="/designer">New flow</a>
+                </HeaderActions>
+                <ChildContent>
 
                 @if (_flows.Count == 0)
                 {
@@ -50,18 +40,39 @@
                                 <div class="flow-card-header">
                                     <div>
                                         <h3>@flow.Id</h3>
-                                        <p><strong>Fetch:</strong> @flow.FetchModule</p>
-                                        <p><strong>Parse:</strong> @flow.ParseModule</p>
+                                        <p><strong>Sources:</strong> @flow.Sources.Count</p>
+                                        <ul class="source-list">
+                                            @foreach (var source in flow.Sources)
+                                            {
+                                                <li>
+                                                    <strong>@source.Id</strong>: @source.Fetch.Module &rarr; @source.Parse.Module
+                                                    @if (source.InputSourceIds.Count > 0)
+                                                    {
+                                                        <span class="source-inputs">(input from @string.Join(", ", source.InputSourceIds))</span>
+                                                    }
+                                                </li>
+                                            }
+                                        </ul>
                                     </div>
                                     <div class="flow-card-actions">
-                                        <button class="secondary-button" @onclick="() => ToggleFlowEnabledAsync(flow)" disabled="@_isTogglingFlowEnabled">
+                                        <a class="secondary-button" href="/designer/@flow.Id">Configure</a>
+                                        <button class="secondary-button" @onclick="() => ToggleFlowEnabledAsync(flow)" disabled="@(_isTogglingFlowEnabled || (!flow.Enabled && HasUnresolvedConfig(flow.Id)))" title="@((!flow.Enabled && HasUnresolvedConfig(flow.Id)) ? "Resolve config/secret references before enabling this flow" : null)">
                                             @(flow.Enabled ? "Disable" : "Enable")
                                         </button>
-                                        <button class="run-button" @onclick="() => RunFlowAsync(flow.Id)" disabled="@_isRunningFlow">
+                                        <button class="run-button" @onclick="() => RunFlowAsync(flow.Id)" disabled="@(_isRunningFlow || HasUnresolvedConfig(flow.Id))" title="@(HasUnresolvedConfig(flow.Id) ? "Resolve config/secret references before running this flow" : null)">
                                             Run flow
                                         </button>
                                     </div>
                                 </div>
+                                @{ var unresolvedCount = CountUnresolvedConfig(flow.Id); }
+                                @if (unresolvedCount > 0)
+                                {
+                                    <StatusBanner Compact="true">
+                                        <ErrorContent>
+                                            @unresolvedCount unresolved config/secret reference(s). <a href="/config-values">Resolve on the Config values page</a> before enabling or running this flow.
+                                        </ErrorContent>
+                                    </StatusBanner>
+                                }
                                 <dl class="flow-metadata">
                                     <div>
                                         <dt>Enabled</dt>
@@ -87,16 +98,10 @@
                         }
                     </div>
                 }
-            </article>
+                </ChildContent>
+            </Panel>
 
-            <article class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h2>Runtime module packages</h2>
-                        <p>Packages are hot-discovered or managed at runtime and can be reloaded without restarting the API.</p>
-                    </div>
-                </div>
-
+            <Panel Title="Runtime module packages" Description="Packages are hot-discovered or managed at runtime and can be reloaded without restarting the API.">
                 @if (_packages.Count == 0)
                 {
                     <p>No module packages are loaded.</p>
@@ -135,16 +140,9 @@
                         }
                     </div>
                 }
-            </article>
+            </Panel>
 
-            <article class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h2>Available modules</h2>
-                        <p>All data ingress, orchestration augmentation, and output delivery stay in the module layer.</p>
-                    </div>
-                </div>
-
+            <Panel Title="Available modules" Description="All data ingress, orchestration augmentation, and output delivery stay in the module layer.">
                 @if (_modules.Count == 0)
                 {
                     <p>No modules are registered.</p>
@@ -174,7 +172,7 @@
                         </tbody>
                     </table>
                 }
-            </article>
+            </Panel>
         </section>
     }
 </div>
@@ -183,6 +181,7 @@
     private IReadOnlyList<FlowViewModel> _flows = [];
     private IReadOnlyList<ModuleViewModel> _modules = [];
     private IReadOnlyList<ModulePackageViewModel> _packages = [];
+    private IReadOnlyList<ConfigReferenceUsageViewModel> _configUsages = [];
     private bool _isLoading = true;
     private bool _isRunningFlow;
     private bool _isTogglingFlowEnabled;
@@ -205,6 +204,7 @@
             _flows = await ApiClient.GetFlowsAsync(CancellationToken.None);
             _modules = await ApiClient.GetModulesAsync(CancellationToken.None);
             _packages = await ApiClient.GetModulePackagesAsync(CancellationToken.None);
+            _configUsages = await ApiClient.GetConfigValueUsagesAsync(CancellationToken.None);
         }
         catch (Exception exception)
         {
@@ -286,4 +286,9 @@
     {
         return modules.Count == 0 ? "None" : string.Join(", ", modules);
     }
+
+    private int CountUnresolvedConfig(string flowId)
+        => _configUsages.Count(usage => !usage.IsResolved && string.Equals(usage.FlowId, flowId, StringComparison.OrdinalIgnoreCase));
+
+    private bool HasUnresolvedConfig(string flowId) => CountUnresolvedConfig(flowId) > 0;
 }

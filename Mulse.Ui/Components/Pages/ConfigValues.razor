@@ -17,15 +17,7 @@
         </div>
     </header>
 
-    @if (!string.IsNullOrWhiteSpace(_statusMessage))
-    {
-        <div class="status-banner success">@_statusMessage</div>
-    }
-
-    @if (!string.IsNullOrWhiteSpace(_errorMessage))
-    {
-        <div class="status-banner error">@_errorMessage</div>
-    }
+    <StatusBanner Success="@_statusMessage" Error="@_errorMessage" />
 
     @if (_isLoading)
     {
@@ -33,14 +25,7 @@
     }
     else
     {
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h2>Unresolved references</h2>
-                    <p>These tokens appear in a flow's settings but have no stored value yet. Flows using them will fail to run until you set a value.</p>
-                </div>
-            </div>
-
+        <Panel Title="Unresolved references" Description="These tokens appear in a flow's settings but have no stored value yet. Flows using them will fail to run until you set a value.">
             @if (_unresolvedUsages.Count == 0)
             {
                 <p>No unresolved references. Every {{config:...}}/{{secret:...}} token currently in use across all flows has a stored value.</p>
@@ -75,16 +60,9 @@
                     </tbody>
                 </table>
             }
-        </section>
+        </Panel>
 
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h2>Stored values</h2>
-                    <p>Every config/secret value currently on file. Values are persisted with the rest of the runtime state and benefit from the same optional at-rest encryption.</p>
-                </div>
-            </div>
-
+        <Panel Title="Stored values" Description="Every config/secret value currently on file. Values are persisted with the rest of the runtime state and benefit from the same optional at-rest encryption.">
             @if (_configValues.Count == 0)
             {
                 <p>No config/secret values are stored yet.</p>
@@ -125,16 +103,9 @@
             <div class="action-row">
                 <button class="run-button" @onclick="AddNewAsync" disabled="@_isSaving">Add value</button>
             </div>
-        </section>
+        </Panel>
 
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h2>All reference usages</h2>
-                    <p>Every {{config:...}}/{{secret:...}} token in use across all flows, resolved or not.</p>
-                </div>
-            </div>
-
+        <Panel Title="All reference usages" Description="Every {{config:...}}/{{secret:...}} token in use across all flows, resolved or not.">
             @if (_allUsages.Count == 0)
             {
                 <p>No flow currently references a config/secret token.</p>
@@ -163,7 +134,7 @@
                     </tbody>
                 </table>
             }
-        </section>
+        </Panel>
     }
 </div>
 

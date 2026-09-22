@@ -2,7 +2,7 @@ namespace Mulse.Modules;
 
 public sealed record WorkflowFieldMappingDefinition
 {
-    public WorkflowFieldSourceKind SourceKind { get; init; } = WorkflowFieldSourceKind.Source;
+    public WorkflowFieldSourceKind SourceKind { get; init; } = WorkflowFieldSourceKind.Left;
 
     public string SourcePath { get; init; } = string.Empty;
 
