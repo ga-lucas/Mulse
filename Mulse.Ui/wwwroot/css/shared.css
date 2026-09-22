@@ -1,0 +1,422 @@
+/*
+ * Shared component styles for every Mulse.Ui page. This file is intentionally global (not a
+ * Blazor-scoped .razor.css) because these classes are used both directly in page markup and inside
+ * shared components (Panel, StatusBanner) whose rendered elements don't inherit a page's own CSS
+ * isolation scope. Keeping one definition per class here - instead of copy-pasted blocks in every
+ * page's .razor.css - is what makes this stylesheet the single place to hand-edit the app's look.
+ *
+ * Design tokens live in :root so retheming (colors, spacing, radii) only requires editing one place.
+ */
+
+:root {
+    --surface-panel: rgba(15, 23, 42, 0.72);
+    --surface-card: rgba(30, 41, 59, 0.85);
+    --surface-input: rgba(15, 23, 42, 0.9);
+    --surface-preview: rgba(2, 6, 23, 0.85);
+    --border-subtle: rgba(148, 163, 184, 0.2);
+    --border-faint: rgba(148, 163, 184, 0.15);
+
+    --text-primary: #e2e8f0;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+
+    --accent: #38bdf8;
+    --accent-ink: #082f49;
+    --accent-soft: rgba(56, 189, 248, 0.3);
+    --accent-soft-ink: #e0f2fe;
+
+    --success-bg: rgba(34, 197, 94, 0.15);
+    --success-text: #bbf7d0;
+    --error-bg: rgba(239, 68, 68, 0.15);
+    --error-text: #fecaca;
+    --warning-bg: rgba(250, 204, 21, 0.12);
+    --warning-border: rgba(250, 204, 21, 0.2);
+
+    --radius-lg: 1rem;
+    --radius-md: 0.85rem;
+    --radius-sm: 0.65rem;
+}
+
+/* Page scaffolding: every page wraps its content in .page-shell and opens with a .page-hero banner. */
+.page-shell {
+    display: grid;
+    gap: 1.5rem;
+}
+
+.page-hero {
+    padding: 2rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: var(--surface-panel);
+}
+
+.eyebrow {
+    margin: 0 0 0.75rem;
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.lede {
+    max-width: 62rem;
+    color: var(--text-secondary);
+}
+
+/* Grids used to lay out cards/panels/suggestions across every page. */
+.dashboard-grid,
+.card-grid,
+.summary-grid,
+.settings-grid,
+.suggestion-grid,
+.flow-list {
+    display: grid;
+    gap: 1rem;
+}
+
+.card-grid {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    margin-top: 1rem;
+}
+
+.suggestion-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin-top: 1rem;
+}
+
+.settings-grid {
+    margin-top: 0.75rem;
+}
+
+/* Panel: the generic bordered content card used by Components/Shared/Panel.razor and side panels. */
+.panel {
+    padding: 1.5rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: var(--surface-panel);
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: start;
+}
+
+.panel-header h2,
+.panel-header h3,
+.flow-card h3,
+.flow-card h4 {
+    margin: 0;
+}
+
+.panel-header p,
+.flow-card p,
+.flow-card li,
+.warning-panel li,
+.module-description,
+.panel-hint {
+    color: var(--text-secondary);
+}
+
+.module-description,
+.panel-hint,
+.field-hint {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.field-hint {
+    margin: 0.5rem 0 0;
+}
+
+/* Flow/module cards. */
+.flow-card {
+    padding: 1rem;
+    border-radius: var(--radius-md);
+    background: var(--surface-card);
+    border: 1px solid var(--border-faint);
+}
+
+.flow-card-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: start;
+    margin-bottom: 0.75rem;
+}
+
+.flow-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.flow-metadata,
+.summary-metadata {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
+    margin: 1rem 0;
+}
+
+.flow-metadata dt,
+.summary-metadata dt {
+    margin-bottom: 0.3rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.flow-metadata dd,
+.summary-metadata dd {
+    margin: 0;
+}
+
+.compact-metadata {
+    margin: 1.5rem 0 0;
+}
+
+.source-list {
+    margin: 0.25rem 0 0;
+    padding-left: 1.1rem;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.source-list li {
+    margin-bottom: 0.15rem;
+}
+
+.source-inputs {
+    color: #fbbf24;
+    margin-left: 0.35rem;
+}
+
+.suggestion-list {
+    margin: 0.5rem 0 0;
+    padding-left: 1.1rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.suggestion-list code {
+    color: #7dd3fc;
+}
+
+.test-artifact-badge {
+    display: inline-block;
+    margin-top: 0.35rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 0.5rem;
+    font-size: 0.8rem;
+    color: #fde68a;
+    background: rgba(217, 119, 6, 0.18);
+    border: 1px solid rgba(217, 119, 6, 0.4);
+}
+
+/* Buttons. */
+.run-button,
+.secondary-button {
+    border: 0;
+    border-radius: var(--radius-sm);
+    font-weight: 700;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+
+.run-button {
+    background: var(--accent);
+    color: var(--accent-ink);
+}
+
+.secondary-button {
+    background: rgba(148, 163, 184, 0.2);
+    color: var(--text-primary);
+}
+
+.secondary-button.active {
+    background: var(--accent-soft);
+    color: var(--accent-soft-ink);
+}
+
+.run-button:disabled,
+.secondary-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+/* Status banners (Components/Shared/StatusBanner.razor). */
+.status-banner {
+    padding: 1rem 1.25rem;
+    border-radius: 0.8rem;
+}
+
+.status-banner.success {
+    background: var(--success-bg);
+    color: var(--success-text);
+}
+
+.status-banner.error {
+    background: var(--error-bg);
+    color: var(--error-text);
+}
+
+.status-banner.compact {
+    padding: 0.6rem 0.85rem;
+    margin: 0.5rem 0;
+    font-size: 0.9rem;
+    border-radius: 0.6rem;
+}
+
+.warning-panel {
+    margin-top: 1rem;
+    padding: 1rem;
+    border-radius: var(--radius-md);
+    background: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+}
+
+.warning-panel h3 {
+    margin-top: 0;
+}
+
+/* Tables. */
+.module-table,
+.mapping-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+}
+
+.module-table th,
+.module-table td,
+.mapping-table th,
+.mapping-table td {
+    text-align: left;
+    padding: 0.85rem;
+    border-bottom: 1px solid var(--border-faint);
+    vertical-align: top;
+}
+
+.path-value {
+    word-break: break-all;
+}
+
+.preview-box {
+    max-height: 14rem;
+    overflow: auto;
+    border: 1px solid var(--border-faint);
+    border-radius: var(--radius-md);
+    background: var(--surface-preview);
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.preview-box pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Forms. */
+.field-label {
+    display: block;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.field-label:first-of-type {
+    margin-top: 0;
+}
+
+.selector,
+.mapping-input,
+.sample-textarea {
+    width: 100%;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.75rem;
+    background: var(--surface-input);
+    color: var(--text-primary);
+    padding: 0.75rem 0.9rem;
+}
+
+.sample-textarea {
+    min-height: 10rem;
+    resize: vertical;
+}
+
+.selector.compact {
+    min-width: 8rem;
+}
+
+.setting-row {
+    margin-top: 0.75rem;
+}
+
+.checkbox-row,
+.inline-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.file-meta {
+    display: grid;
+    gap: 0.35rem;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.muted {
+    color: var(--text-muted);
+}
+
+.scaffolded-modules {
+    margin-top: 0.75rem;
+}
+
+@media (max-width: 800px) {
+    .action-row,
+    .flow-card-header,
+    .panel-header {
+        flex-direction: column;
+    }
+
+    .module-table,
+    .module-table thead,
+    .module-table tbody,
+    .module-table tr,
+    .module-table th,
+    .module-table td,
+    .mapping-table,
+    .mapping-table thead,
+    .mapping-table tbody,
+    .mapping-table tr,
+    .mapping-table th,
+    .mapping-table td {
+        display: block;
+    }
+
+    .module-table thead,
+    .mapping-table thead {
+        display: none;
+    }
+
+    .module-table td,
+    .mapping-table td {
+        padding: 0.5rem 0;
+    }
+}

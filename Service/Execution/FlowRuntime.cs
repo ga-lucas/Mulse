@@ -17,7 +17,7 @@ namespace Service.Execution;
 /// out the delay and calling <see cref="ResumeRetryAsync"/>. Because resumption reads the same durable state a
 /// crash would have left behind, this also provides crash/restart recovery for free.
 /// </summary>
-public sealed class FlowRuntime(
+public sealed partial class FlowRuntime(
     IFlowDefinitionService flowDefinitionService,
     IModuleCatalog moduleCatalog,
     IFlowOrchestrationStateStore orchestrationStateStore,
@@ -55,80 +55,6 @@ public sealed class FlowRuntime(
                     resolvedSources: new Dictionary<string, IntegrationBatch>(StringComparer.OrdinalIgnoreCase),
                     resumeSourceId: null, resumeStage: null, resumeInput: null, resumeAttempts: 0,
                     cancellationToken).ConfigureAwait(false);
-            }
-            catch (FlowRetryScheduledSignal signal)
-            {
-                return signal.Result;
-            }
-        }
-        finally
-        {
-            gate.Release();
-        }
-    }
-
-    /// <summary>
-    /// Resumes a previously persisted <see cref="FlowRetryState"/>, either because its delay has elapsed or
-    /// because the service is recovering pending work found on disk after a restart. Returns <c>null</c> (after
-    /// deleting the stale retry entry) if the flow has since been deleted or disabled.
-    /// </summary>
-    public async Task<FlowExecutionResult?> ResumeRetryAsync(FlowRetryState retryState, CancellationToken cancellationToken)
-    {
-        PipelineDefinition pipeline;
-        try
-        {
-            pipeline = GetConfiguredFlow(retryState.FlowId);
-        }
-        catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException)
-        {
-            logger.LogWarning(
-                "Abandoning pending retry for flow {FlowId} execution {ExecutionId} stage {StageId}: {Reason}",
-                retryState.FlowId, retryState.ExecutionId, retryState.StageId, exception.Message);
-            await flowRetryStateStore.DeleteAllForExecutionAsync(retryState.FlowId, retryState.ExecutionId, cancellationToken).ConfigureAwait(false);
-            return null;
-        }
-
-        var gate = _flowLocks.GetOrAdd(pipeline.Id, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var context = new FlowExecutionContext(pipeline.Id, retryState.ExecutionId, retryState.ExecutionStartedAt);
-            var committedAtomicDeliveries = new List<FlowRetryCommittedDelivery>(retryState.CommittedAtomicDeliveries);
-            var inputBatch = RestoreBatch(retryState.InputPayloads);
-
-            try
-            {
-                if (retryState.StageId.StartsWith(SourceStagePrefix, StringComparison.Ordinal))
-                {
-                    var (sourceId, sourceStage) = ParseSourceStageId(retryState.StageId);
-                    var resolvedSources = RestoreResolvedSources(retryState.ResolvedSourcePayloads);
-                    return await RunSourceGraphOnwardAsync(
-                        pipeline, context, retryState.ExecutionStartedAt, resolvedSources,
-                        sourceId, sourceStage, inputBatch, retryState.AttemptsMade,
-                        cancellationToken).ConfigureAwait(false);
-                }
-
-                if (retryState.StageId.StartsWith("augment:", StringComparison.Ordinal))
-                {
-                    var augmentIndex = int.Parse(retryState.StageId["augment:".Length..]);
-                    return await RunAugmentOnwardAsync(pipeline, context, retryState.ExecutionStartedAt, augmentIndex, inputBatch, retryState.AttemptsMade, cancellationToken).ConfigureAwait(false);
-                }
-
-                var parts = retryState.StageId.Split(':');
-                var routeIndex = int.Parse(parts[1]);
-                var postAugmentBatch = RestoreBatch(retryState.PostAugmentPayloads ?? []);
-
-                return string.Equals(parts[2], "render", StringComparison.Ordinal)
-                    ? await RunDeliveryLoopAsync(
-                        pipeline, context, retryState.ExecutionStartedAt, postAugmentBatch, routeIndex,
-                        resumeRenderInput: inputBatch, resumeRenderAttempts: retryState.AttemptsMade,
-                        resumeDeliverInput: null, resumeDeliverAttempts: 0,
-                        committedAtomicDeliveries, cancellationToken).ConfigureAwait(false)
-                    : await RunDeliveryLoopAsync(
-                        pipeline, context, retryState.ExecutionStartedAt, postAugmentBatch, routeIndex,
-                        resumeRenderInput: null, resumeRenderAttempts: 0,
-                        resumeDeliverInput: inputBatch, resumeDeliverAttempts: retryState.AttemptsMade,
-                        committedAtomicDeliveries, cancellationToken).ConfigureAwait(false);
             }
             catch (FlowRetryScheduledSignal signal)
             {
@@ -232,94 +158,6 @@ public sealed class FlowRuntime(
     }
 
     /// <summary>
-    /// Orders a flow's sources so that every source runs after the sources it consumes (Kahn's algorithm).
-    /// Source graphs are validated when a flow is created or updated, but the runtime defends against a stale or
-    /// externally edited definition by failing fast with a clear message.
-    /// </summary>
-    private static IReadOnlyList<SourceDefinition> OrderSourcesTopologically(PipelineDefinition pipeline)
-    {
-        var sourcesById = new Dictionary<string, SourceDefinition>(StringComparer.OrdinalIgnoreCase);
-        foreach (var source in pipeline.Sources)
-        {
-            if (string.IsNullOrWhiteSpace(source.Id))
-            {
-                throw new InvalidOperationException($"Flow '{pipeline.Id}' has a source with no id.");
-            }
-
-            if (!sourcesById.TryAdd(source.Id, source))
-            {
-                throw new InvalidOperationException($"Flow '{pipeline.Id}' declares more than one source with id '{source.Id}'.");
-            }
-        }
-
-        var remainingDependencies = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var source in pipeline.Sources)
-        {
-            var distinctInputs = source.InputSourceIds
-                .Where(static inputId => !string.IsNullOrWhiteSpace(inputId))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-
-            foreach (var inputId in distinctInputs)
-            {
-                if (!sourcesById.ContainsKey(inputId))
-                {
-                    throw new InvalidOperationException(
-                        $"Flow '{pipeline.Id}' source '{source.Id}' references unknown input source '{inputId}'.");
-                }
-
-                if (!dependents.TryGetValue(inputId, out var list))
-                {
-                    list = [];
-                    dependents[inputId] = list;
-                }
-
-                list.Add(source.Id);
-            }
-
-            remainingDependencies[source.Id] = distinctInputs.Length;
-        }
-
-        var ready = new Queue<string>(pipeline.Sources
-            .Where(source => remainingDependencies[source.Id] == 0)
-            .Select(static source => source.Id));
-        var ordered = new List<SourceDefinition>(pipeline.Sources.Count);
-
-        while (ready.Count > 0)
-        {
-            var sourceId = ready.Dequeue();
-            ordered.Add(sourcesById[sourceId]);
-
-            if (!dependents.TryGetValue(sourceId, out var sourceDependents))
-            {
-                continue;
-            }
-
-            foreach (var dependentId in sourceDependents)
-            {
-                if (--remainingDependencies[dependentId] == 0)
-                {
-                    ready.Enqueue(dependentId);
-                }
-            }
-        }
-
-        if (ordered.Count != pipeline.Sources.Count)
-        {
-            var cyclicIds = pipeline.Sources
-                .Select(static source => source.Id)
-                .Where(id => remainingDependencies[id] > 0)
-                .ToArray();
-            throw new InvalidOperationException(
-                $"Flow '{pipeline.Id}' has a cyclic source graph involving: {string.Join(", ", cyclicIds)}.");
-        }
-
-        return ordered;
-    }
-
-    /// <summary>
     /// Stamps every payload leaving a source's parse stage with the id of the source it came from, so downstream
     /// fetch modules (for chained sources) and the join engine can tell the merged payloads apart.
     /// </summary>
@@ -362,18 +200,6 @@ public sealed class FlowRuntime(
         }
 
         return (remainder[..separatorIndex], remainder[(separatorIndex + 1)..]);
-    }
-
-    private static Dictionary<string, IntegrationBatch> RestoreResolvedSources(
-        IReadOnlyDictionary<string, List<FlowOrchestrationPayloadSnapshot>> snapshots)
-    {
-        var resolved = new Dictionary<string, IntegrationBatch>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (sourceId, payloads) in snapshots)
-        {
-            resolved[sourceId] = RestoreBatch(payloads);
-        }
-
-        return resolved;
     }
 
     private async Task<FlowExecutionResult> RunAugmentOnwardAsync(
@@ -625,99 +451,10 @@ public sealed class FlowRuntime(
         return output;
     }
 
-    private static RetryPolicyDefinition EffectiveRetry(PipelineDefinition pipeline, ModuleStepDefinition step)
-        => step.Retry ?? pipeline.Retry ?? RetryPolicyDefinition.NoRetry;
-
-    private static List<FlowOrchestrationPayloadSnapshot> SnapshotBatch(IntegrationBatch batch)
-        => batch.Payloads.Select(payload => new FlowOrchestrationPayloadSnapshot
-        {
-            Name = payload.Name,
-            ContentBase64 = Convert.ToBase64String(payload.Content.ToArray()),
-            ContentType = payload.ContentType,
-            Metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.OrdinalIgnoreCase)
-        }).ToList();
-
-    private static Dictionary<string, List<FlowOrchestrationPayloadSnapshot>> SnapshotResolvedSources(
-        IReadOnlyDictionary<string, IntegrationBatch>? resolvedSources)
-    {
-        var snapshots = new Dictionary<string, List<FlowOrchestrationPayloadSnapshot>>(StringComparer.OrdinalIgnoreCase);
-        if (resolvedSources is null)
-        {
-            return snapshots;
-        }
-
-        foreach (var (sourceId, batch) in resolvedSources)
-        {
-            snapshots[sourceId] = SnapshotBatch(batch);
-        }
-
-        return snapshots;
-    }
-
-    private static IntegrationBatch RestoreBatch(IReadOnlyList<FlowOrchestrationPayloadSnapshot> snapshots)
-        => new(snapshots.Select(snapshot => new IntegrationPayload(
-            snapshot.Name,
-            BinaryData.FromBytes(Convert.FromBase64String(snapshot.ContentBase64)),
-            snapshot.ContentType,
-            new Dictionary<string, string>(snapshot.Metadata, StringComparer.OrdinalIgnoreCase))).ToArray());
-
     private static bool ExpectsResponse(ModuleStepDefinition step)
         => step.Settings.TryGetValue(ExpectsResponseSetting, out var value)
             && bool.TryParse(value, out var expectsResponse)
             && expectsResponse;
-
-    /// <summary>
-    /// Compensates previously committed delivery routes that share the given atomic scope, in reverse
-    /// (last-committed-first) order, mirroring BizTalk orchestration <c>AtomicTransaction</c> scope rollback.
-    /// Uses <see cref="CancellationToken.None"/> so cleanup still runs even if the triggering token is already
-    /// cancelled. A route with no compensation module configured is logged and skipped rather than failing the
-    /// whole rollback; one compensation failure does not stop attempts to compensate the remaining routes.
-    /// </summary>
-    private async Task CompensateAtomicScopeAsync(
-        PipelineDefinition pipeline,
-        FlowExecutionContext context,
-        List<FlowRetryCommittedDelivery> committedAtomicDeliveries,
-        string atomicScope,
-        CancellationToken cancellationToken)
-    {
-        var toCompensate = committedAtomicDeliveries
-            .Where(committed => string.Equals(committed.AtomicScope, atomicScope, StringComparison.Ordinal))
-            .Reverse()
-            .ToArray();
-
-        foreach (var committed in toCompensate)
-        {
-            if (string.IsNullOrWhiteSpace(committed.CompensationModule))
-            {
-                logger.LogWarning(
-                    "Flow {FlowId} execution {ExecutionId} cannot compensate delivery route {RouteIndex} in atomic scope {Scope}: no compensation module is configured for this route.",
-                    pipeline.Id, context.ExecutionId, committed.RouteIndex, atomicScope);
-                continue;
-            }
-
-            try
-            {
-                var compensationStep = new ModuleStepDefinition
-                {
-                    Module = committed.CompensationModule,
-                    Settings = new Dictionary<string, string>(committed.CompensationSettings, StringComparer.OrdinalIgnoreCase)
-                };
-                var deliveredBatch = RestoreBatch(committed.DeliveredPayloads);
-                await using var compensationModule = await moduleCatalog.LeaseDeliverAsync(committed.CompensationModule, CancellationToken.None).ConfigureAwait(false);
-                await compensationModule.Module.DeliverAsync(context, deliveredBatch, compensationStep, CancellationToken.None).ConfigureAwait(false);
-                logger.LogInformation(
-                    "Flow {FlowId} execution {ExecutionId} compensated delivery route {RouteIndex} in atomic scope {Scope} using {CompensationModule}.",
-                    pipeline.Id, context.ExecutionId, committed.RouteIndex, atomicScope, committed.CompensationModule);
-            }
-            catch (Exception compensationException)
-            {
-                logger.LogError(
-                    compensationException,
-                    "Flow {FlowId} execution {ExecutionId} compensation via {CompensationModule} failed for delivery route {RouteIndex} in atomic scope {Scope}.",
-                    pipeline.Id, context.ExecutionId, committed.CompensationModule, committed.RouteIndex, atomicScope);
-            }
-        }
-    }
 
     private static async Task<IntegrationBatch> ProcessConditionalStepAsync(
         IntegrationBatch batch,
@@ -800,11 +537,5 @@ public sealed class FlowRuntime(
         // hand-authored) against the stored config value store. Throws with a clear, actionable message
         // naming every unresolved reference rather than letting a module see a literal placeholder string.
         return configValueResolver.Resolve(pipeline);
-    }
-
-    /// <summary>Control-flow-only signal: a retry was scheduled and persisted, so this is not a genuine failure.</summary>
-    private sealed class FlowRetryScheduledSignal(FlowExecutionResult result) : Exception
-    {
-        public FlowExecutionResult Result { get; } = result;
     }
 }

@@ -312,6 +312,7 @@ internal static class BizTalkOrchestrationDecisionAnalyzer
         }
 
         var rules = new List<DecisionRuleDefinition>();
+        var seenRuleSignatures = new HashSet<string>(StringComparer.Ordinal);
         foreach (var branch in simpleBranches)
         {
             var decisionKey = CreateSlug(branch.DecisionName);
@@ -320,7 +321,7 @@ internal static class BizTalkOrchestrationDecisionAnalyzer
             for (var groupIndex = 0; groupIndex < branch.ConditionGroups.Count; groupIndex++)
             {
                 var suffix = branch.ConditionGroups.Count > 1 ? $"-{groupIndex + 1}" : string.Empty;
-                rules.Add(new DecisionRuleDefinition
+                var rule = new DecisionRuleDefinition
                 {
                     Name = $"{decisionKey}-{branchKey}{suffix}",
                     Conditions = [.. branch.ConditionGroups[groupIndex]],
@@ -334,11 +335,30 @@ internal static class BizTalkOrchestrationDecisionAnalyzer
                             Value = branchKey,
                         },
                     ],
-                });
+                };
+
+                // The same simple condition can legitimately appear in several distinct Decision shapes across
+                // one orchestration (e.g. the same field check repeated per delivery-route branch). Emitting an
+                // identical rule (same conditions + actions) more than once is harmless at evaluation time but
+                // noisy for reviewers, so keep only the first occurrence rather than silently dropping/merging
+                // anything that isn't a byte-for-byte duplicate (which would risk altering real semantics).
+                if (seenRuleSignatures.Add(BuildRuleSignature(rule)))
+                {
+                    rules.Add(rule);
+                }
             }
         }
 
         return rules.Count == 0 ? null : JsonSerializer.Serialize(rules, DecisionJsonOptions);
+    }
+
+    /// <summary>
+    /// Builds a stable signature for a rule's conditions and actions (excluding its generated <c>Name</c>) so
+    /// exact duplicates can be detected regardless of naming.
+    /// </summary>
+    private static string BuildRuleSignature(DecisionRuleDefinition rule)
+    {
+        return JsonSerializer.Serialize(new { rule.Conditions, rule.Actions }, DecisionJsonOptions);
     }
 
     private static string BuildScaffoldModuleSource(

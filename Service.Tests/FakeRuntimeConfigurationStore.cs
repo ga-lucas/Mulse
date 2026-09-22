@@ -28,19 +28,48 @@ internal sealed class FakeRuntimeConfigurationStore(RuntimeMulseState state) : I
         => throw new NotSupportedException();
 
     public Task<RuntimeMulseState> UpsertOrchestrationCheckpointAsync(FlowOrchestrationCheckpoint checkpoint, CancellationToken cancellationToken)
-        => throw new NotSupportedException();
+    {
+        state.OrchestrationCheckpoints.RemoveAll(existing =>
+            string.Equals(existing.FlowId, checkpoint.FlowId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.CorrelationKey, checkpoint.CorrelationKey, StringComparison.OrdinalIgnoreCase));
+        state.OrchestrationCheckpoints.Add(checkpoint);
+        return Task.FromResult(state);
+    }
 
     public Task<RuntimeMulseState> DeleteOrchestrationCheckpointAsync(string flowId, string correlationKey, CancellationToken cancellationToken)
-        => throw new NotSupportedException();
+    {
+        state.OrchestrationCheckpoints.RemoveAll(existing =>
+            string.Equals(existing.FlowId, flowId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.CorrelationKey, correlationKey, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(state);
+    }
 
     public Task<RuntimeMulseState> UpsertRetryStateAsync(FlowRetryState retryState, CancellationToken cancellationToken)
-        => throw new NotSupportedException();
+    {
+        state.PendingRetries.RemoveAll(existing =>
+            string.Equals(existing.FlowId, retryState.FlowId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.ExecutionId, retryState.ExecutionId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.StageId, retryState.StageId, StringComparison.OrdinalIgnoreCase));
+        state.PendingRetries.Add(retryState);
+        return Task.FromResult(state);
+    }
 
     public Task<RuntimeMulseState> DeleteRetryStateAsync(string flowId, string executionId, string stageId, CancellationToken cancellationToken)
-        => throw new NotSupportedException();
+    {
+        state.PendingRetries.RemoveAll(existing =>
+            string.Equals(existing.FlowId, flowId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.ExecutionId, executionId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.StageId, stageId, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(state);
+    }
 
     public Task<RuntimeMulseState> DeleteAllRetryStateForExecutionAsync(string flowId, string executionId, CancellationToken cancellationToken)
-        => throw new NotSupportedException();
+    {
+        state.PendingRetries.RemoveAll(existing =>
+            string.Equals(existing.FlowId, flowId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.ExecutionId, executionId, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(state);
+    }
 
     public Task<RuntimeMulseState> SetConfigValueAsync(string reference, string value, CancellationToken cancellationToken)
         => throw new NotSupportedException();
