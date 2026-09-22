@@ -8,5 +8,9 @@ public sealed class SamplePluginInstaller : IModuleInstaller
     {
         builder.AddOrchestrationAugment<SamplePluginTransformModule>();
         builder.AddOrchestrationAugment<SamplePluginTypedAugmentModule>();
+        builder.AddFetch<SamplePluginTypedFetchModule>();
+        builder.AddParse<SamplePluginTypedParseModule>();
+        builder.AddRender<SamplePluginTypedRenderModule>();
+        builder.AddDeliver<SamplePluginTypedDeliverModule>();
     }
 }

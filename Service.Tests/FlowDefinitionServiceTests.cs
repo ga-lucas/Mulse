@@ -1,4 +1,6 @@
 using Mulse.Modules;
+using Mulse.Modules.Abstractions;
+using Mulse.Modules.Pipeline;
 using Service;
 
 namespace Service.Tests;

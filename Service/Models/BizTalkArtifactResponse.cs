@@ -1,6 +1,8 @@
 namespace Service.Models;
 
 /// <summary>Represents one BizTalk artifact discovered during migration analysis.</summary>
+/// <param name="Kind">The artifact's kind (e.g. schema, map, orchestration, pipeline, binding).</param>
+/// <param name="Name">The artifact's display name (typically its file name without extension).</param>
 /// <param name="RelativePath">Display-friendly path relative to the artifact's own project's scope root.</param>
 /// <param name="FullPath">
 /// The absolute path on disk. Prefer this over recombining <see cref="RelativePath"/> with a caller-provided

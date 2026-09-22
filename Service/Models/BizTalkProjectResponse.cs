@@ -59,7 +59,7 @@ public sealed record BizTalkProjectResponse(
 
     /// <summary>
     /// Best-effort XSLT translation results for this project's BizTalk map (.btm) artifacts. See
-    /// <see cref="Service.BizTalkMapAnalyzer"/>. Empty for projects without map artifacts, or when none of a
+    /// <see cref="Service.BizTalkImport.BizTalkMapAnalyzer"/>. Empty for projects without map artifacts, or when none of a
     /// project's maps could be parsed.
     /// </summary>
     public IReadOnlyList<BizTalkMapAnalysisResponse> MapAnalyses { get; init; } = [];

@@ -3,7 +3,7 @@ namespace Service.Models;
 /// <summary>
 /// Results of analyzing one BizTalk orchestration's (.odx) Decision/DecisionBranch shapes and other
 /// control-flow signals to decide, per branch, whether it can become a declarative <c>decision-augment</c>
-/// rule or needs a scaffolded custom C# module. See <see cref="Service.BizTalkOrchestrationDecisionAnalyzer"/>.
+/// rule or needs a scaffolded custom C# module. See <see cref="Service.BizTalkImport.BizTalkOrchestrationDecisionAnalyzer"/>.
 /// </summary>
 /// <param name="OrchestrationName">The orchestration's file name (without extension).</param>
 /// <param name="GeneratedDecisionJson">
@@ -20,6 +20,8 @@ namespace Service.Models;
 /// Starter C# module source generated when <see cref="ComplexBranches"/> or
 /// <see cref="ComplexControlFlowShapeCounts"/> is non-empty. Null otherwise.
 /// </param>
+/// <param name="ScaffoldedModuleFileName">The suggested file name for <see cref="ScaffoldedModuleSourceCode"/>, when generated. Null otherwise.</param>
+/// <param name="ScaffoldedModuleId">The suggested module id for <see cref="ScaffoldedModuleSourceCode"/>, when generated. Null otherwise.</param>
 public sealed record BizTalkOrchestrationDecisionAnalysisResponse(
     string OrchestrationName,
     string? GeneratedDecisionJson,
