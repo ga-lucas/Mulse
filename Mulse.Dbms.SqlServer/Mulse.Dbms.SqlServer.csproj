@@ -4,6 +4,17 @@
 	<TargetFramework>net10.0</TargetFramework>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<Nullable>enable</Nullable>
+	<!-- Hot-loadable module package: Service does not project-reference this assembly. Instead it builds
+	     directly into Service's plugins directory, where ModuleCatalog auto-discovers and loads it into a
+	     collectible AssemblyLoadContext at runtime (see Service/Modules/ModuleCatalog.cs), matching the
+	     same convention used by Mulse.SamplePlugin. This is what makes it reloadable/unloadable without
+	     restarting the host. -->
+	<OutDir>..\Service\plugins\Mulse.Dbms.SqlServer\</OutDir>
+	<!-- Class library projects don't copy their NuGet package dependencies (Dapper, Microsoft.Data.SqlClient,
+	     and their own transitive deps) to the output folder by default. Force it here so this plugin's
+	     folder is fully self-contained for AssemblyDependencyResolver to resolve at load time, without
+	     relying on a NuGet package cache being present wherever Service is deployed. -->
+	<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>

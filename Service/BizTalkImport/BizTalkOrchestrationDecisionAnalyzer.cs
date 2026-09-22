@@ -46,6 +46,16 @@ internal static class BizTalkOrchestrationDecisionAnalyzer
         """^(?<path>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)\s*(?<op>==|!=)\s*(?<literal>null|true|false|"(?:[^"\\]|\\.)*")$""",
         RegexOptions.Compiled);
 
+    /// <summary>
+    /// Matches a standalone <c>Regex.IsMatch(path, "pattern")</c> conjunct (optionally with a trailing
+    /// <c>RegexOptions.*</c> argument), e.g. <c>Regex.IsMatch(msgBilling.AccountId, "^\d{6}$")</c>. This is the
+    /// one method-call shape allowed through the otherwise-conservative "no parens" bail-out, since it maps
+    /// cleanly onto the existing <see cref="DecisionComparisonOperator.RegexMatch"/> rule operator.
+    /// </summary>
+    private static readonly Regex RegexIsMatchPattern = new(
+        """^!?Regex\.IsMatch\(\s*(?<path>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)\s*,\s*"(?<pattern>(?:[^"\\]|\\.)*)"\s*(?:,\s*RegexOptions\.[A-Za-z]+(?:\s*\|\s*RegexOptions\.[A-Za-z]+)*\s*)?\)$""",
+        RegexOptions.Compiled);
+
     private static readonly JsonSerializerOptions DecisionJsonOptions = CreateDecisionJsonOptions();
 
     /// <summary>
@@ -220,12 +230,12 @@ internal static class BizTalkOrchestrationDecisionAnalyzer
             return (false, []);
         }
 
-        // Conservative bail-out: method calls/grouping, relational/arithmetic operators, assignment, static
-        // member access, and increment/decrement all indicate logic beyond a simple field comparison.
-        if (normalized.Contains('(') || normalized.Contains(')')
-            || Regex.IsMatch(normalized, "[<>]=?")
+        // Conservative bail-out: relational/arithmetic operators, assignment, static member access (other than
+        // the one allowed "Regex.IsMatch(...)" call shape handled per-conjunct below), and increment/decrement
+        // all indicate logic beyond a simple field comparison.
+        if (Regex.IsMatch(normalized, "[<>]=?")
             || Regex.IsMatch(normalized, @"(?<![=!<>])=(?!=)")
-            || normalized.Contains("System.", StringComparison.Ordinal)
+            || (normalized.Contains("System.", StringComparison.Ordinal) && !normalized.Contains("Regex.IsMatch", StringComparison.Ordinal))
             || normalized.Contains("++", StringComparison.Ordinal)
             || normalized.Contains("--", StringComparison.Ordinal))
         {
@@ -266,6 +276,32 @@ internal static class BizTalkOrchestrationDecisionAnalyzer
 
     private static DecisionConditionDefinition? ClassifyConjunct(string conjunct)
     {
+        var regexMatch = RegexIsMatchPattern.Match(conjunct);
+        if (regexMatch.Success)
+        {
+            // A leading "!" negates the whole call (Regex.IsMatch returning false should pass the branch).
+            // There's no "NotRegexMatch" operator today, so bail rather than silently invert the semantics.
+            if (conjunct.TrimStart().StartsWith('!'))
+            {
+                return null;
+            }
+
+            var regexPath = regexMatch.Groups["path"].Value;
+            var regexDotIndex = regexPath.IndexOf('.');
+            if (regexDotIndex < 0)
+            {
+                return null;
+            }
+
+            return new DecisionConditionDefinition
+            {
+                Source = DecisionValueSourceKind.Payload,
+                Path = "$." + regexPath[(regexDotIndex + 1)..],
+                Operator = DecisionComparisonOperator.RegexMatch,
+                Value = regexMatch.Groups["pattern"].Value,
+            };
+        }
+
         var match = ConjunctPattern.Match(conjunct);
         if (!match.Success)
         {

@@ -16,4 +16,15 @@ public sealed record BizTalkMapAnalysisResponse(
     int FunctoidInvolvedLinkCount,
     string? ScaffoldedModuleFileName,
     string? ScaffoldedModuleId,
-    string? GeneratedXsltSourceCode);
+    string? GeneratedXsltSourceCode)
+{
+    /// <summary>
+    /// Number of functoid instances found in the map, grouped by their numeric <c>Functoid-FID</c> type
+    /// identifier (e.g. <c>{424: 1, 474: 1}</c>). Reported instead of guessed at because there is no
+    /// authoritative, verifiable FID-to-functoid-name table bundled with this importer - misidentifying a
+    /// functoid (e.g. a scalar string transform vs. a structural looping/record functoid) could silently
+    /// produce a wrong translation, which is worse than not translating it. Look up each FID by opening the
+    /// original .btm map in BizTalk Mapper and checking the corresponding functoid's Properties dialog.
+    /// </summary>
+    public IReadOnlyDictionary<int, int> FunctoidFidCounts { get; init; } = new Dictionary<int, int>();
+}

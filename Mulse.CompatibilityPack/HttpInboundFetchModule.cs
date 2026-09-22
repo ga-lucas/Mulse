@@ -68,6 +68,7 @@ public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogge
     {
         private readonly ConcurrentQueue<HttpInboundRequest> _pending = new();
         private readonly ConcurrentDictionary<Guid, PushFlowTriggerContext> _subscriptions = new();
+        private readonly ConcurrentDictionary<string, TaskCompletionSource<HttpInboundReply>> _pendingReplies = new(StringComparer.Ordinal);
         private readonly string _routeKey;
         private readonly ILogger _logger;
         private IDisposable? _hostRegistration;
@@ -95,6 +96,43 @@ public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogge
             }
         }
 
+        public async Task<HttpInboundReply?> EnqueueAndAwaitReplyAsync(HttpInboundRequest request, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            var completionSource = new TaskCompletionSource<HttpInboundReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!_pendingReplies.TryAdd(request.CorrelationId, completionSource))
+            {
+                throw new InvalidOperationException($"A reply is already pending for correlation '{request.CorrelationId}'.");
+            }
+
+            try
+            {
+                Enqueue(request);
+
+                try
+                {
+                    return await completionSource.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    return null;
+                }
+            }
+            finally
+            {
+                _pendingReplies.TryRemove(request.CorrelationId, out _);
+            }
+        }
+
+        public bool TryCompleteReply(string correlationId, HttpInboundReply reply)
+        {
+            if (_pendingReplies.TryGetValue(correlationId, out var completionSource))
+            {
+                return completionSource.TrySetResult(reply);
+            }
+
+            return false;
+        }
+
         public IReadOnlyList<IntegrationPayload> DequeueReady(FlowExecutionContext context)
         {
             var payloads = new List<IntegrationPayload>();
@@ -105,7 +143,8 @@ public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogge
                     ["flowId"] = context.FlowId,
                     ["executionId"] = context.ExecutionId,
                     ["route"] = _routeKey,
-                    ["httpMethod"] = request.Method
+                    ["httpMethod"] = request.Method,
+                    ["correlationId"] = request.CorrelationId
                 };
 
                 foreach (var header in request.Headers)

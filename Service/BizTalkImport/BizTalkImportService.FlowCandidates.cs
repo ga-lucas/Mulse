@@ -60,23 +60,24 @@ public sealed partial class BizTalkImportService
             .Select(project => project.Response.Name)
             .ToArray();
         var projectDirectory = Path.GetDirectoryName(projectPath) ?? rootDirectory;
-        var sourceFileNames = document.Descendants()
+        var compileIncludePaths = document.Descendants()
             .Where(static element => string.Equals(element.Name.LocalName, "Compile", StringComparison.Ordinal))
             .Select(static element => element.Attribute("Include")?.Value)
             .Where(static value => !string.IsNullOrWhiteSpace(value) && value!.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-            .Select(static value => Path.GetFileName(value!))
+            .Select(value => Path.GetFullPath(Path.Combine(projectDirectory, value!.Replace('\\', Path.DirectorySeparatorChar))))
             .ToArray();
+        var sourceFileNames = compileIncludePaths.Select(static path => Path.GetFileName(path)).ToArray();
 
         if (sourceFileNames.Length == 0 && Directory.Exists(projectDirectory))
         {
-            sourceFileNames = Directory.EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories)
-                .Select(static path => Path.GetFileName(path))
-                .ToArray();
+            compileIncludePaths = Directory.EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories).ToArray();
+            sourceFileNames = compileIncludePaths.Select(static path => Path.GetFileName(path)).ToArray();
         }
 
         var classificationContext = new BizTalkAssemblyClassificationContext(assemblyName, projectPath, sourceFileNames);
         var suggestedModuleKind = ClassifyAssembly(assemblyKindClassifiers, classificationContext);
         var migrationApproach = CreateMigrationApproach(suggestedModuleKind, assemblyName);
+        var promotedProperties = BizTalkPromotedPropertyAnalyzer.Analyze(compileIncludePaths);
 
         return new BizTalkCustomAssemblyResponse(
             assemblyName,
@@ -85,7 +86,10 @@ public sealed partial class BizTalkImportService
             suggestedModuleKind,
             migrationApproach,
             false,
-            usedByProjects);
+            usedByProjects)
+        {
+            PromotedProperties = promotedProperties
+        };
     }
 
     /// <summary>
@@ -212,7 +216,7 @@ public sealed partial class BizTalkImportService
         }
         else if (relatedBindings.Any(static binding => binding.SendPorts.Any(static sendPort => sendPort.IsTwoWay) || binding.ReceivePorts.Any(static receivePort => receivePort.IsTwoWay)))
         {
-            openQuestions.Add("This project uses two-way (solicit-response) WCF ports. Mulse's fetch/deliver module contracts are currently one-way - decide whether to add a response-capturing module, model the reply as a separate inbound flow, or keep this route in a temporary wrapper during cutover.");
+            openQuestions.Add("This project uses two-way (solicit-response) WCF ports. Outbound (send-port) replies are already captured automatically via 'expectsResponse' and surfaced through /api/flows/{flowId}/run's ResponsePayloads. Inbound (receive-port) replies are supported only when the fetch module resolves to http-inbound-fetch, by pairing it with an http-inbound-reply-deliver step and having the caller use ?awaitResponseSeconds=N - decide whether that applies here, or whether the port instead needs a temporary wrapper during cutover.");
         }
 
         var requirements = new List<BizTalkSettingRequirementResponse>();

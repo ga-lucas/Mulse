@@ -39,6 +39,13 @@ public sealed class ModuleCatalog : IModuleCatalog
             sourceFileLastWriteTimeUtc: File.Exists(builtInAssemblyPath)
                 ? File.GetLastWriteTimeUtc(builtInAssemblyPath)
                 : DateTime.UtcNow);
+
+        // CompatibilityPack is wired in as a project-referenced built-in (like builtin.core above) rather
+        // than a hot-loadable plugin, since it isn't expected to change independently of the host. It would
+        // be straightforward to convert it to a hot-loadable plugin the same way Mulse.Hl7 and
+        // Mulse.Dbms.SqlServer are (see those projects' <OutDir> and the plugins/ directory convention
+        // below) if that's ever needed: remove the ProjectReference from Service.csproj, add an <OutDir>
+        // pointing at Service/plugins/Mulse.CompatibilityPack/ to its csproj, and delete this registration.
         var compatibilityAssemblyPath = typeof(Mulse.CompatibilityPack.CompatibilityPackInstaller).Assembly.Location;
         var compatibilityPackage = CreatePackageFromInstaller(
             packageId: "builtin.compatibility",
@@ -49,31 +56,17 @@ public sealed class ModuleCatalog : IModuleCatalog
             sourceFileLastWriteTimeUtc: File.Exists(compatibilityAssemblyPath)
                 ? File.GetLastWriteTimeUtc(compatibilityAssemblyPath)
                 : DateTime.UtcNow);
-        var hl7AssemblyPath = typeof(Mulse.Hl7.Hl7ModuleInstaller).Assembly.Location;
-        var hl7Package = CreatePackageFromInstaller(
-            packageId: "builtin.hl7",
-            sourceKind: RuntimePackageSourceKind.BuiltIn,
-            sourceAssemblyPath: hl7AssemblyPath,
-            installerFactory: static () => [new Mulse.Hl7.Hl7ModuleInstaller()],
-            loadContext: null,
-            sourceFileLastWriteTimeUtc: File.Exists(hl7AssemblyPath)
-                ? File.GetLastWriteTimeUtc(hl7AssemblyPath)
-                : DateTime.UtcNow);
-        var sqlServerAssemblyPath = typeof(Mulse.Dbms.SqlServer.SqlServerModuleInstaller).Assembly.Location;
-        var sqlServerPackage = CreatePackageFromInstaller(
-            packageId: "builtin.dbms.sqlserver",
-            sourceKind: RuntimePackageSourceKind.BuiltIn,
-            sourceAssemblyPath: sqlServerAssemblyPath,
-            installerFactory: static () => [new Mulse.Dbms.SqlServer.SqlServerModuleInstaller()],
-            loadContext: null,
-            sourceFileLastWriteTimeUtc: File.Exists(sqlServerAssemblyPath)
-                ? File.GetLastWriteTimeUtc(sqlServerAssemblyPath)
-                : DateTime.UtcNow);
 
         AddOrReplacePackage(builtInPackage, replaceExisting: true, previousPackage: out _);
         AddOrReplacePackage(compatibilityPackage, replaceExisting: true, previousPackage: out _);
-        AddOrReplacePackage(hl7Package, replaceExisting: true, previousPackage: out _);
-        AddOrReplacePackage(sqlServerPackage, replaceExisting: true, previousPackage: out _);
+
+        // Mulse.Hl7 and Mulse.Dbms.SqlServer are NOT project-referenced by Service; they build directly into
+        // Service/plugins/<AssemblyName>/ (see their csproj <OutDir>) and are picked up by the auto-discovery
+        // pass in SynchronizeAsync -> DiscoverAutoPackages, which loads them into a collectible
+        // AssemblyLoadContext via CreatePackageFromAssembly. That's what allows them to be reloaded/unloaded
+        // (e.g. after redeploying an updated build) without restarting the host, unlike the BuiltIn packages
+        // registered above. The first SynchronizeAsync call (triggered by ModuleSynchronizationService at
+        // startup) loads them; nothing further is required here.
     }
 
     public IReadOnlyList<ModuleCatalogEntry> GetAll()
@@ -179,7 +172,17 @@ public sealed class ModuleCatalog : IModuleCatalog
                     continue;
                 }
 
-                await LoadOrReloadPackageAsync(autoPackage.Id, autoPackage.AssemblyPath, RuntimePackageSourceKind.AutoDiscovered, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await LoadOrReloadPackageAsync(autoPackage.Id, autoPackage.AssemblyPath, RuntimePackageSourceKind.AutoDiscovered, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    // An auto-discovered candidate isn't necessarily a real module package (e.g. it failed to
+                    // load, or is a plain library with no IModuleInstaller). Log and continue so one bad
+                    // assembly under a plugin directory can't block every other package from loading.
+                    _logger.LogWarning(exception, "Skipping auto-discovered package {PackageId} at {AssemblyPath}: it could not be loaded.", autoPackage.Id, autoPackage.AssemblyPath);
+                }
             }
 
             var discoveredIds = autoDiscoveredPackages.Select(static package => package.Id)
@@ -307,7 +310,37 @@ public sealed class ModuleCatalog : IModuleCatalog
                 continue;
             }
 
-            foreach (var assemblyPath in Directory.EnumerateFiles(fullDirectory, "*.dll", SearchOption.AllDirectories)
+            // Each immediate subdirectory is treated as one plugin package, whose main assembly is expected
+            // to share the subdirectory's name - this matches every module project's <OutDir> convention
+            // (e.g. plugins/Mulse.Hl7/Mulse.Hl7.dll, plugins/Mulse.Dbms.SqlServer/Mulse.Dbms.SqlServer.dll).
+            // Scoping discovery this way (rather than scanning every *.dll recursively) avoids misidentifying
+            // a plugin's own copied dependency assemblies (Dapper.dll, Microsoft.Data.SqlClient.dll, etc.) as
+            // separate packages in their own right.
+            foreach (var pluginDirectory in Directory.EnumerateDirectories(fullDirectory))
+            {
+                var packageId = Path.GetFileName(pluginDirectory);
+                if (string.Equals(packageId, "Mulse.Modules", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var mainAssemblyPath = Path.Combine(pluginDirectory, packageId + ".dll");
+                if (!File.Exists(mainAssemblyPath))
+                {
+                    continue;
+                }
+
+                discoveredPackages.TryAdd(packageId, new ManagedModulePackageDefinition
+                {
+                    Id = packageId,
+                    AssemblyPath = mainAssemblyPath,
+                    Enabled = true
+                });
+            }
+
+            // Also support a bare .dll dropped directly under the configured directory (no subfolder),
+            // preserving the original flat-file discovery behavior for that layout.
+            foreach (var assemblyPath in Directory.EnumerateFiles(fullDirectory, "*.dll", SearchOption.TopDirectoryOnly)
                 .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase))
             {
                 var packageId = Path.GetFileNameWithoutExtension(assemblyPath);

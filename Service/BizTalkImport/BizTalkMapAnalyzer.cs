@@ -72,6 +72,13 @@ internal static class BizTalkMapAnalyzer
             var directCount = 0;
             var functoidCount = 0;
 
+            var functoidFidCounts = document.Descendants()
+                .Where(static e => string.Equals(e.Name.LocalName, "Functoid", StringComparison.Ordinal))
+                .Select(static e => e.Attribute("Functoid-FID")?.Value)
+                .Where(static fid => !string.IsNullOrWhiteSpace(fid) && int.TryParse(fid, out _))
+                .GroupBy(static fid => int.Parse(fid!))
+                .ToDictionary(static group => group.Key, static group => group.Count());
+
             var links = document.Descendants().Where(static e => string.Equals(e.Name.LocalName, "Link", StringComparison.Ordinal));
             foreach (var link in links)
             {
@@ -108,14 +115,20 @@ internal static class BizTalkMapAnalyzer
             if (directCount == 0 && constantCount == 0)
             {
                 // Nothing translatable (e.g. a purely functoid-driven map) - an empty stylesheet wouldn't help.
-                return new BizTalkMapAnalysisResponse(mapName, mapFilePath, sourceSchemaRef, targetSchemaRef, 0, 0, functoidCount, null, null, null);
+                return new BizTalkMapAnalysisResponse(mapName, mapFilePath, sourceSchemaRef, targetSchemaRef, 0, 0, functoidCount, null, null, null)
+                {
+                    FunctoidFidCounts = functoidFidCounts
+                };
             }
 
-            var xslt = GenerateXslt(mapName, sourceSchemaRef, targetSchemaRef, targetRootName, rootNode, directCount, constantCount, functoidCount);
+            var xslt = GenerateXslt(mapName, sourceSchemaRef, targetSchemaRef, targetRootName, rootNode, directCount, constantCount, functoidCount, functoidFidCounts);
             var fileName = $"{SanitizeFileNameSegment(mapName)}.xslt";
             var moduleId = $"migrated-map-{CreateSlug(mapName)}";
 
-            return new BizTalkMapAnalysisResponse(mapName, mapFilePath, sourceSchemaRef, targetSchemaRef, directCount, constantCount, functoidCount, fileName, moduleId, xslt);
+            return new BizTalkMapAnalysisResponse(mapName, mapFilePath, sourceSchemaRef, targetSchemaRef, directCount, constantCount, functoidCount, fileName, moduleId, xslt)
+            {
+                FunctoidFidCounts = functoidFidCounts
+            };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Xml.XmlException)
         {
@@ -229,7 +242,8 @@ internal static class BizTalkMapAnalyzer
         MapTargetNode rootNode,
         int directCount,
         int constantCount,
-        int functoidCount)
+        int functoidCount,
+        IReadOnlyDictionary<int, int> functoidFidCounts)
     {
         var targetElement = RenderElement(targetRootElementName, rootNode);
         var stylesheet = new XElement(
@@ -248,6 +262,11 @@ internal static class BizTalkMapAnalyzer
         if (functoidCount > 0)
         {
             header.AppendLine($"  TODO: {functoidCount} link(s)/value(s) reference BizTalk functoids (transformation logic, e.g. string/math/looping functoids) and could NOT be translated - they are omitted here. Re-add the missing target field(s) by hand, using the original .btm map (opened in a BizTalk Mapper-compatible tool) as reference.");
+            if (functoidFidCounts.Count > 0)
+            {
+                var fidBreakdown = string.Join(", ", functoidFidCounts.OrderBy(static pair => pair.Key).Select(static pair => $"FID {pair.Key} x{pair.Value}"));
+                header.AppendLine($"  TODO: Functoid type IDs involved: {fidBreakdown}. Open the original .btm in BizTalk Mapper and check each functoid's Properties dialog to identify its real type (there is no verified FID-to-name table safe to guess from here).");
+            }
         }
 
         header.AppendLine("  TODO: BizTalk map links ignore namespaces (IgnoreNamespacesForLinks=\"Yes\"), so every element below is generated without a namespace. If the target schema is namespace-qualified, add the correct xmlns declaration(s) before using this in production.");

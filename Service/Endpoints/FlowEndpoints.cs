@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using Mulse.Modules;
+using Mulse.Modules.Payloads;
 using Service.Models;
 
 namespace Service.Endpoints;
@@ -103,11 +104,12 @@ public static class FlowEndpoints
                     result.DeliverModules,
                     result.ResponsePayloads?.Count ?? 0,
                     result.Outcome.ToString(),
-                    result.NextAttemptAt));
+                    result.NextAttemptAt,
+                    ToResponsePayloads(result.ResponsePayloads)));
             })
             .WithName("RunFlow")
             .WithSummary("Run a configured flow")
-            .WithDescription("Executes a configured flow immediately, regardless of whether it is usually interval-driven.")
+            .WithDescription("Executes a configured flow immediately, regardless of whether it is usually interval-driven. If a delivery route uses a request-response deliver module (for example an HTTP deliver module calling a synchronous endpoint), the captured reply content is included in the response so a caller of this API can act as a two-way (request-response) trigger for the flow.")
             .WithTags("Flows")
             .Produces<FlowRunResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -118,4 +120,12 @@ public static class FlowEndpoints
         return app;
     }
 
-    }
+    private static IReadOnlyList<FlowRunResponsePayload>? ToResponsePayloads(IReadOnlyList<IntegrationPayload>? payloads)
+        => payloads is null || payloads.Count == 0
+            ? null
+            : payloads.Select(payload => new FlowRunResponsePayload(
+                payload.Name,
+                payload.ContentType,
+                Convert.ToBase64String(payload.Content.ToArray()),
+                payload.Metadata)).ToArray();
+}

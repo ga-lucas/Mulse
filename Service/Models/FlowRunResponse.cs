@@ -9,4 +9,16 @@ public sealed record FlowRunResponse(
     IReadOnlyList<string> DeliverModules,
     int ResponsePayloadCount = 0,
     string Outcome = "Completed",
-    DateTimeOffset? NextAttemptAt = null);
+    DateTimeOffset? NextAttemptAt = null,
+    IReadOnlyList<FlowRunResponsePayload>? ResponsePayloads = null);
+
+/// <summary>
+/// A single response payload captured from a request-response deliver module (see
+/// <c>IRequestResponseDeliverModule</c>), surfaced to callers of the "run flow" API so a
+/// synchronous caller can actually read the reply instead of only learning how many were captured.
+/// </summary>
+public sealed record FlowRunResponsePayload(
+    string Name,
+    string ContentType,
+    string ContentBase64,
+    IReadOnlyDictionary<string, string> Metadata);

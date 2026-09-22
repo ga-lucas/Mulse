@@ -9,6 +9,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutDir>..\Service\plugins\Mulse.SamplePlugin\</OutDir>
+    <!-- See Mulse.Dbms.SqlServer.csproj: forces this plugin's own NuGet dependencies (if any are added
+         later) to be copied locally so the plugins/ folder stays self-contained. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
 </Project>

@@ -19,5 +19,6 @@ public sealed class CompatibilityPackInstaller : IModuleInstaller
         builder.AddRender<SoapEnvelopeRenderModule>();
         builder.AddDeliver<DocumentRepositoryStoreModule>();
         builder.AddDeliver<SmtpEmailDeliverModule>();
+        builder.AddDeliver<HttpInboundReplyDeliverModule>();
     }
 }

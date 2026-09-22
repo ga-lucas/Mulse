@@ -66,5 +66,10 @@ public sealed class HttpInboundRegistryTests
     private sealed class FakeHttpInboundRoute : IHttpInboundRoute
     {
         public void Enqueue(HttpInboundRequest request) => throw new NotSupportedException();
+
+        public Task<HttpInboundReply?> EnqueueAndAwaitReplyAsync(HttpInboundRequest request, TimeSpan timeout, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public bool TryCompleteReply(string correlationId, HttpInboundReply reply) => throw new NotSupportedException();
     }
 }

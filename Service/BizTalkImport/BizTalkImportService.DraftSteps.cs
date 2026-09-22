@@ -45,7 +45,15 @@ public sealed partial class BizTalkImportService
                 ["expectsResponse"] = "true"
             };
             fetchStep = fetchStep with { Settings = twoWaySettings };
-            draftWarnings.Add($"Receive port '{portLocation.Port.Name}' is a two-way (request-response) service. Mulse's fetch modules are currently fire-and-forget, so this draft cannot yet return a synchronous reply to the caller - plan a response-capable fetch module (or an inline synchronous augment) before enabling this flow.");
+
+            if (string.Equals(fetchStep.Module, "http-inbound-fetch", StringComparison.OrdinalIgnoreCase))
+            {
+                draftWarnings.Add($"Receive port '{portLocation.Port.Name}' is a two-way (request-response) service. Add an 'http-inbound-reply-deliver' step at the end of this flow's route with the same route setting ('{fetchStep.Settings["route"]}'), and have the original caller send ?awaitResponseSeconds=N to /api/inbound/{fetchStep.Settings["route"]} to receive a synchronous reply, before enabling this flow.");
+            }
+            else
+            {
+                draftWarnings.Add($"Receive port '{portLocation.Port.Name}' is a two-way (request-response) service over a non-HTTP transport. Mulse's synchronous reply support currently only covers the http-inbound-fetch / http-inbound-reply-deliver pairing - repoint this receive location to an HTTP/WCF listener during cutover, or accept fire-and-forget semantics, before enabling this flow.");
+            }
         }
 
         return fetchStep;
@@ -100,18 +108,33 @@ public sealed partial class BizTalkImportService
     {
         var augments = new List<BizTalkDraftStepResponse>();
 
-        var needsPromotion = relatedAssemblies.Any(assembly => assembly.Name.Contains("promot", StringComparison.OrdinalIgnoreCase)
-            || assembly.Name.Contains("routing", StringComparison.OrdinalIgnoreCase)
-            || assembly.Name.Contains("property", StringComparison.OrdinalIgnoreCase));
+        var extractedPromotedProperties = relatedAssemblies
+            .SelectMany(static assembly => assembly.PromotedProperties)
+            .ToArray();
+        var needsPromotion = extractedPromotedProperties.Length > 0
+            || relatedAssemblies.Any(assembly => assembly.Name.Contains("promot", StringComparison.OrdinalIgnoreCase)
+                || assembly.Name.Contains("routing", StringComparison.OrdinalIgnoreCase)
+                || assembly.Name.Contains("property", StringComparison.OrdinalIgnoreCase));
         if (needsPromotion)
         {
+            var promotionsJson = BizTalkPromotedPropertyAnalyzer.BuildPromotionsJson(extractedPromotedProperties)
+                ?? "[{\"metadataKey\":\"documentType\",\"selector\":\"$.documentType\"}]";
             augments.Add(new BizTalkDraftStepResponse(
                 "metadata-promotion-augment",
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    ["promotionsJson"] = "[{\"metadataKey\":\"documentType\",\"selector\":\"$.documentType\"}]"
+                    ["promotionsJson"] = promotionsJson
                 }));
-            draftWarnings.Add("Metadata promotion was preloaded from custom assembly heuristics. Review JSONPath or XPath selectors before using the imported flow.");
+
+            if (extractedPromotedProperties.Length > 0)
+            {
+                var propertyNames = string.Join(", ", extractedPromotedProperties.Select(static property => property.PropertyName).Distinct(StringComparer.OrdinalIgnoreCase));
+                draftWarnings.Add($"Metadata promotion was preloaded with {extractedPromotedProperties.Length} propert{(extractedPromotedProperties.Length == 1 ? "y" : "ies")} extracted from custom pipeline component source ({propertyNames}). Each entry's selector is a TODO placeholder - fill in the real JSONPath/XPath once the payload shape is known, before enabling the flow.");
+            }
+            else
+            {
+                draftWarnings.Add("Metadata promotion was preloaded from custom assembly heuristics. Review JSONPath or XPath selectors before using the imported flow.");
+            }
         }
 
         if (deliveryRouteCount > 1)
@@ -314,7 +337,7 @@ public sealed partial class BizTalkImportService
                 ["expectsResponse"] = "true"
             };
             deliverSettings = deliverSettings with { Settings = twoWaySettings };
-            draftWarnings.Add($"Send port '{sendPort.Name}' is a two-way (solicit-response) WCF port. Mulse's deliver modules are currently fire-and-forget, so the synchronous reply from '{sendPort.Address}' is not captured yet - plan a response-capturing deliver module (or a follow-up augment step) before enabling this route.");
+            draftWarnings.Add($"Send port '{sendPort.Name}' is a two-way (solicit-response) WCF port. The deliver step was flagged with 'expectsResponse=true', so the runtime will capture the synchronous reply from '{sendPort.Address}' and surface it via /api/flows/{{flowId}}/run's ResponsePayloads - no further action needed unless you also need the reply routed somewhere other than the run response.");
         }
 
         if (routeIndex > 0)
