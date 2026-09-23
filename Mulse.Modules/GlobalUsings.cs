@@ -7,6 +7,7 @@ global using Mulse.Modules.BuiltIn;
 global using Mulse.Modules.BuiltIn.Augment;
 global using Mulse.Modules.BuiltIn.Deliver;
 global using Mulse.Modules.BuiltIn.Fetch;
+global using Mulse.Modules.BuiltIn.FlowLink;
 global using Mulse.Modules.BuiltIn.Parse;
 global using Mulse.Modules.BuiltIn.Render;
 global using Mulse.Modules.Decisions;

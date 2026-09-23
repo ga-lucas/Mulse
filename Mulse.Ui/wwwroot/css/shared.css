@@ -420,3 +420,17 @@
         padding: 0.5rem 0;
     }
 }
+
+/* Toolbox drag-ghost element (Designer page): appended directly to document.body by flow-canvas.js,
+   so it lives outside any component's CSS-isolation scope and must be styled globally here instead. */
+.toolbox-ghost {
+    position: fixed;
+    z-index: 999;
+    padding: 0.3rem 0.6rem;
+    border-radius: 0.5rem;
+    background: rgba(56, 189, 248, 0.9);
+    color: #04101f;
+    font-size: 0.8rem;
+    font-weight: 700;
+    pointer-events: none;
+}

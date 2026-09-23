@@ -6,6 +6,7 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
     {
         builder.AddFetch<FileSystemFetchModule>();
         builder.AddFetch<SftpFetchModule>();
+        builder.AddFetch<FlowLinkFetchModule>();
         builder.AddParse<JsonParseModule>();
         builder.AddOrchestrationAugment<JsonEnvelopeAugmentTransformModule>();
         builder.AddOrchestrationAugment<DecisionAugmentModule>();
@@ -17,5 +18,6 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
         builder.AddDeliver<LoggingDeliverModule>();
         builder.AddDeliver<FileSystemDeliverModule>();
         builder.AddDeliver<HttpDeliverModule>();
+        builder.AddDeliver<FlowLinkDeliverModule>();
     }
 }

@@ -6,5 +6,6 @@ public enum ModuleProtocol
     Sftp,
     SqlServer,
     Http,
-    Plugin
+    Plugin,
+    Internal
 }

@@ -47,6 +47,25 @@ public partial class Designer
         _statusMessage = $"Added source '{lane.Id}'. Pick its fetch and parse modules, and wire its inputs if it depends on another source.";
     }
 
+    /// <summary>Same as <see cref="AddSourceLane"/>, but places the lane at an explicit drop position (from a toolbox drag) instead of running <see cref="AutoLayout"/>.</summary>
+    private void AddSourceLaneAt(double x, double y)
+    {
+        var fetchModule = ModulesForStage(NodeStage.Fetch).FirstOrDefault();
+        var parseModule = ModulesForStage(NodeStage.Parse).FirstOrDefault();
+
+        var lane = CreateSourceLane(NextSourceId(), fetchModule?.Id ?? string.Empty, null, parseModule?.Id ?? string.Empty, null, null);
+        ApplyModuleDefaults(lane.Fetch, fetchModule);
+        ApplyModuleDefaults(lane.Parse, parseModule);
+
+        lane.Fetch.X = x;
+        lane.Fetch.Y = y;
+        lane.Parse.X = x + ColumnSpacing;
+        lane.Parse.Y = y;
+
+        _selectedNodeId = lane.Fetch.Id;
+        _statusMessage = $"Added source '{lane.Id}'. Pick its fetch and parse modules, and wire its inputs if it depends on another source.";
+    }
+
     private void RemoveSourceLane(SourceLane lane)
     {
         _nodes.Remove(lane.Fetch);
@@ -261,6 +280,46 @@ public partial class Designer
         _statusMessage = "Added a multi-source join and map augment. Configure its join keys and field mappings in the node details panel.";
     }
 
+    /// <summary>Toolbox-drop variant of <see cref="AddAugmentNode"/> that places the node at an explicit position instead of auto-laying-out the whole canvas.</summary>
+    private void AddAugmentNodeAt(double x, double y)
+    {
+        var augments = AugmentNodes;
+        var order = augments.Count == 0 ? 0 : augments.Max(static node => node.Order) + 1;
+        var module = ModulesForStage(NodeStage.Augment).FirstOrDefault();
+        var node = CreateNode(NodeStage.Augment, module?.Id ?? string.Empty, order: order);
+        ApplyModuleDefaults(node, module);
+        node.X = x;
+        node.Y = y;
+        _selectedNodeId = node.Id;
+    }
+
+    /// <summary>Toolbox-drop variant of <see cref="AddJoinAugmentNode"/> that places the node at an explicit position instead of auto-laying-out the whole canvas.</summary>
+    private void AddJoinAugmentNodeAt(double x, double y)
+    {
+        var module = FindCatalogModule(JoinModuleId);
+        if (module is null)
+        {
+            _errorMessage = $"The '{JoinModuleId}' module is not available in the module catalog.";
+            return;
+        }
+
+        var augments = AugmentNodes;
+        var order = augments.Count == 0 ? 0 : augments.Max(static node => node.Order) + 1;
+        var node = CreateNode(NodeStage.Augment, module.Id, order: order);
+        ApplyModuleDefaults(node, module);
+
+        if (_sources.Count >= 2)
+        {
+            node.Settings[LeftSourceKey] = _sources[0].Id;
+            node.Settings[RightSourceKey] = _sources[1].Id;
+        }
+
+        node.X = x;
+        node.Y = y;
+        _selectedNodeId = node.Id;
+        _statusMessage = "Added a multi-source join and map augment. Configure its join keys and field mappings in the node details panel.";
+    }
+
     private void AddStageNode(NodeStage stage, int order = 0)
     {
         var module = ModulesForStage(stage).FirstOrDefault();
@@ -283,6 +342,27 @@ public partial class Designer
         ApplyModuleDefaults(deliver, deliverModule);
 
         AutoLayout();
+        _selectedNodeId = render.Id;
+    }
+
+    /// <summary>Toolbox-drop variant of <see cref="AddDeliveryRoute"/> that places the render/deliver pair at an explicit position instead of auto-laying-out the whole canvas.</summary>
+    private void AddDeliveryRouteAt(double x, double y)
+    {
+        var routeId = Guid.NewGuid().ToString("n");
+        var order = Routes.Count;
+        var renderModule = ModulesForStage(NodeStage.Render).FirstOrDefault();
+        var deliverModule = ModulesForStage(NodeStage.Deliver).FirstOrDefault();
+
+        var render = CreateNode(NodeStage.Render, renderModule?.Id ?? string.Empty, order: order, routeId: routeId);
+        var deliver = CreateNode(NodeStage.Deliver, deliverModule?.Id ?? string.Empty, order: order, routeId: routeId);
+        ApplyModuleDefaults(render, renderModule);
+        ApplyModuleDefaults(deliver, deliverModule);
+
+        render.X = x;
+        render.Y = y;
+        deliver.X = x + ColumnSpacing;
+        deliver.Y = y;
+
         _selectedNodeId = render.Id;
     }
 
@@ -489,6 +569,18 @@ public partial class Designer
 
         return edges;
     }
+
+    /// <summary>Counts inbound edges per node id (both regular flow edges and dependency edges), used to flag join/merge points in the canvas UI.</summary>
+    private Dictionary<string, int> IncomingEdgeCounts()
+        => BuildEdges()
+            .GroupBy(edge => edge.To.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+
+    /// <summary>Counts outbound edges per node id, used to flag split/fan-out points in the canvas UI.</summary>
+    private Dictionary<string, int> OutgoingEdgeCounts()
+        => BuildEdges()
+            .GroupBy(edge => edge.From.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
 
     private static string EdgePath(FlowEdge edge)
         => edge.IsDependency ? DependencyEdgePath(edge.From, edge.To) : FlowEdgePath(edge.From, edge.To);

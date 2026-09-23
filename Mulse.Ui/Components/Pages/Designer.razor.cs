@@ -62,9 +62,18 @@ public partial class Designer : IAsyncDisposable
     private IReadOnlyList<string> _bizTalkWarnings = [];
 
     private ElementReference _canvasElement;
+    private ElementReference _toolboxElement;
     private IJSObjectReference? _canvasModule;
     private DotNetObjectReference<Designer>? _selfReference;
     private bool _canvasInitialized;
+
+    // The SVG viewBox doubles as the pan/zoom "camera": JS mutates it live during a gesture and only
+    // reports the final value back here once per gesture (see wwwroot/js/flow-canvas.js), the same
+    // pattern already used for node-drag positions, so a mid-gesture Blazor re-render can't cause a jump.
+    private double _viewX;
+    private double _viewY;
+    private double _viewW = 1080;
+    private double _viewH = 520;
 
     private string? _loadedFlowId;
     private bool _graphInitialized;
@@ -152,6 +161,7 @@ public partial class Designer : IAsyncDisposable
         _selfReference = DotNetObjectReference.Create(this);
         _canvasModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/flow-canvas.js");
         await _canvasModule.InvokeVoidAsync("initialize", _canvasElement, _selfReference);
+        await _canvasModule.InvokeVoidAsync("initializeToolbox", _toolboxElement, _canvasElement, _selfReference);
     }
 
     public async ValueTask DisposeAsync()
@@ -160,6 +170,7 @@ public partial class Designer : IAsyncDisposable
         {
             try
             {
+                await _canvasModule.InvokeVoidAsync("disposeToolbox", _toolboxElement);
                 await _canvasModule.InvokeVoidAsync("dispose", _canvasElement);
                 await _canvasModule.DisposeAsync();
             }
@@ -184,6 +195,70 @@ public partial class Designer : IAsyncDisposable
         }
 
         return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnViewChanged(double x, double y, double w, double h)
+    {
+        _viewX = x;
+        _viewY = y;
+        _viewW = w;
+        _viewH = h;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnToolboxDrop(string nodeType, double x, double y)
+    {
+        switch (nodeType)
+        {
+            case "source":
+                AddSourceLaneAt(x, y);
+                break;
+            case "augment":
+                AddAugmentNodeAt(x, y);
+                break;
+            case "join":
+                AddJoinAugmentNodeAt(x, y);
+                break;
+            case "route":
+                AddDeliveryRouteAt(x, y);
+                break;
+        }
+
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task ZoomInAsync() => await ZoomByAsync(1.25);
+
+    private async Task ZoomOutAsync() => await ZoomByAsync(0.8);
+
+    private async Task ZoomByAsync(double factor)
+    {
+        if (_canvasModule is not null)
+        {
+            await _canvasModule.InvokeVoidAsync("zoomBy", _canvasElement, factor, _selfReference);
+        }
+    }
+
+    private void FitView()
+    {
+        _viewX = 0;
+        _viewY = 0;
+        _viewW = CanvasWidth;
+        _viewH = CanvasHeight;
+    }
+
+    private string ZoomPercentLabel
+    {
+        get
+        {
+            var reference = Math.Max(CanvasWidth, 1);
+            var percent = Math.Round(reference / Math.Max(_viewW, 1) * 100);
+            return $"{percent}%";
+        }
     }
 
     private async Task LoadCatalogAsync()
@@ -243,6 +318,7 @@ public partial class Designer : IAsyncDisposable
         _retryDelaySeconds = 1;
         _retryBackoff = "Fixed";
         _retryMaxDelaySeconds = null;
+        FitView();
     }
 
     private void ClearCanvas()
@@ -314,6 +390,7 @@ public partial class Designer : IAsyncDisposable
         }
 
         AutoLayout();
+        FitView();
     }
 
     private FlowNode CreateNode(NodeStage stage, string moduleId, IReadOnlyDictionary<string, string>? settings = null, int order = 0, string? routeId = null, string? sourceId = null)

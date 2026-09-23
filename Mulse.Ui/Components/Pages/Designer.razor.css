@@ -1,70 +1,56 @@
-/* Designer-page-only styles: the flow canvas, toolbar, and SVG node/edge visuals.
- * Anything shared with other pages (panels, buttons, tables, forms, status banners, etc.)
- * lives in wwwroot/css/shared.css instead of being duplicated here. */
+/* Designer-page-only styles: the full-screen shell, toolbar, floating panels' contents, and the SVG
+ * canvas' node/edge/badge visuals. Anything shared with other pages (buttons, tables, forms, status
+ * banners, etc.) lives in wwwroot/css/shared.css instead of being duplicated here. */
 
-.toolbar {
+/* .designer-shell escapes MainLayout's max-width/padding by going position:fixed over the whole
+ * viewport - Blazor CSS isolation can't reach into MainLayout.razor.css to change that directly,
+ * so the Designer page opts itself out of the normal page flow instead ("Figma-like" immersive canvas). */
+.designer-shell {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
     display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    align-items: center;
-    padding: 0.85rem 1rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: 1rem;
-    background: var(--surface-panel);
+    flex-direction: column;
+    background: rgba(2, 6, 23, 0.98);
 }
 
-.toolbar-group {
+.designer-topbar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-panel);
+    flex: 0 0 auto;
+}
+
+.designer-topbar h1 {
+    margin: 0;
+    font-size: 1.05rem;
+    flex: 1 1 auto;
+}
+
+.designer-topbar-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
     align-items: center;
 }
 
-.toolbar-actions {
-    margin-left: auto;
+.designer-banner {
+    flex: 0 0 auto;
+    margin: 0.5rem 1rem 0;
 }
 
-.toolbar-label {
-    color: var(--text-muted);
-    font-size: 0.8rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-
-.canvas-layout {
-    display: grid;
-    grid-template-columns: minmax(230px, 270px) minmax(0, 1fr) minmax(260px, 330px);
-    gap: 1rem;
-    align-items: start;
-}
-
-.side-panel {
-    padding: 1.25rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: 1rem;
-    background: var(--surface-panel);
-    max-height: 46rem;
-    overflow-y: auto;
-}
-
-.side-panel h2 {
-    margin: 0 0 0.35rem;
-    font-size: 1.15rem;
-}
-
-.side-panel h3 {
-    margin: 1.25rem 0 0.5rem;
-    font-size: 0.95rem;
+.designer-surface {
+    position: relative;
+    flex: 1 1 auto;
+    overflow: hidden;
 }
 
 .canvas-surface {
-    position: relative;
-    min-height: 32rem;
-    max-height: 46rem;
-    overflow: auto;
-    border: 1px solid var(--border-subtle);
-    border-radius: 1rem;
+    position: absolute;
+    inset: 0;
     background:
         radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.18) 1px, transparent 0) 0 0 / 26px 26px,
         rgba(2, 6, 23, 0.75);
@@ -73,17 +59,96 @@
 .canvas-placeholder {
     position: absolute;
     top: 1rem;
-    left: 1.25rem;
-    right: 1.25rem;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 28rem;
     margin: 0;
     color: var(--text-muted);
+    text-align: center;
     pointer-events: none;
 }
 
 .flow-canvas {
     display: block;
+    width: 100%;
+    height: 100%;
     touch-action: none;
     user-select: none;
+    cursor: grab;
+}
+
+.flow-canvas.panning {
+    cursor: grabbing;
+}
+
+.flow-canvas.drop-target {
+    outline: 2px dashed rgba(56, 189, 248, 0.65);
+    outline-offset: -4px;
+}
+
+.zoom-controls {
+    position: absolute;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.75rem;
+    background: var(--surface-panel);
+}
+
+.zoom-controls .secondary-button {
+    padding: 0.25rem 0.6rem;
+}
+
+.zoom-label {
+    min-width: 3.2rem;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+/* Toolbox floating panel contents. */
+.toolbox-hint {
+    margin: 0 0 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.toolbox-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.toolbox-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.6rem;
+    background: rgba(15, 23, 42, 0.6);
+    color: inherit;
+    font-size: 0.85rem;
+    text-align: left;
+    cursor: grab;
+}
+
+.toolbox-item:hover {
+    border-color: rgba(56, 189, 248, 0.55);
+}
+
+.toolbox-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.toolbox-icon {
+    font-size: 1rem;
 }
 
 .canvas-background {
@@ -187,6 +252,35 @@
     font-size: 0.75rem;
 }
 
+/* Join ("merge dot" + badge) and split ("fork dot" + badge) visual cues, derived purely from edge counts. */
+.merge-dot {
+    fill: #a78bfa;
+    stroke: #f8fafc;
+    stroke-width: 1.5;
+}
+
+.fork-dot {
+    fill: #fb923c;
+    stroke: #f8fafc;
+    stroke-width: 1.5;
+}
+
+.join-badge {
+    fill: #d8b4fe;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-anchor: start;
+}
+
+.split-badge {
+    fill: #fed7aa;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-anchor: start;
+}
+
 .drop-zone {
     position: relative;
     display: grid;
@@ -208,18 +302,14 @@
     cursor: pointer;
 }
 
-@media (max-width: 1100px) {
-    .canvas-layout {
-        grid-template-columns: 1fr;
-    }
-
-    .side-panel {
-        max-height: none;
-    }
-}
-
 @media (max-width: 800px) {
-    .toolbar-actions {
-        margin-left: 0;
+    .designer-topbar {
+        flex-wrap: wrap;
+    }
+
+    .designer-topbar h1 {
+        order: -1;
+        flex-basis: 100%;
     }
 }
+

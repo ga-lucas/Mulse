@@ -10,59 +10,33 @@
 
 <PageTitle>@(IsExistingFlow ? $"Edit flow {FlowId}" : "Flow designer")</PageTitle>
 
-<div class="page-shell">
-    <header class="page-hero">
-        <div>
-            <p class="eyebrow">Visual flow canvas</p>
-            <h1>@(IsExistingFlow ? FlowId : "New flow")</h1>
-            <p class="lede">
-                One canvas for every flow: drop modules in by hand, seed the graph from a sample payload, import a BizTalk draft flow,
-                or open an existing flow and rewire it. Drag nodes to arrange the graph and click a node to configure its module and settings.
-            </p>
-            <a class="secondary-button" href="/">&larr; Back to dashboard</a>
+<div class="designer-shell">
+    <header class="designer-topbar">
+        <a class="secondary-button" href="/">&larr; Dashboard</a>
+        <h1>@(IsExistingFlow ? FlowId : "New flow")</h1>
+        <div class="designer-topbar-actions">
+            <button class="secondary-button @(_showSamplePanel ? "active" : null)" @onclick="ToggleSamplePanel">Import sample data</button>
+            <button class="secondary-button @(_showBizTalkPanel ? "active" : null)" @onclick="ToggleBizTalkPanel">Import from BizTalk</button>
+            <button class="secondary-button" @onclick="AutoLayout">Auto layout</button>
+            <button class="secondary-button" @onclick="ClearCanvas">Clear canvas</button>
+            <button class="run-button" @onclick="SaveAsync" disabled="@_isSaving">@(_isSaving ? "Saving..." : IsExistingFlow ? "Save flow" : "Create flow")</button>
         </div>
     </header>
 
     @if (!string.IsNullOrWhiteSpace(_statusMessage))
     {
-        <div class="status-banner success">@_statusMessage</div>
+        <div class="status-banner success designer-banner">@_statusMessage</div>
     }
 
     @if (!string.IsNullOrWhiteSpace(_errorMessage))
     {
-        <div class="status-banner error">@_errorMessage</div>
+        <div class="status-banner error designer-banner">@_errorMessage</div>
     }
 
-    <section class="toolbar">
-        <div class="toolbar-group">
-            <span class="toolbar-label">Add node</span>
-            <button class="secondary-button" @onclick="AddSourceLane" title="Adds a new source lane: its own fetch node plus parse node, with a source id other sources and join augments can reference.">Source</button>
-            <button class="secondary-button" @onclick="AddAugmentNode">Augment</button>
-            <button class="secondary-button" @onclick="AddJoinAugmentNode" disabled="@(_sources.Count < 2)" title="Adds a multi-source join and map augment, pre-wired to the first two source lanes on the canvas.">Join sources</button>
-            <button class="secondary-button" @onclick="AddDeliveryRoute">Delivery route</button>
-        </div>
-        <div class="toolbar-group">
-            <span class="toolbar-label">Seed from</span>
-            <button class="secondary-button @(_showSamplePanel ? "active" : null)" @onclick="ToggleSamplePanel">Import sample data</button>
-            <button class="secondary-button @(_showBizTalkPanel ? "active" : null)" @onclick="ToggleBizTalkPanel">Import from BizTalk</button>
-        </div>
-        <div class="toolbar-group toolbar-actions">
-            <button class="secondary-button" @onclick="AutoLayout">Auto layout</button>
-            <button class="secondary-button" @onclick="ClearCanvas">Clear canvas</button>
-            <button class="run-button" @onclick="SaveAsync" disabled="@_isSaving">@(_isSaving ? "Saving..." : IsExistingFlow ? "Save flow" : "Create flow")</button>
-        </div>
-    </section>
-
-    @if (_showSamplePanel)
-    {
-        <article class="panel">
-            <div class="panel-header">
-                <div>
-                    <h2>Import sample data</h2>
-                    <p>Upload or paste a representative payload. Mulse detects the format, suggests modules, and seeds the canvas with them.</p>
-                </div>
-                <button class="secondary-button" @onclick="ToggleSamplePanel">Close</button>
-            </div>
+    <div class="designer-surface">
+        @if (_showSamplePanel)
+        {
+            <FloatingPanel Title="Import sample data" Icon="📥" X="80" Y="80" Width="420" ShowClose="true" OnClose="ToggleSamplePanel">
 
             <label class="drop-zone">
                 <span>Select or drag a file here</span>
@@ -138,19 +112,12 @@
                     <button class="run-button" @onclick="ApplySampleAnalysis">Populate canvas from sample</button>
                 </div>
             }
-        </article>
+        </FloatingPanel>
     }
 
     @if (_showBizTalkPanel)
     {
-        <article class="panel">
-            <div class="panel-header">
-                <div>
-                    <h2>Import from BizTalk</h2>
-                    <p>Point Mulse at a BizTalk solution, project, or directory, then load one generated draft flow onto the canvas and hand-edit it.</p>
-                </div>
-                <button class="secondary-button" @onclick="ToggleBizTalkPanel">Close</button>
-            </div>
+        <FloatingPanel Title="Import from BizTalk" Icon="🗂" X="80" Y="420" Width="520" ShowClose="true" OnClose="ToggleBizTalkPanel">
 
             <label class="field-label" for="source-path">Source path</label>
             <input id="source-path" class="mapping-input" @bind="_sourcePath" @bind:event="oninput" placeholder="C:\Users\...\MyBizTalkApp.sln" />
@@ -263,204 +230,245 @@
                     </div>
                 }
             }
-        </article>
+        </FloatingPanel>
     }
 
-    <section class="canvas-layout">
-        <aside class="side-panel">
-            <h2>Flow settings</h2>
-            <p class="panel-hint">Flow-level properties applied when the graph is saved.</p>
+    <FloatingPanel Title="Toolbox" Icon="🧰" X="24" Y="24" Width="200">
+        <p class="toolbox-hint">Click or drag onto the canvas.</p>
+        <div class="toolbox-list" @ref="_toolboxElement">
+            <button class="toolbox-item" data-node-type="source" data-node-label="Source" @onclick="AddSourceLane" title="Adds a new source lane: its own fetch node plus parse node, with a source id other sources and join augments can reference.">
+                <span class="toolbox-icon">⭘→</span> Source
+            </button>
+            <button class="toolbox-item" data-node-type="augment" data-node-label="Augment" @onclick="AddAugmentNode">
+                <span class="toolbox-icon">◇</span> Augment
+            </button>
+            <button class="toolbox-item" data-node-type="join" data-node-label="Join sources" @onclick="AddJoinAugmentNode" disabled="@(_sources.Count < 2)" title="Adds a multi-source join and map augment, pre-wired to the first two source lanes on the canvas.">
+                <span class="toolbox-icon">⋈</span> Join sources
+            </button>
+            <button class="toolbox-item" data-node-type="route" data-node-label="Delivery route" @onclick="AddDeliveryRoute">
+                <span class="toolbox-icon">⑂→</span> Delivery route
+            </button>
+        </div>
+    </FloatingPanel>
 
-            @if (_unresolvedConfigCount > 0)
+    <FloatingPanel Title="Flow overview" Icon="🗺" X="24" Y="280" Width="260">
+        @if (_unresolvedConfigCount > 0)
+        {
+            <p class="status-banner error compact">
+                @_unresolvedConfigCount unresolved config/secret reference(s) for this flow.
+                <a href="/config-values">Resolve on the Config values page</a> before enabling or running it.
+            </p>
+        }
+
+        <label class="field-label" for="flow-id">Flow id</label>
+        <input id="flow-id" class="mapping-input" @bind="_flowId" @bind:event="oninput" disabled="@IsExistingFlow" />
+
+        <label class="field-label checkbox-row">
+            <input type="checkbox" checked="@_enabled" @onchange="e => _enabled = (bool)(e.Value ?? false)" />
+            <span>Enabled</span>
+        </label>
+
+        <label class="field-label" for="trigger-mode">Trigger mode</label>
+        <select id="trigger-mode" class="selector" value="@_triggerMode" @onchange="e => _triggerMode = e.Value?.ToString() ?? _triggerMode">
+            @foreach (var mode in TriggerModeOptions)
             {
-                <p class="status-banner error compact">
-                    @_unresolvedConfigCount unresolved config/secret reference(s) for this flow.
-                    <a href="/config-values">Resolve on the Config values page</a> before enabling or running it.
-                </p>
+                <option value="@mode">@mode</option>
             }
+        </select>
 
-            <label class="field-label" for="flow-id">Flow id</label>
-            <input id="flow-id" class="mapping-input" @bind="_flowId" @bind:event="oninput" disabled="@IsExistingFlow" />
+        @if (string.Equals(_triggerMode, "Interval", StringComparison.OrdinalIgnoreCase))
+        {
+            <label class="field-label" for="trigger-interval">Interval (hh:mm:ss)</label>
+            <input id="trigger-interval" class="mapping-input" @bind="_intervalText" @bind:event="oninput" placeholder="00:05:00" />
+        }
 
-            <label class="field-label checkbox-row">
-                <input type="checkbox" checked="@_enabled" @onchange="e => _enabled = (bool)(e.Value ?? false)" />
-                <span>Enabled</span>
-            </label>
+        <label class="field-label checkbox-row">
+            <input type="checkbox" checked="@_runOnStartup" @onchange="e => _runOnStartup = (bool)(e.Value ?? false)" />
+            <span>Run on startup</span>
+        </label>
 
-            <label class="field-label" for="trigger-mode">Trigger mode</label>
-            <select id="trigger-mode" class="selector" value="@_triggerMode" @onchange="e => _triggerMode = e.Value?.ToString() ?? _triggerMode">
-                @foreach (var mode in TriggerModeOptions)
+        <label class="field-label checkbox-row">
+            <input type="checkbox" checked="@_hasDefaultRetry" @onchange="e => _hasDefaultRetry = (bool)(e.Value ?? false)" />
+            <span>Use a default retry policy</span>
+        </label>
+
+        @if (_hasDefaultRetry)
+        {
+            <label class="field-label">Max attempts</label>
+            <input class="mapping-input" type="number" min="1" value="@_retryMaxAttempts" @oninput="e => _retryMaxAttempts = ParseNullableInt(e.Value?.ToString())" />
+
+            <label class="field-label">Delay (seconds)</label>
+            <input class="mapping-input" type="number" min="0" step="0.5" value="@_retryDelaySeconds" @oninput="e => _retryDelaySeconds = ParseDouble(e.Value?.ToString(), _retryDelaySeconds)" />
+
+            <label class="field-label">Backoff</label>
+            <select class="selector" value="@_retryBackoff" @onchange="e => _retryBackoff = e.Value?.ToString() ?? _retryBackoff">
+                @foreach (var backoff in RetryBackoffOptions)
                 {
-                    <option value="@mode">@mode</option>
+                    <option value="@backoff">@backoff</option>
                 }
             </select>
 
-            @if (string.Equals(_triggerMode, "Interval", StringComparison.OrdinalIgnoreCase))
-            {
-                <label class="field-label" for="trigger-interval">Interval (hh:mm:ss)</label>
-                <input id="trigger-interval" class="mapping-input" @bind="_intervalText" @bind:event="oninput" placeholder="00:05:00" />
-            }
+            <label class="field-label">Max delay (seconds, optional)</label>
+            <input class="mapping-input" type="number" min="0" step="0.5" value="@_retryMaxDelaySeconds" @oninput="e => _retryMaxDelaySeconds = ParseNullableDouble(e.Value?.ToString())" />
+        }
 
-            <label class="field-label checkbox-row">
-                <input type="checkbox" checked="@_runOnStartup" @onchange="e => _runOnStartup = (bool)(e.Value ?? false)" />
-                <span>Run on startup</span>
-            </label>
 
-            <label class="field-label checkbox-row">
-                <input type="checkbox" checked="@_hasDefaultRetry" @onchange="e => _hasDefaultRetry = (bool)(e.Value ?? false)" />
-                <span>Use a default retry policy</span>
-            </label>
+        <dl class="summary-grid summary-metadata compact-metadata">
+            <div>
+                <dt>Sources</dt>
+                <dd>@(_sources.Count == 0 ? "None" : $"{_sources.Count} ({string.Join(", ", _sources.Select(source => source.Id))})")</dd>
+            </div>
+            <div>
+                <dt>Augments</dt>
+                <dd>@AugmentNodes.Count</dd>
+            </div>
+            <div>
+                <dt>Delivery routes</dt>
+                <dd>@Routes.Count</dd>
+            </div>
+            <div>
+                <dt>Seeded from</dt>
+                <dd>@SeedSourceLabel</dd>
+            </div>
+        </dl>
+    </FloatingPanel>
 
-            @if (_hasDefaultRetry)
-            {
-                <label class="field-label">Max attempts</label>
-                <input class="mapping-input" type="number" min="1" value="@_retryMaxAttempts" @oninput="e => _retryMaxAttempts = ParseNullableInt(e.Value?.ToString())" />
+    <div class="canvas-surface">
+        @if (_isLoading)
+        {
+            <p class="canvas-placeholder">Loading flow and module catalog...</p>
+        }
+        else if (_nodes.Count == 0)
+        {
+            <p class="canvas-placeholder">The canvas is empty. Add a node from the toolbox, or seed the graph from sample data or a BizTalk source.</p>
+        }
 
-                <label class="field-label">Delay (seconds)</label>
-                <input class="mapping-input" type="number" min="0" step="0.5" value="@_retryDelaySeconds" @oninput="e => _retryDelaySeconds = ParseDouble(e.Value?.ToString(), _retryDelaySeconds)" />
+        @if (SourceGraphError is { } graphError)
+        {
+            <div class="status-banner error compact">@graphError</div>
+        }
 
-                <label class="field-label">Backoff</label>
-                <select class="selector" value="@_retryBackoff" @onchange="e => _retryBackoff = e.Value?.ToString() ?? _retryBackoff">
-                    @foreach (var backoff in RetryBackoffOptions)
-                    {
-                        <option value="@backoff">@backoff</option>
-                    }
-                </select>
-
-                <label class="field-label">Max delay (seconds, optional)</label>
-                <input class="mapping-input" type="number" min="0" step="0.5" value="@_retryMaxDelaySeconds" @oninput="e => _retryMaxDelaySeconds = ParseNullableDouble(e.Value?.ToString())" />
-            }
-
-            <dl class="summary-grid summary-metadata compact-metadata">
-                <div>
-                    <dt>Sources</dt>
-                    <dd>@(_sources.Count == 0 ? "None" : $"{_sources.Count} ({string.Join(", ", _sources.Select(source => source.Id))})")</dd>
-                </div>
-                <div>
-                    <dt>Augments</dt>
-                    <dd>@AugmentNodes.Count</dd>
-                </div>
-                <div>
-                    <dt>Delivery routes</dt>
-                    <dd>@Routes.Count</dd>
-                </div>
-                <div>
-                    <dt>Seeded from</dt>
-                    <dd>@SeedSourceLabel</dd>
-                </div>
-            </dl>
-        </aside>
-
-        <div class="canvas-surface">
-            @if (_isLoading)
-            {
-                <p class="canvas-placeholder">Loading flow and module catalog...</p>
-            }
-            else if (_nodes.Count == 0)
-            {
-                <p class="canvas-placeholder">The canvas is empty. Add a source from the toolbar, or seed the graph from sample data or a BizTalk source.</p>
-            }
-
-            @if (SourceGraphError is { } graphError)
-            {
-                <div class="status-banner error compact">@graphError</div>
-            }
-
-            <svg @ref="_canvasElement" class="flow-canvas" width="@F(CanvasWidth)" height="@F(CanvasHeight)" viewBox="0 0 @F(CanvasWidth) @F(CanvasHeight)">
-                <defs>
-                    <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                        <path d="M 0 0 L 10 5 L 0 10 z" class="edge-arrow" />
-                    </marker>
-                    <marker id="dependency-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                        <path d="M 0 0 L 10 5 L 0 10 z" class="edge-arrow dependency" />
-                    </marker>
-                </defs>
-
-                <rect class="canvas-background" x="0" y="0" width="@F(CanvasWidth)" height="@F(CanvasHeight)" @onclick="() => _selectedNodeId = null" />
-
-                @foreach (var source in _sources)
-                {
-                    var bounds = LaneBounds(source);
-                    <g class="source-lane" @key="source">
-                        <rect class="source-lane-body" x="@F(bounds.X)" y="@F(bounds.Y)" width="@F(bounds.Width)" height="@F(bounds.Height)" rx="18" ry="18" />
-                        <text class="source-lane-label" x="@F(bounds.X + 18)" y="@F(bounds.Y + 24)">@LaneLabel(source)</text>
-                    </g>
-                }
-
-                @foreach (var edge in BuildEdges())
-                {
-                    <path class="flow-edge @(edge.IsDependency ? "dependency" : null)"
-                          data-edge-from="@edge.From.Id"
-                          data-edge-to="@edge.To.Id"
-                          data-edge-kind="@(edge.IsDependency ? "dependency" : "flow")"
-                          d="@EdgePath(edge)"
-                          marker-end="@(edge.IsDependency ? "url(#dependency-arrow)" : "url(#flow-arrow)")" />
-                }
-
-                @foreach (var node in _nodes)
-                {
-                    <g @key="node.Id"
-                       class="flow-node stage-@node.Stage.ToString().ToLowerInvariant() @(string.Equals(node.Id, _selectedNodeId, StringComparison.Ordinal) ? "selected" : null)"
-                       data-node-id="@node.Id"
-                       transform="translate(@F(node.X), @F(node.Y))"
-                       @onclick="() => SelectNode(node)">
-                        <rect class="node-body" x="0" y="0" width="@F(NodeWidth)" height="@F(NodeHeight)" rx="14" ry="14" />
-                        <text class="node-stage" x="16" y="26">@Truncate(NodeHeading(node), 24)</text>
-                        <text class="node-title" x="16" y="52">@Truncate(NodeTitle(node), 26)</text>
-                        <text class="node-subtitle" x="16" y="74">@NodeSubtitle(node)</text>
-                    </g>
-                }
-            </svg>
+        <div class="zoom-controls">
+            <button class="secondary-button" @onclick="ZoomOutAsync" title="Zoom out">−</button>
+            <span class="zoom-label">@ZoomPercentLabel</span>
+            <button class="secondary-button" @onclick="ZoomInAsync" title="Zoom in">+</button>
+            <button class="secondary-button" @onclick="FitView" title="Reset to fit">Fit</button>
         </div>
 
-        <aside class="side-panel">
-            @if (SelectedNode is null)
+        <svg @ref="_canvasElement" class="flow-canvas" width="100%" height="100%" viewBox="@F(_viewX) @F(_viewY) @F(_viewW) @F(_viewH)">
+            <defs>
+                <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" class="edge-arrow" />
+                </marker>
+                <marker id="dependency-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" class="edge-arrow dependency" />
+                </marker>
+            </defs>
+
+            <rect class="canvas-background" x="0" y="0" width="@F(CanvasWidth)" height="@F(CanvasHeight)" @onclick="() => _selectedNodeId = null" />
+
+            @foreach (var source in _sources)
             {
-                <h2>Node details</h2>
-                <p class="panel-hint">Select a node on the canvas to choose its module and edit its settings.</p>
+                var bounds = LaneBounds(source);
+                <g class="source-lane" @key="source">
+                    <rect class="source-lane-body" x="@F(bounds.X)" y="@F(bounds.Y)" width="@F(bounds.Width)" height="@F(bounds.Height)" rx="18" ry="18" />
+                    <text class="source-lane-label" x="@F(bounds.X + 18)" y="@F(bounds.Y + 24)">@LaneLabel(source)</text>
+                </g>
             }
-            else
+
+            @foreach (var edge in BuildEdges())
             {
-                var node = SelectedNode;
-                var catalogModule = FindCatalogModule(node.ModuleId);
-                <h2>@NodeHeading(node)</h2>
-                <p class="panel-hint">@StageDescription(node.Stage)</p>
+                <path class="flow-edge @(edge.IsDependency ? "dependency" : null)"
+                      data-edge-from="@edge.From.Id"
+                      data-edge-to="@edge.To.Id"
+                      data-edge-kind="@(edge.IsDependency ? "dependency" : "flow")"
+                      d="@EdgePath(edge)"
+                      marker-end="@(edge.IsDependency ? "url(#dependency-arrow)" : "url(#flow-arrow)")" />
+            }
 
-                <label class="field-label">Module</label>
-                <select class="selector" value="@node.ModuleId" @onchange="e => HandleNodeModuleChanged(node, e)">
-                    <option value="">(select a module)</option>
-                    @foreach (var module in ModulesForStage(node.Stage))
+            @{
+                var incoming = IncomingEdgeCounts();
+                var outgoing = OutgoingEdgeCounts();
+            }
+            @foreach (var node in _nodes)
+            {
+                var incomingCount = incoming.GetValueOrDefault(node.Id);
+                var outgoingCount = outgoing.GetValueOrDefault(node.Id);
+                <g @key="node.Id"
+                   class="flow-node stage-@node.Stage.ToString().ToLowerInvariant() @(string.Equals(node.Id, _selectedNodeId, StringComparison.Ordinal) ? "selected" : null)"
+                   data-node-id="@node.Id"
+                   transform="translate(@F(node.X), @F(node.Y))"
+                   @onclick="() => SelectNode(node)">
+                    <rect class="node-body" x="0" y="0" width="@F(NodeWidth)" height="@F(NodeHeight)" rx="14" ry="14" />
+                    <text class="node-stage" x="16" y="26">@Truncate(NodeHeading(node), 24)</text>
+                    <text class="node-title" x="16" y="52">@Truncate(NodeTitle(node), 26)</text>
+                    <text class="node-subtitle" x="16" y="74">@NodeSubtitle(node)</text>
+                    @if (incomingCount >= 2)
                     {
-                        <option value="@module.Id">@module.DisplayName (@module.Id)</option>
+                        <g class="badge-group">
+                            <circle class="merge-dot" cx="0" cy="@F(NodeHeight / 2)" r="6" />
+                            <text class="join-badge" x="-6" y="-8">⋈ JOIN</text>
+                        </g>
                     }
-                    @if (!string.IsNullOrWhiteSpace(node.ModuleId) && catalogModule is null)
+                    @if (outgoingCount >= 2)
                     {
-                        <option value="@node.ModuleId">@node.ModuleId (not in catalog)</option>
+                        <g class="badge-group">
+                            <circle class="fork-dot" cx="@F(NodeWidth)" cy="@F(NodeHeight / 2)" r="6" />
+                            <text class="split-badge" x="@F(NodeWidth - 70)" y="-8">⑂ SPLITS ×@outgoingCount</text>
+                        </g>
                     }
-                </select>
+                </g>
+            }
+        </svg>
+    </div>
 
-                @if (catalogModule is not null)
+    <FloatingPanel Title="Properties" Icon="⚙" X="1100" Y="24" Width="360">
+        @if (SelectedNode is null)
+        {
+            <p class="panel-hint">Select a node on the canvas to choose its module and edit its settings.</p>
+        }
+        else
+        {
+            var node = SelectedNode;
+            var catalogModule = FindCatalogModule(node.ModuleId);
+            <h3>@NodeHeading(node)</h3>
+            <p class="panel-hint">@StageDescription(node.Stage)</p>
+
+            <label class="field-label">Module</label>
+            <select class="selector" value="@node.ModuleId" @onchange="e => HandleNodeModuleChanged(node, e)">
+                <option value="">(select a module)</option>
+                @foreach (var module in ModulesForStage(node.Stage))
                 {
-                    <p class="module-description">@catalogModule.Description</p>
+                    <option value="@module.Id">@module.DisplayName (@module.Id)</option>
                 }
-
-                @if (SourceForNode(node) is { } lane)
+                @if (!string.IsNullOrWhiteSpace(node.ModuleId) && catalogModule is null)
                 {
-                    <h3>Source lane</h3>
-                    <label class="field-label">Source id</label>
-                    <input class="mapping-input" value="@lane.Id" @onchange="@(args => RenameSource(lane, args.Value?.ToString()))" />
-                    <p class="field-hint">Join augments reference this id as their left/right source, and other sources reference it when they depend on this source's parsed output.</p>
+                    <option value="@node.ModuleId">@node.ModuleId (not in catalog)</option>
+                }
+            </select>
 
-                    @if (node.Stage == NodeStage.Fetch)
+            @if (catalogModule is not null)
+            {
+                <p class="module-description">@catalogModule.Description</p>
+            }
+
+            @if (SourceForNode(node) is { } lane)
+            {
+                <h3>Source lane</h3>
+                <label class="field-label">Source id</label>
+                <input class="mapping-input" value="@lane.Id" @onchange="@(args => RenameSource(lane, args.Value?.ToString()))" />
+                <p class="field-hint">Join augments reference this id as their left/right source, and other sources reference it when they depend on this source's parsed output.</p>
+
+                @if (node.Stage == NodeStage.Fetch)
+                {
+                    <label class="field-label">Depends on (input sources)</label>
+                    @if (_sources.Count < 2)
                     {
-                        <label class="field-label">Depends on (input sources)</label>
-                        @if (_sources.Count < 2)
-                        {
-                            <p class="field-hint">Add a second source lane to feed its parsed output into this source's fetch step.</p>
-                        }
-                        else
-                        {
-                            @foreach (var other in _sources.Where(candidate => !ReferenceEquals(candidate, lane)))
+                        <p class="field-hint">Add a second source lane to feed its parsed output into this source's fetch step.</p>
+                    }
+                    else
+                    {
+                        @foreach (var other in _sources.Where(candidate => !ReferenceEquals(candidate, lane)))
                             {
                                 <label class="field-label checkbox-row" @key="other">
                                     <input type="checkbox"
@@ -663,17 +671,14 @@
                     }
                 </div>
             }
-        </aside>
-    </section>
+    </FloatingPanel>
+    </div>
 
     @if (_mappingRows.Count > 0)
     {
-        <article class="panel">
-            <div class="panel-header">
-                <div>
-                    <h2>Field mappings</h2>
-                    <p>Visual mappings captured from the analyzed sample. They are written into the join and map augment's field mappings when the flow is created.</p>
-                </div>
+        <FloatingPanel Title="Field mappings" Icon="🔗" X="420" Y="24" Width="560">
+            <p class="panel-hint">Visual mappings captured from the analyzed sample. They are written into the join and map augment's field mappings when the flow is created.</p>
+            <div class="action-row">
                 <button class="secondary-button" @onclick="AddMappingRow">Add mapping</button>
             </div>
 
@@ -716,18 +721,13 @@
                     }
                 </tbody>
             </table>
-        </article>
+        </FloatingPanel>
     }
 
     @if (_bizTalkRequirements.Count > 0 || _bizTalkWarnings.Count > 0)
     {
-        <article class="panel">
-            <div class="panel-header">
-                <div>
-                    <h2>BizTalk import follow-up</h2>
-                    <p>Config, secret, and review items reported for the draft flow currently on the canvas.</p>
-                </div>
-            </div>
+        <FloatingPanel Title="BizTalk import follow-up" Icon="📋" X="420" Y="24" Width="520">
+            <p class="panel-hint">Config, secret, and review items reported for the draft flow currently on the canvas.</p>
 
             @if (_bizTalkRequirements.Count > 0)
             {
@@ -766,7 +766,7 @@
                     </ul>
                 </div>
             }
-        </article>
+        </FloatingPanel>
     }
 </div>
 
