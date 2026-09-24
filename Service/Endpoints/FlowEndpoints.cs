@@ -105,7 +105,8 @@ public static class FlowEndpoints
                     result.ResponsePayloads?.Count ?? 0,
                     result.Outcome.ToString(),
                     result.NextAttemptAt,
-                    ToResponsePayloads(result.ResponsePayloads)));
+                    ToResponsePayloads(result.ResponsePayloads),
+                    result.Detail));
             })
             .WithName("RunFlow")
             .WithSummary("Run a configured flow")

@@ -251,19 +251,21 @@ public sealed partial class BizTalkImportService
         var sendPorts = ConsolidateSendPorts(bindings.SelectMany(static binding => binding.SendPorts).ToArray(), draftWarnings);
         if (sendPorts.Count == 0)
         {
-            var placeholderPath = AddRequirement(requirements, flowId, "deliveries[0].deliver.settings.path", "Config", "Choose the staging output repository path because no BizTalk send port was imported for this project.", appliedToDraft: true);
+            var placeholderPath = AddRequirement(requirements, flowId, "deliveries[0].delivers[0].deliver.settings.path", "Config", "Choose the staging output repository path because no BizTalk send port was imported for this project.", appliedToDraft: true);
             draftWarnings.Add("No BizTalk send port was matched to this project, so the draft uses a repository outbox placeholder.");
             return
             [
                 new BizTalkDraftDeliveryRouteResponse(
                     CreateRenderStepForProject(flowId, project, sendPort: null, routeIndex: 0, requirements, draftWarnings),
-                    new BizTalkDraftStepResponse(
-                        "document-repository-store",
-                        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            ["path"] = placeholderPath,
-                            ["writeMetadataSidecar"] = "true"
-                        }))
+                    [
+                        new BizTalkDraftDeliveryActionResponse(new BizTalkDraftStepResponse(
+                            "document-repository-store",
+                            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                            {
+                                ["path"] = placeholderPath,
+                                ["writeMetadataSidecar"] = "true"
+                            }))
+                    ])
             ];
         }
 
@@ -281,7 +283,7 @@ public sealed partial class BizTalkImportService
     /// when the source orchestration used a BizTalk <c>AtomicTransaction</c> scope and there is more than one
     /// delivery route to roll back between. With a single route there is nothing to compensate, so tagging is
     /// skipped. This closes the loop between <see cref="DetectOrchestrationControlFlowSignalsByOrchestration"/> and the
-    /// <see cref="Mulse.Modules.Pipeline.DeliveryRouteDefinition.AtomicScope"/>/<see cref="Mulse.Modules.Pipeline.DeliveryRouteDefinition.Compensation"/>
+    /// <see cref="Mulse.Modules.Pipeline.DeliveryRouteDefinition.AtomicScope"/>/<see cref="Mulse.Modules.Pipeline.DeliveryActionDefinition.Compensation"/>
     /// runtime model: the draft flow is pre-wired for all-or-nothing delivery, and the operator only needs to
     /// supply real compensation module settings before enabling it.
     /// </summary>
@@ -303,10 +305,12 @@ public sealed partial class BizTalkImportService
         var scopedRoutes = new List<BizTalkDraftDeliveryRouteResponse>(routes.Count);
         for (var index = 0; index < routes.Count; index++)
         {
-            AddRequirement(requirements, flowId, $"deliveries[{index}].compensation.module", "Config", $"This delivery route participates in a migrated atomic transaction scope. Configure a compensation deliver module (e.g. a cancel/undo call) for deliveries[{index}], or leave unset to only log a warning if rollback is needed.", appliedToDraft: false);            scopedRoutes.Add(routes[index] with
+            AddRequirement(requirements, flowId, $"deliveries[{index}].delivers[0].compensation.module", "Config", $"This delivery route participates in a migrated atomic transaction scope. Configure a compensation deliver module (e.g. a cancel/undo call) for deliveries[{index}].delivers[0], or leave unset to only log a warning if rollback is needed.", appliedToDraft: false);            scopedRoutes.Add(routes[index] with
             {
                 AtomicScope = atomicScope,
-                Compensation = new BizTalkDraftStepResponse(string.Empty, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
+                Delivers = routes[index].Delivers
+                    .Select(static action => action with { Compensation = new BizTalkDraftStepResponse(string.Empty, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)) })
+                    .ToArray()
             });
         }
 
@@ -349,7 +353,7 @@ public sealed partial class BizTalkImportService
             renderStep = renderStep with { Settings = conditionalSettings };
         }
 
-        return new BizTalkDraftDeliveryRouteResponse(renderStep, deliverSettings);
+        return new BizTalkDraftDeliveryRouteResponse(renderStep, [new BizTalkDraftDeliveryActionResponse(deliverSettings)]);
     }
 
     private static BizTalkDraftStepResponse CreateRenderStepForProject(
@@ -490,7 +494,7 @@ public sealed partial class BizTalkImportService
     {
         var module = SelectDeliverModule(sendPort.TransportType, sendPort.Address);
         var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var settingPathPrefix = $"deliveries[{routeIndex}].deliver.settings";
+        var settingPathPrefix = $"deliveries[{routeIndex}].delivers[0].deliver.settings";
 
         switch (module)
         {

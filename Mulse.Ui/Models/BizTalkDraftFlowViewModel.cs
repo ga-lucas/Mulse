@@ -32,7 +32,12 @@ public sealed record BizTalkDraftStepViewModel(
 
 public sealed record BizTalkDraftDeliveryRouteViewModel(
     BizTalkDraftStepViewModel Render,
-    BizTalkDraftStepViewModel Deliver);
+    IReadOnlyList<BizTalkDraftDeliveryActionViewModel> Delivers,
+    string? AtomicScope = null);
+
+public sealed record BizTalkDraftDeliveryActionViewModel(
+    BizTalkDraftStepViewModel Deliver,
+    BizTalkDraftStepViewModel? Compensation = null);
 
 public sealed record BizTalkSettingRequirementViewModel(
     string Kind,

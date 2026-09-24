@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using Mulse.Modules;
 
 namespace Service.Execution;
@@ -8,7 +9,8 @@ namespace Service.Execution;
 /// <c>fetch:{fetchNodeId}</c> for every fetch node and <c>parse:{parseNodeId}</c> for every parse node in the flow's
 /// source graph (run together in one topological order of <see cref="FetchNodeDefinition.InputParseIds"/> and
 /// <see cref="ParseNodeDefinition.FetchNodeIds"/>), then <c>augment:{index}</c> over the merged parsed batch, then
-/// per delivery route <c>delivery:{route}:render</c> / <c>delivery:{route}:deliver</c>. Each stage's effective
+/// per delivery route <c>delivery:{route}:render</c> (the route's single, shared render step) followed by one
+/// <c>delivery:{route}:deliver:{deliverIndex}</c> stage per deliver action of that route. Each stage's effective
 /// <see cref="RetryPolicyDefinition"/> (step override, falling back to the flow-level default, falling back to a
 /// single attempt) governs what happens when that stage throws: if another attempt is allowed, the stage's input
 /// batch (plus, for source-graph stages, the already resolved per-fetch-node raw batches and per-parse-node parsed
@@ -111,7 +113,7 @@ public sealed partial class FlowRuntime(
 
                 resolvedFetches[fetchNode.Id] = await RunStageAsync(
                     pipeline, context, startedAt, stageId, EffectiveRetry(pipeline, fetchStep), isResumed ? resumeAttempts : 0,
-                    fetchInput, committedAtomicDeliveries: [], postAugmentBatchForSnapshot: null,
+                    fetchInput, committedAtomicDeliveries: [], failedAtomicScopes: [], postAugmentBatchForSnapshot: null,
                     resolvedFetchesForSnapshot: resolvedFetches, resolvedParsesForSnapshot: resolvedParses,
                     invoke: async ct =>
                     {
@@ -141,7 +143,7 @@ public sealed partial class FlowRuntime(
 
                 var parsedBatch = await RunStageAsync(
                     pipeline, context, startedAt, stageId, EffectiveRetry(pipeline, parseStep), isResumed ? resumeAttempts : 0,
-                    MergeBatches(rawBatches), committedAtomicDeliveries: [], postAugmentBatchForSnapshot: null,
+                    MergeBatches(rawBatches), committedAtomicDeliveries: [], failedAtomicScopes: [], postAugmentBatchForSnapshot: null,
                     resolvedFetchesForSnapshot: resolvedFetches, resolvedParsesForSnapshot: resolvedParses,
                     invoke: async ct =>
                     {
@@ -243,14 +245,14 @@ public sealed partial class FlowRuntime(
         {
             return await RunDeliveryLoopAsync(
                 pipeline, context, startedAt, batch, startRouteIndex: 0,
-                resumeRenderInput: null, resumeRenderAttempts: 0, resumeDeliverInput: null, resumeDeliverAttempts: 0,
-                committedAtomicDeliveries: [], cancellationToken).ConfigureAwait(false);
+                resumeRenderInput: null, resumeRenderAttempts: 0, resumeDeliverIndex: null, resumeRenderedBatch: null, resumeDeliverAttempts: 0,
+                committedAtomicDeliveries: [], failedAtomicScopes: new HashSet<string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
         }
 
         var augment = pipeline.Augments[augmentIndex];
         var outputBatch = await RunStageAsync(
             pipeline, context, startedAt, $"augment:{augmentIndex}", EffectiveRetry(pipeline, augment), attemptsAlreadyMade,
-            batch, committedAtomicDeliveries: [], postAugmentBatchForSnapshot: null, resolvedFetchesForSnapshot: null, resolvedParsesForSnapshot: null,
+            batch, committedAtomicDeliveries: [], failedAtomicScopes: [], postAugmentBatchForSnapshot: null, resolvedFetchesForSnapshot: null, resolvedParsesForSnapshot: null,
             invoke: async ct =>
             {
                 await using var augmentModule = await moduleCatalog.LeaseOrchestrationAugmentAsync(augment.Module, ct).ConfigureAwait(false);
@@ -272,6 +274,19 @@ public sealed partial class FlowRuntime(
         return await RunAugmentOnwardAsync(pipeline, context, startedAt, augmentIndex + 1, outputBatch, attemptsAlreadyMade: 0, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Runs every delivery route from <paramref name="startRouteIndex"/> onward. Each route renders once
+    /// (<c>delivery:{route}:render</c>) and then hands the rendered batch to each of its deliver actions in order
+    /// (<c>delivery:{route}:deliver:{deliverIndex}</c>). Deliver actions run independently and best-effort: a
+    /// permanent failure of a deliver action in a route WITHOUT an atomic scope is logged, recorded in the result's
+    /// <see cref="FlowExecutionResult.Detail"/>, and the remaining deliver actions and routes still run. A permanent
+    /// failure (render or deliver) in a route WITH an atomic scope compensates every committed deliver action of that
+    /// scope, skips the scope's remaining deliver actions (in this and later routes), lets unrelated routes continue,
+    /// and is rethrown once every route has been processed. When resuming, <paramref name="resumeRenderInput"/>
+    /// resumes the start route's render sub-stage, while <paramref name="resumeDeliverIndex"/> (with
+    /// <paramref name="resumeRenderedBatch"/>) skips the start route's render and its deliver actions before that
+    /// index, which already succeeded (or already failed independently) before the retry was scheduled.
+    /// </summary>
     private async Task<FlowExecutionResult> RunDeliveryLoopAsync(
         PipelineDefinition pipeline,
         FlowExecutionContext context,
@@ -280,23 +295,41 @@ public sealed partial class FlowRuntime(
         int startRouteIndex,
         IntegrationBatch? resumeRenderInput,
         int resumeRenderAttempts,
-        IntegrationBatch? resumeDeliverInput,
+        int? resumeDeliverIndex,
+        IntegrationBatch? resumeRenderedBatch,
         int resumeDeliverAttempts,
         List<FlowRetryCommittedDelivery> committedAtomicDeliveries,
+        HashSet<string> failedAtomicScopes,
         CancellationToken cancellationToken)
     {
+        var atomicScopeFailures = new List<Exception>();
+        var independentDeliverFailures = new List<string>();
+
         for (var routeIndex = startRouteIndex; routeIndex < pipeline.Deliveries.Count; routeIndex++)
         {
             var delivery = pipeline.Deliveries[routeIndex];
             var isResumedRoute = routeIndex == startRouteIndex;
+            var atomicScope = string.IsNullOrWhiteSpace(delivery.AtomicScope) ? null : delivery.AtomicScope;
 
+            if (atomicScope is not null && failedAtomicScopes.Contains(atomicScope))
+            {
+                logger.LogWarning(
+                    "Flow {FlowId} execution {ExecutionId} skipping delivery route {RouteIndex}: atomic scope {Scope} already failed and was compensated earlier in this execution.",
+                    pipeline.Id, context.ExecutionId, routeIndex, atomicScope);
+                continue;
+            }
+
+            var failingModule = delivery.Render.Module;
             try
             {
                 IntegrationBatch renderedBatch;
-                if (isResumedRoute && resumeDeliverInput is { } resumedDeliverBatch)
+                var firstDeliverIndex = 0;
+                if (isResumedRoute && resumeDeliverIndex is { } resumedDeliverIndex && resumeRenderedBatch is { } resumedRenderedBatch)
                 {
-                    // The render sub-stage already succeeded before the crash/failure; jump straight to deliver.
-                    renderedBatch = resumedDeliverBatch;
+                    // The render sub-stage (and every deliver action before the resumed one) already ran before the
+                    // crash/failure; jump straight to the resumed deliver action.
+                    renderedBatch = resumedRenderedBatch;
+                    firstDeliverIndex = resumedDeliverIndex;
                 }
                 else
                 {
@@ -312,7 +345,7 @@ public sealed partial class FlowRuntime(
                     var renderAttempts = isResumedRoute ? resumeRenderAttempts : 0;
                     renderedBatch = await RunStageAsync(
                         pipeline, context, startedAt, $"delivery:{routeIndex}:render", EffectiveRetry(pipeline, delivery.Render), renderAttempts,
-                        renderApplicableBatch, committedAtomicDeliveries, postAugmentBatchForSnapshot: postAugmentBatch, resolvedFetchesForSnapshot: null, resolvedParsesForSnapshot: null,
+                        renderApplicableBatch, committedAtomicDeliveries, failedAtomicScopes, postAugmentBatchForSnapshot: postAugmentBatch, resolvedFetchesForSnapshot: null, resolvedParsesForSnapshot: null,
                         invoke: async ct =>
                         {
                             await using var renderModule = await moduleCatalog.LeaseRenderAsync(delivery.Render.Module, ct).ConfigureAwait(false);
@@ -321,45 +354,28 @@ public sealed partial class FlowRuntime(
                         cancellationToken).ConfigureAwait(false);
                 }
 
-                var deliverApplicableBatch = SplitBatch(renderedBatch, delivery.Deliver).ApplicableBatch;
-                if (deliverApplicableBatch.Count == 0)
+                for (var deliverIndex = firstDeliverIndex; deliverIndex < delivery.Delivers.Count; deliverIndex++)
                 {
-                    continue;
-                }
+                    var action = delivery.Delivers[deliverIndex];
+                    failingModule = action.Deliver.Module;
+                    var deliverAttempts = isResumedRoute && deliverIndex == resumeDeliverIndex ? resumeDeliverAttempts : 0;
 
-                var deliverAttempts = isResumedRoute && resumeDeliverInput is not null ? resumeDeliverAttempts : 0;
-                await RunStageAsync(
-                    pipeline, context, startedAt, $"delivery:{routeIndex}:deliver", EffectiveRetry(pipeline, delivery.Deliver), deliverAttempts,
-                    deliverApplicableBatch, committedAtomicDeliveries, postAugmentBatchForSnapshot: postAugmentBatch, resolvedFetchesForSnapshot: null, resolvedParsesForSnapshot: null,
-                    invoke: async ct =>
+                    try
                     {
-                        await using var deliverModule = await moduleCatalog.LeaseDeliverAsync(delivery.Deliver.Module, ct).ConfigureAwait(false);
-                        if (ExpectsResponse(delivery.Deliver) && deliverModule.Module is IRequestResponseDeliverModule requestResponseModule)
-                        {
-                            var response = await requestResponseModule.DeliverAndCaptureResponseAsync(context, deliverApplicableBatch, delivery.Deliver, ct).ConfigureAwait(false);
-                            context.CaptureResponse(response);
-                        }
-                        else
-                        {
-                            await deliverModule.Module.DeliverAsync(context, deliverApplicableBatch, delivery.Deliver, ct).ConfigureAwait(false);
-                        }
-
-                        return deliverApplicableBatch;
-                    },
-                    cancellationToken).ConfigureAwait(false);
-
-                if (!string.IsNullOrWhiteSpace(delivery.AtomicScope))
-                {
-                    committedAtomicDeliveries.Add(new FlowRetryCommittedDelivery
+                        await RunDeliverActionAsync(
+                            pipeline, context, startedAt, postAugmentBatch, routeIndex, deliverIndex, atomicScope, action, renderedBatch,
+                            deliverAttempts, committedAtomicDeliveries, failedAtomicScopes, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (atomicScope is null && exception is not (FlowRetryScheduledSignal or OperationCanceledException))
                     {
-                        RouteIndex = routeIndex,
-                        AtomicScope = delivery.AtomicScope!,
-                        CompensationModule = delivery.Compensation?.Module,
-                        CompensationSettings = delivery.Compensation is null
-                            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                            : new Dictionary<string, string>(delivery.Compensation.Settings, StringComparer.OrdinalIgnoreCase),
-                        DeliveredPayloads = SnapshotBatch(deliverApplicableBatch)
-                    });
+                        // Independent (no atomic scope) deliver actions are best-effort: record the failure and keep
+                        // going with the route's remaining deliver actions rather than failing the whole execution.
+                        logger.LogError(
+                            exception,
+                            "Flow {FlowId} execution {ExecutionId} delivery route {RouteIndex} deliver action {DeliverIndex} ({Module}) failed permanently; continuing with the remaining deliver actions.",
+                            pipeline.Id, context.ExecutionId, routeIndex, deliverIndex, action.Deliver.Module);
+                        independentDeliverFailures.Add($"route {routeIndex} deliver {deliverIndex} ({action.Deliver.Module}): {exception.Message}");
+                    }
                 }
             }
             catch (FlowRetryScheduledSignal)
@@ -367,16 +383,39 @@ public sealed partial class FlowRuntime(
                 // Not a genuine failure - a retry has already been persisted; bubble straight up without compensating.
                 throw;
             }
-            catch (Exception exception) when (!string.IsNullOrWhiteSpace(delivery.AtomicScope))
+            catch (Exception exception) when (atomicScope is not null)
             {
                 logger.LogError(
                     exception,
                     "Flow {FlowId} execution {ExecutionId} delivery route {RouteIndex} ({Module}) failed permanently inside atomic scope {Scope}; compensating prior committed deliveries in that scope.",
-                    pipeline.Id, context.ExecutionId, routeIndex, delivery.Deliver.Module, delivery.AtomicScope);
-                await CompensateAtomicScopeAsync(pipeline, context, committedAtomicDeliveries, delivery.AtomicScope!, cancellationToken).ConfigureAwait(false);
-                await flowRetryStateStore.DeleteAllForExecutionAsync(pipeline.Id, context.ExecutionId, cancellationToken).ConfigureAwait(false);
-                throw;
+                    pipeline.Id, context.ExecutionId, routeIndex, failingModule, atomicScope);
+                await CompensateAtomicScopeAsync(pipeline, context, committedAtomicDeliveries, atomicScope, cancellationToken).ConfigureAwait(false);
+                committedAtomicDeliveries.RemoveAll(committed => string.Equals(committed.AtomicScope, atomicScope, StringComparison.Ordinal));
+
+                if (exception is OperationCanceledException)
+                {
+                    await flowRetryStateStore.DeleteAllForExecutionAsync(pipeline.Id, context.ExecutionId, cancellationToken).ConfigureAwait(false);
+                    throw;
+                }
+
+                // The scope is now failed: its remaining deliver actions are skipped, but unrelated routes still run.
+                failedAtomicScopes.Add(atomicScope);
+                atomicScopeFailures.Add(exception);
             }
+        }
+
+        if (atomicScopeFailures.Count > 0 || failedAtomicScopes.Count > 0)
+        {
+            await flowRetryStateStore.DeleteAllForExecutionAsync(pipeline.Id, context.ExecutionId, cancellationToken).ConfigureAwait(false);
+            if (atomicScopeFailures.Count == 1)
+            {
+                ExceptionDispatchInfo.Capture(atomicScopeFailures[0]).Throw();
+            }
+
+            var failedScopesMessage = $"Flow '{pipeline.Id}' execution '{context.ExecutionId}' failed: atomic scope(s) {string.Join(", ", failedAtomicScopes.Order(StringComparer.Ordinal))} failed permanently and were compensated.";
+            throw atomicScopeFailures.Count > 1
+                ? new AggregateException(failedScopesMessage, atomicScopeFailures)
+                : new InvalidOperationException(failedScopesMessage);
         }
 
         if (context.PendingCheckpointCompletion is { } pendingCompletion)
@@ -387,19 +426,94 @@ public sealed partial class FlowRuntime(
         await flowRetryStateStore.DeleteAllForExecutionAsync(pipeline.Id, context.ExecutionId, cancellationToken).ConfigureAwait(false);
 
         var completedAt = timeProvider.GetUtcNow();
-        logger.LogInformation(
-            "Flow {FlowId} execution {ExecutionId} completed with {PayloadCount} payload(s).",
-            pipeline.Id, context.ExecutionId, postAugmentBatch.Count);
+        string? detail = null;
+        if (independentDeliverFailures.Count > 0)
+        {
+            detail = $"{independentDeliverFailures.Count} deliver action(s) failed: {string.Join("; ", independentDeliverFailures)}";
+            logger.LogWarning(
+                "Flow {FlowId} execution {ExecutionId} completed with {PayloadCount} payload(s); {FailedDeliverCount} independent deliver action(s) failed.",
+                pipeline.Id, context.ExecutionId, postAugmentBatch.Count, independentDeliverFailures.Count);
+        }
+        else
+        {
+            logger.LogInformation(
+                "Flow {FlowId} execution {ExecutionId} completed with {PayloadCount} payload(s).",
+                pipeline.Id, context.ExecutionId, postAugmentBatch.Count);
+        }
 
         return new FlowExecutionResult(
             pipeline.Id,
             startedAt,
             completedAt,
             postAugmentBatch.Count,
-            pipeline.Deliveries.Select(static route => route.Deliver.Module).ToArray(),
+            pipeline.Deliveries.SelectMany(static route => route.Delivers.Select(static action => action.Deliver.Module)).ToArray(),
             FlowExecutionOutcome.Completed,
-            null,
+            detail,
             context.CapturedResponses.Count > 0 ? context.CapturedResponses : null);
+    }
+
+    /// <summary>
+    /// Runs one deliver action of a route (stage <c>delivery:{route}:deliver:{deliverIndex}</c>) against the route's
+    /// rendered batch, filtered by the action's own conditions. The full rendered batch is what gets snapshotted if a
+    /// retry is scheduled, so the route's remaining deliver actions can still run after a resume. Records the action
+    /// as committed for compensation when the route has an atomic scope.
+    /// </summary>
+    private async Task RunDeliverActionAsync(
+        PipelineDefinition pipeline,
+        FlowExecutionContext context,
+        DateTimeOffset startedAt,
+        IntegrationBatch postAugmentBatch,
+        int routeIndex,
+        int deliverIndex,
+        string? atomicScope,
+        DeliveryActionDefinition action,
+        IntegrationBatch renderedBatch,
+        int attemptsAlreadyMade,
+        List<FlowRetryCommittedDelivery> committedAtomicDeliveries,
+        IReadOnlyCollection<string> failedAtomicScopes,
+        CancellationToken cancellationToken)
+    {
+        var deliverStep = action.Deliver;
+        var deliverApplicableBatch = SplitBatch(renderedBatch, deliverStep).ApplicableBatch;
+        if (deliverApplicableBatch.Count == 0)
+        {
+            return;
+        }
+
+        await RunStageAsync(
+            pipeline, context, startedAt, $"delivery:{routeIndex}:deliver:{deliverIndex}", EffectiveRetry(pipeline, deliverStep), attemptsAlreadyMade,
+            renderedBatch, committedAtomicDeliveries, failedAtomicScopes, postAugmentBatchForSnapshot: postAugmentBatch, resolvedFetchesForSnapshot: null, resolvedParsesForSnapshot: null,
+            invoke: async ct =>
+            {
+                await using var deliverModule = await moduleCatalog.LeaseDeliverAsync(deliverStep.Module, ct).ConfigureAwait(false);
+                if (ExpectsResponse(deliverStep) && deliverModule.Module is IRequestResponseDeliverModule requestResponseModule)
+                {
+                    var response = await requestResponseModule.DeliverAndCaptureResponseAsync(context, deliverApplicableBatch, deliverStep, ct).ConfigureAwait(false);
+                    context.CaptureResponse(response);
+                }
+                else
+                {
+                    await deliverModule.Module.DeliverAsync(context, deliverApplicableBatch, deliverStep, ct).ConfigureAwait(false);
+                }
+
+                return deliverApplicableBatch;
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        if (atomicScope is not null)
+        {
+            committedAtomicDeliveries.Add(new FlowRetryCommittedDelivery
+            {
+                RouteIndex = routeIndex,
+                DeliverIndex = deliverIndex,
+                AtomicScope = atomicScope,
+                CompensationModule = action.Compensation?.Module,
+                CompensationSettings = action.Compensation is null
+                    ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, string>(action.Compensation.Settings, StringComparer.OrdinalIgnoreCase),
+                DeliveredPayloads = SnapshotBatch(deliverApplicableBatch)
+            });
+        }
     }
 
     /// <summary>
@@ -417,6 +531,7 @@ public sealed partial class FlowRuntime(
         int attemptsAlreadyMade,
         IntegrationBatch inputBatch,
         IReadOnlyList<FlowRetryCommittedDelivery> committedAtomicDeliveries,
+        IReadOnlyCollection<string> failedAtomicScopes,
         IntegrationBatch? postAugmentBatchForSnapshot,
         IReadOnlyDictionary<string, IntegrationBatch>? resolvedFetchesForSnapshot,
         IReadOnlyDictionary<string, IntegrationBatch>? resolvedParsesForSnapshot,
@@ -448,7 +563,8 @@ public sealed partial class FlowRuntime(
                     ResolvedFetchPayloads = SnapshotResolvedBatches(resolvedFetchesForSnapshot),
                     ResolvedParsePayloads = SnapshotResolvedBatches(resolvedParsesForSnapshot),
                     PostAugmentPayloads = postAugmentBatchForSnapshot is null ? null : SnapshotBatch(postAugmentBatchForSnapshot),
-                    CommittedAtomicDeliveries = committedAtomicDeliveries.ToList()
+                    CommittedAtomicDeliveries = committedAtomicDeliveries.ToList(),
+                    FailedAtomicScopes = failedAtomicScopes.ToList()
                 };
                 await flowRetryStateStore.UpsertAsync(retryState, cancellationToken).ConfigureAwait(false);
                 logger.LogWarning(

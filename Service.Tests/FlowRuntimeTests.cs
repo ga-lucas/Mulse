@@ -56,9 +56,8 @@ public sealed class FlowRuntimeTests
                 new DeliveryRouteDefinition
                 {
                     Render = new ModuleStepDefinition { Module = "fake-render" },
-                    Deliver = new ModuleStepDefinition { Module = "fake-deliver" },
-                    AtomicScope = atomicScope,
-                    Compensation = compensation
+                    Delivers = [new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "fake-deliver" }, Compensation = compensation }],
+                    AtomicScope = atomicScope
                 }
             ]
         };
@@ -164,7 +163,7 @@ public sealed class FlowRuntimeTests
                 new DeliveryRouteDefinition
                 {
                     Render = new ModuleStepDefinition { Module = "fake-render" },
-                    Deliver = new ModuleStepDefinition { Module = "fake-deliver" }
+                    Delivers = [new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "fake-deliver" } }]
                 }
             ]
         };
@@ -282,14 +281,20 @@ public sealed class FlowRuntimeTests
                 new DeliveryRouteDefinition
                 {
                     Render = new ModuleStepDefinition { Module = "fake-render" },
-                    Deliver = new ModuleStepDefinition { Module = "deliver-ok" },
-                    AtomicScope = "scope-1",
-                    Compensation = new ModuleStepDefinition { Module = "compensate" }
+                    Delivers =
+                    [
+                        new DeliveryActionDefinition
+                        {
+                            Deliver = new ModuleStepDefinition { Module = "deliver-ok" },
+                            Compensation = new ModuleStepDefinition { Module = "compensate" }
+                        }
+                    ],
+                    AtomicScope = "scope-1"
                 },
                 new DeliveryRouteDefinition
                 {
                     Render = new ModuleStepDefinition { Module = "fake-render" },
-                    Deliver = new ModuleStepDefinition { Module = "deliver-fails" },
+                    Delivers = [new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "deliver-fails" } }],
                     AtomicScope = "scope-1"
                 }
             ]
@@ -301,6 +306,200 @@ public sealed class FlowRuntimeTests
 
         Assert.Single(delivered);
         Assert.Single(compensated);
+        Assert.Empty(retryStore.States);
+    }
+
+    private static PipelineDefinition FanOutPipeline(string? atomicScope, params DeliveryActionDefinition[] delivers)
+        => new()
+        {
+            Id = "flow-1",
+            Enabled = true,
+            Fetches = [new FetchNodeDefinition { Id = "primary-fetch", Fetch = new ModuleStepDefinition { Module = "fake-fetch" } }],
+            Parses = [new ParseNodeDefinition { Id = "primary", Parse = new ModuleStepDefinition { Module = "fake-parse" }, FetchNodeIds = ["primary-fetch"] }],
+            Deliveries =
+            [
+                new DeliveryRouteDefinition
+                {
+                    Render = new ModuleStepDefinition { Module = "fake-render" },
+                    Delivers = delivers,
+                    AtomicScope = atomicScope
+                }
+            ]
+        };
+
+    private static DeliveryActionDefinition DeliverAction(string module, string? compensation = null, RetryPolicyDefinition? retry = null)
+        => new()
+        {
+            Deliver = new ModuleStepDefinition { Module = module, Retry = retry },
+            Compensation = compensation is null ? null : new ModuleStepDefinition { Module = compensation }
+        };
+
+    [Fact]
+    public async Task ExecuteAsync_RouteWithTwoDelivers_RendersOnceAndDeliversSameBatchToBoth()
+    {
+        var renderCalls = 0;
+        var emailed = new List<IntegrationBatch>();
+        var archived = new List<IntegrationBatch>();
+        var catalog = new FakeExecutableModuleCatalog()
+            .AddFetch(DelegateModuleFactory.Fetch("fake-fetch", SinglePayloadBatch("order.json", "{\"id\":1}")))
+            .AddParse(DelegateModuleFactory.PassthroughParse("fake-parse"))
+            .AddRender(new DelegateRenderModule("fake-render", (_, batch, _, _) =>
+            {
+                renderCalls++;
+                return Task.FromResult(batch);
+            }))
+            .AddDeliver(DelegateModuleFactory.Deliver("email-deliver", emailed))
+            .AddDeliver(DelegateModuleFactory.Deliver("archive-deliver", archived));
+
+        var (runtime, retryStore, _) = CreateRuntime(catalog, FanOutPipeline(null, DeliverAction("email-deliver"), DeliverAction("archive-deliver")));
+
+        var result = await runtime.ExecuteAsync("flow-1", CancellationToken.None);
+
+        Assert.Equal(FlowExecutionOutcome.Completed, result.Outcome);
+        Assert.Null(result.Detail);
+        Assert.Equal(["email-deliver", "archive-deliver"], result.DeliverModules);
+        Assert.Equal(1, renderCalls);
+        var emailedBatch = Assert.Single(emailed);
+        var archivedBatch = Assert.Single(archived);
+        Assert.Equal("order.json", Assert.Single(emailedBatch.Payloads).Name);
+        Assert.Equal(
+            emailedBatch.Payloads.Select(static payload => (payload.Name, payload.Content.ToString())),
+            archivedBatch.Payloads.Select(static payload => (payload.Name, payload.Content.ToString())));
+        Assert.Empty(retryStore.States);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IndependentDeliverFailsPermanently_StillRunsRemainingDeliversAndCompletes()
+    {
+        var delivered = new List<IntegrationBatch>();
+        var catalog = new FakeExecutableModuleCatalog()
+            .AddFetch(DelegateModuleFactory.Fetch("fake-fetch", SinglePayloadBatch()))
+            .AddParse(DelegateModuleFactory.PassthroughParse("fake-parse"))
+            .AddRender(DelegateModuleFactory.PassthroughRender("fake-render"))
+            .AddDeliver(DelegateModuleFactory.Deliver("sftp-deliver", failOnCall: _ => true))
+            .AddDeliver(DelegateModuleFactory.Deliver("file-deliver", delivered));
+
+        var (runtime, retryStore, _) = CreateRuntime(catalog, FanOutPipeline(null, DeliverAction("sftp-deliver"), DeliverAction("file-deliver")));
+
+        var result = await runtime.ExecuteAsync("flow-1", CancellationToken.None);
+
+        Assert.Equal(FlowExecutionOutcome.Completed, result.Outcome);
+        Assert.Single(delivered);
+        Assert.NotNull(result.Detail);
+        Assert.Contains("1 deliver action(s) failed", result.Detail);
+        Assert.Contains("sftp-deliver", result.Detail);
+        Assert.Empty(retryStore.States);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AtomicScopeSecondDeliverInSameRouteFails_CompensatesFirstDeliverOfThatRoute()
+    {
+        var compensated = new List<IntegrationBatch>();
+        var delivered = new List<IntegrationBatch>();
+        var thirdDelivered = new List<IntegrationBatch>();
+        var catalog = new FakeExecutableModuleCatalog()
+            .AddFetch(DelegateModuleFactory.Fetch("fake-fetch", SinglePayloadBatch()))
+            .AddParse(DelegateModuleFactory.PassthroughParse("fake-parse"))
+            .AddRender(DelegateModuleFactory.PassthroughRender("fake-render"))
+            .AddDeliver(DelegateModuleFactory.Deliver("deliver-ok", delivered))
+            .AddDeliver(DelegateModuleFactory.Deliver("deliver-fails", failOnCall: _ => true))
+            .AddDeliver(DelegateModuleFactory.Deliver("deliver-after", thirdDelivered))
+            .AddDeliver(DelegateModuleFactory.Deliver("compensate", compensated));
+
+        var pipeline = FanOutPipeline(
+            "scope-1",
+            DeliverAction("deliver-ok", compensation: "compensate"),
+            DeliverAction("deliver-fails"),
+            DeliverAction("deliver-after"));
+        var (runtime, retryStore, _) = CreateRuntime(catalog, pipeline);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.ExecuteAsync("flow-1", CancellationToken.None));
+
+        Assert.Single(delivered);
+        Assert.Single(compensated);
+        // The scope is considered failed once any of its deliver actions fails, so the route's remaining actions are skipped.
+        Assert.Empty(thirdDelivered);
+        Assert.Empty(retryStore.States);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AtomicScopeRouteFails_UnrelatedRoutesStillRun()
+    {
+        var unrelatedDelivered = new List<IntegrationBatch>();
+        var catalog = new FakeExecutableModuleCatalog()
+            .AddFetch(DelegateModuleFactory.Fetch("fake-fetch", SinglePayloadBatch()))
+            .AddParse(DelegateModuleFactory.PassthroughParse("fake-parse"))
+            .AddRender(DelegateModuleFactory.PassthroughRender("fake-render"))
+            .AddDeliver(DelegateModuleFactory.Deliver("deliver-fails", failOnCall: _ => true))
+            .AddDeliver(DelegateModuleFactory.Deliver("unrelated-deliver", unrelatedDelivered));
+
+        var pipeline = new PipelineDefinition
+        {
+            Id = "flow-1",
+            Enabled = true,
+            Fetches = [new FetchNodeDefinition { Id = "primary-fetch", Fetch = new ModuleStepDefinition { Module = "fake-fetch" } }],
+            Parses = [new ParseNodeDefinition { Id = "primary", Parse = new ModuleStepDefinition { Module = "fake-parse" }, FetchNodeIds = ["primary-fetch"] }],
+            Deliveries =
+            [
+                new DeliveryRouteDefinition
+                {
+                    Render = new ModuleStepDefinition { Module = "fake-render" },
+                    Delivers = [DeliverAction("deliver-fails")],
+                    AtomicScope = "scope-1"
+                },
+                new DeliveryRouteDefinition
+                {
+                    Render = new ModuleStepDefinition { Module = "fake-render" },
+                    Delivers = [DeliverAction("unrelated-deliver")]
+                }
+            ]
+        };
+        var (runtime, retryStore, _) = CreateRuntime(catalog, pipeline);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.ExecuteAsync("flow-1", CancellationToken.None));
+
+        Assert.Single(unrelatedDelivered);
+        Assert.Empty(retryStore.States);
+    }
+
+    [Fact]
+    public async Task ResumeRetryAsync_SecondDeliverOfRouteRetried_ResumesThatDeliverWithoutRerunningEarlierOnes()
+    {
+        var firstDelivered = new List<IntegrationBatch>();
+        var secondDelivered = new List<IntegrationBatch>();
+        var thirdDelivered = new List<IntegrationBatch>();
+        var catalog = new FakeExecutableModuleCatalog()
+            .AddFetch(DelegateModuleFactory.Fetch("fake-fetch", SinglePayloadBatch()))
+            .AddParse(DelegateModuleFactory.PassthroughParse("fake-parse"))
+            .AddRender(DelegateModuleFactory.PassthroughRender("fake-render"))
+            .AddDeliver(DelegateModuleFactory.Deliver("first-deliver", firstDelivered))
+            .AddDeliver(DelegateModuleFactory.Deliver("second-deliver", secondDelivered, failOnCall: call => call == 1))
+            .AddDeliver(DelegateModuleFactory.Deliver("third-deliver", thirdDelivered));
+
+        var retryPolicy = new RetryPolicyDefinition { MaxAttempts = 2, Delay = TimeSpan.FromMilliseconds(1) };
+        var pipeline = FanOutPipeline(
+            null,
+            DeliverAction("first-deliver"),
+            DeliverAction("second-deliver", retry: retryPolicy),
+            DeliverAction("third-deliver"));
+        var (runtime, retryStore, _) = CreateRuntime(catalog, pipeline);
+
+        var scheduled = await runtime.ExecuteAsync("flow-1", CancellationToken.None);
+
+        Assert.Equal(FlowExecutionOutcome.Retrying, scheduled.Outcome);
+        var pendingState = Assert.Single(retryStore.States);
+        Assert.Equal("delivery:0:deliver:1", pendingState.StageId);
+        Assert.Single(firstDelivered);
+        Assert.Empty(secondDelivered);
+        Assert.Empty(thirdDelivered);
+
+        var resumed = await runtime.ResumeRetryAsync(pendingState, CancellationToken.None);
+
+        Assert.NotNull(resumed);
+        Assert.Equal(FlowExecutionOutcome.Completed, resumed!.Outcome);
+        Assert.Single(firstDelivered);
+        Assert.Single(secondDelivered);
+        Assert.Single(thirdDelivered);
         Assert.Empty(retryStore.States);
     }
 
@@ -336,7 +535,7 @@ public sealed class FlowRuntimeTests
                 new DeliveryRouteDefinition
                 {
                     Render = new ModuleStepDefinition { Module = "fake-render" },
-                    Deliver = new ModuleStepDefinition { Module = "fake-deliver" }
+                    Delivers = [new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "fake-deliver" } }]
                 }
             ]
         };

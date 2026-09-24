@@ -15,7 +15,8 @@ public partial class Designer
             group.Key,
             group.Min(static node => node.Order),
             group.FirstOrDefault(static node => node.Stage == NodeStage.Render),
-            group.FirstOrDefault(static node => node.Stage == NodeStage.Deliver)))
+            // OrderBy is stable, so deliver nodes sharing an Order keep their canvas creation order.
+            group.Where(static node => node.Stage == NodeStage.Deliver).OrderBy(static node => node.Order).ToList()))
         .OrderBy(static route => route.Order)
         .ToList();
 
@@ -525,6 +526,120 @@ public partial class Designer
         _selectedNodeId = render.Id;
     }
 
+    /// <summary>
+    /// The toolbox's "Extra deliver" click action: adds one more deliver node to the delivery route of the currently
+    /// selected render/deliver node (or to the only route, when there is just one), then re-lays out the canvas.
+    /// </summary>
+    private void AddDeliverNode()
+    {
+        var routes = Routes;
+        var targetRoute = SelectedNode is { Stage: NodeStage.Render or NodeStage.Deliver } selected
+            ? routes.FirstOrDefault(route => string.Equals(route.RouteId, selected.RouteId, StringComparison.Ordinal))
+            : routes.Count == 1 ? routes[0] : null;
+
+        if (targetRoute is null)
+        {
+            _errorMessage = routes.Count == 0
+                ? "Add a delivery route first; an extra deliver node joins an existing route's render step."
+                : "Select one of a delivery route's render or deliver nodes (or drop the Extra deliver item onto a route) to add a deliver node to it.";
+            return;
+        }
+
+        AddDeliverToRoute(targetRoute.RouteId);
+    }
+
+    /// <summary>
+    /// Toolbox-drop variant of <see cref="AddDeliverNode"/>: dropping onto (or close to) an existing delivery route
+    /// attaches the new deliver node to that route at the drop position; dropping elsewhere falls back to the
+    /// selected node's route, if any.
+    /// </summary>
+    private void AddDeliverNodeAt(double x, double y)
+    {
+        var targetRoute = FindRouteAt(x, y)
+            ?? (SelectedNode is { Stage: NodeStage.Render or NodeStage.Deliver } selected ? FindRoute(selected.RouteId) : null);
+
+        if (targetRoute is null)
+        {
+            _errorMessage = Routes.Count == 0
+                ? "Add a delivery route first; an extra deliver node joins an existing route's render step."
+                : "Drop the Extra deliver item onto an existing delivery route (its render or deliver nodes) to add a deliver node to it.";
+            return;
+        }
+
+        AddDeliverToRoute(targetRoute.RouteId, (x, y));
+    }
+
+    /// <summary>
+    /// Adds one more deliver node to an existing delivery route: it shares the route's <see cref="FlowNode.RouteId"/>
+    /// and <see cref="FlowNode.Order"/>, so it receives the same rendered output as the route's other deliver nodes
+    /// and runs independently of them. Placed at <paramref name="position"/> when given (toolbox drop), otherwise the
+    /// canvas is re-laid out so the new node stacks below the route's existing deliver nodes.
+    /// </summary>
+    private FlowNode? AddDeliverToRoute(string routeId, (double X, double Y)? position = null)
+    {
+        var route = FindRoute(routeId);
+        if (route is null)
+        {
+            return null;
+        }
+
+        var deliverModule = ModulesForStage(NodeStage.Deliver).FirstOrDefault();
+        var deliver = CreateNode(NodeStage.Deliver, deliverModule?.Id ?? string.Empty, order: route.Order, routeId: routeId);
+        ApplyModuleDefaults(deliver, deliverModule);
+
+        if (position is { } drop)
+        {
+            deliver.X = drop.X;
+            deliver.Y = drop.Y;
+        }
+        else
+        {
+            AutoLayout();
+        }
+
+        _selectedNodeId = deliver.Id;
+        _errorMessage = null;
+        _statusMessage = $"Added deliver node {route.Delivers.Count + 1} to delivery route {RouteNumber(deliver)}. It receives the same rendered output as the route's other deliver nodes and runs independently of them.";
+        return deliver;
+    }
+
+    /// <summary>The delivery route whose render/deliver bounds contain the canvas point, if any (closest render node wins when routes overlap).</summary>
+    private RouteView? FindRouteAt(double x, double y)
+    {
+        return Routes
+            .Select(route => (Route: route, Members: RouteMembers(route)))
+            .Where(static candidate => candidate.Members.Count > 0)
+            .Select(candidate => (candidate.Route, Anchor: candidate.Members[0], Bounds: NodeBounds(candidate.Members)))
+            .Where(candidate => x >= candidate.Bounds.X - LaneGap
+                && x <= candidate.Bounds.X + candidate.Bounds.Width + LaneGap
+                && y >= candidate.Bounds.Y - LaneGap
+                && y <= candidate.Bounds.Y + candidate.Bounds.Height + LaneGap)
+            .OrderBy(candidate => Math.Abs(candidate.Anchor.X - x) + Math.Abs(candidate.Anchor.Y - y))
+            .Select(static candidate => candidate.Route)
+            .FirstOrDefault();
+    }
+
+    private static List<FlowNode> RouteMembers(RouteView route)
+    {
+        var members = new List<FlowNode>(route.Delivers.Count + 1);
+        if (route.Render is { } render)
+        {
+            members.Add(render);
+        }
+
+        members.AddRange(route.Delivers);
+        return members;
+    }
+
+    private static (double X, double Y, double Width, double Height) NodeBounds(IReadOnlyList<FlowNode> nodes)
+    {
+        var minX = nodes.Min(static node => node.X);
+        var minY = nodes.Min(static node => node.Y);
+        var maxX = nodes.Max(static node => node.X) + NodeWidth;
+        var maxY = nodes.Max(static node => node.Y) + NodeHeight;
+        return (minX, minY, maxX - minX, maxY - minY);
+    }
+
     private void RemoveNode(FlowNode node)
     {
         _nodes.Remove(node);
@@ -544,6 +659,20 @@ public partial class Designer
 
         _nodes.RemoveAll(node => string.Equals(node.RouteId, routeId, StringComparison.Ordinal));
         _selectedNodeId = null;
+    }
+
+    /// <summary>Removes one deliver node from a route that still has at least one other deliver node (use <see cref="RemoveRoute"/> otherwise).</summary>
+    private void RemoveDeliverNode(FlowNode deliver)
+    {
+        if (FindRoute(deliver.RouteId) is not { Delivers.Count: > 1 })
+        {
+            return;
+        }
+
+        var heading = NodeHeading(deliver);
+        RemoveNode(deliver);
+        AutoLayout();
+        _statusMessage = $"Removed {heading}.";
     }
 
     private void MoveAugment(FlowNode node, int delta)
@@ -652,22 +781,26 @@ public partial class Designer
             column++;
         }
 
-        var routeIndex = 0;
+        // Each route renders once and fans out to its deliver nodes, stacked in the next column with the render node
+        // centred beside them (mirroring how a parse node sits beside its stacked fetch nodes).
+        var deliverStride = NodeHeight + LanePaddingX;
+        var routeY = downstreamY;
         foreach (var route in Routes)
         {
+            var rows = Math.Max(1, route.Delivers.Count);
             if (route.Render is { } render)
             {
                 render.X = downstreamX + (column * ColumnSpacing);
-                render.Y = downstreamY + (routeIndex * RowSpacing);
+                render.Y = routeY + ((rows - 1) * deliverStride / 2);
             }
 
-            if (route.Deliver is { } deliver)
+            for (var index = 0; index < route.Delivers.Count; index++)
             {
-                deliver.X = downstreamX + ((column + 1) * ColumnSpacing);
-                deliver.Y = downstreamY + (routeIndex * RowSpacing);
+                route.Delivers[index].X = downstreamX + ((column + 1) * ColumnSpacing);
+                route.Delivers[index].Y = routeY + (index * deliverStride);
             }
 
-            routeIndex++;
+            routeY += ((rows - 1) * deliverStride) + RowSpacing;
         }
     }
 
@@ -761,7 +894,7 @@ public partial class Designer
                 edges.Add(new FlowEdge(tail, render, IsDependency: false));
             }
 
-            if (route.Deliver is { } deliver)
+            foreach (var deliver in route.Delivers)
             {
                 edges.Add(new FlowEdge(render, deliver, IsDependency: false));
             }

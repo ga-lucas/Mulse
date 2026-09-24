@@ -424,7 +424,7 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
         return new DeliveryRouteDefinition
         {
             Render = MapStep(route.Render),
-            Deliver = MapStep(route.Deliver)
+            Delivers = (route.Delivers ?? []).Select(action => new DeliveryActionDefinition { Deliver = MapStep(action.Deliver) }).ToList()
         };
     }
 

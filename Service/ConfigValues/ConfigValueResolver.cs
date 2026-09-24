@@ -103,9 +103,12 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
         return new DeliveryRouteDefinition
         {
             Render = ResolveStep(route.Render, configValues, missingReferences),
-            Deliver = ResolveStep(route.Deliver, configValues, missingReferences),
-            AtomicScope = route.AtomicScope,
-            Compensation = route.Compensation is null ? null : ResolveStep(route.Compensation, configValues, missingReferences)
+            Delivers = route.Delivers.Select(action => new DeliveryActionDefinition
+            {
+                Deliver = ResolveStep(action.Deliver, configValues, missingReferences),
+                Compensation = action.Compensation is null ? null : ResolveStep(action.Compensation, configValues, missingReferences)
+            }).ToList(),
+            AtomicScope = route.AtomicScope
         };
     }
 
@@ -161,10 +164,14 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
             {
                 var route = pipeline.Deliveries[i];
                 ScanStep(route.Render, pipeline.Id, $"deliveries[{i}].render.settings", configValues, usages);
-                ScanStep(route.Deliver, pipeline.Id, $"deliveries[{i}].deliver.settings", configValues, usages);
-                if (route.Compensation is not null)
+                for (var j = 0; j < route.Delivers.Count; j++)
                 {
-                    ScanStep(route.Compensation, pipeline.Id, $"deliveries[{i}].compensation.settings", configValues, usages);
+                    var action = route.Delivers[j];
+                    ScanStep(action.Deliver, pipeline.Id, $"deliveries[{i}].delivers[{j}].deliver.settings", configValues, usages);
+                    if (action.Compensation is not null)
+                    {
+                        ScanStep(action.Compensation, pipeline.Id, $"deliveries[{i}].delivers[{j}].compensation.settings", configValues, usages);
+                    }
                 }
             }
         }

@@ -123,7 +123,7 @@ public sealed class FlowDesignServiceTests
             new DeliveryRouteRequest
             {
                 Render = new FlowStepRequest { Module = "fake-render" },
-                Deliver = new FlowStepRequest { Module = "fake-deliver" }
+                Delivers = [new DeliveryActionRequest { Deliver = new FlowStepRequest { Module = "fake-deliver" } }]
             }
         ]
     };

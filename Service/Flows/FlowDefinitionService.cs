@@ -89,12 +89,21 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
             ValidateConditions(augment, pipeline.Id);
         }
 
-        foreach (var delivery in pipeline.Deliveries)
+        for (var routeIndex = 0; routeIndex < pipeline.Deliveries.Count; routeIndex++)
         {
+            var delivery = pipeline.Deliveries[routeIndex];
+            if (delivery.Delivers.Count == 0)
+            {
+                throw new ArgumentException($"Flow '{pipeline.Id}' delivery route {routeIndex} must define at least one deliver action.", nameof(pipeline));
+            }
+
             ValidateModuleReference(delivery.Render.Module, ModuleKind.Render, availableModules, pipeline.Id);
-            ValidateModuleReference(delivery.Deliver.Module, ModuleKind.Deliver, availableModules, pipeline.Id);
             ValidateConditions(delivery.Render, pipeline.Id);
-            ValidateConditions(delivery.Deliver, pipeline.Id);
+            foreach (var action in delivery.Delivers)
+            {
+                ValidateModuleReference(action.Deliver.Module, ModuleKind.Deliver, availableModules, pipeline.Id);
+                ValidateConditions(action.Deliver, pipeline.Id);
+            }
         }
     }
 

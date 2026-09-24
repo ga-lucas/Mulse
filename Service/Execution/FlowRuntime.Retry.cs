@@ -54,18 +54,25 @@ public sealed partial class FlowRuntime
                 var parts = retryState.StageId.Split(':');
                 var routeIndex = int.Parse(parts[1]);
                 var postAugmentBatch = RestoreBatch(retryState.PostAugmentPayloads ?? []);
+                var failedAtomicScopes = new HashSet<string>(retryState.FailedAtomicScopes, StringComparer.Ordinal);
 
-                return string.Equals(parts[2], "render", StringComparison.Ordinal)
-                    ? await RunDeliveryLoopAsync(
+                if (string.Equals(parts[2], "render", StringComparison.Ordinal))
+                {
+                    return await RunDeliveryLoopAsync(
                         pipeline, context, retryState.ExecutionStartedAt, postAugmentBatch, routeIndex,
                         resumeRenderInput: inputBatch, resumeRenderAttempts: retryState.AttemptsMade,
-                        resumeDeliverInput: null, resumeDeliverAttempts: 0,
-                        committedAtomicDeliveries, cancellationToken).ConfigureAwait(false)
-                    : await RunDeliveryLoopAsync(
-                        pipeline, context, retryState.ExecutionStartedAt, postAugmentBatch, routeIndex,
-                        resumeRenderInput: null, resumeRenderAttempts: 0,
-                        resumeDeliverInput: inputBatch, resumeDeliverAttempts: retryState.AttemptsMade,
-                        committedAtomicDeliveries, cancellationToken).ConfigureAwait(false);
+                        resumeDeliverIndex: null, resumeRenderedBatch: null, resumeDeliverAttempts: 0,
+                        committedAtomicDeliveries, failedAtomicScopes, cancellationToken).ConfigureAwait(false);
+                }
+
+                // "delivery:{route}:deliver:{deliverIndex}"; a deliver stage's snapshotted input is the route's full
+                // rendered batch, so the resumed deliver action and every later one of the same route can run from it.
+                var deliverIndex = parts.Length > 3 ? int.Parse(parts[3]) : 0;
+                return await RunDeliveryLoopAsync(
+                    pipeline, context, retryState.ExecutionStartedAt, postAugmentBatch, routeIndex,
+                    resumeRenderInput: null, resumeRenderAttempts: 0,
+                    resumeDeliverIndex: deliverIndex, resumeRenderedBatch: inputBatch, resumeDeliverAttempts: retryState.AttemptsMade,
+                    committedAtomicDeliveries, failedAtomicScopes, cancellationToken).ConfigureAwait(false);
             }
             catch (FlowRetryScheduledSignal signal)
             {

@@ -2,20 +2,20 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Service.Models;
 
-/// <summary>Represents one render and deliver route within a flow.</summary>
+/// <summary>Represents one delivery route within a flow: a single render step whose output is handed to one or more deliver actions.</summary>
 public sealed record DeliveryRouteRequest
 {
-    /// <summary>The render step that prepares outbound content.</summary>
+    /// <summary>The render step that prepares outbound content, run once per route.</summary>
     [Required]
     public required FlowStepRequest Render { get; init; }
 
-    /// <summary>The delivery step that dispatches the rendered payload.</summary>
+    /// <summary>
+    /// The deliver actions (at least one) that each independently dispatch the route's rendered payload. A permanent
+    /// failure of one deliver action does not stop the others unless the route has an <see cref="AtomicScope"/>.
+    /// </summary>
     [Required]
-    public required FlowStepRequest Deliver { get; init; }
+    public required IReadOnlyList<DeliveryActionRequest> Delivers { get; init; }
 
-    /// <summary>Optional atomic-transaction scope name. Routes sharing a scope are compensated together on failure.</summary>
+    /// <summary>Optional atomic-transaction scope name, applying to every deliver action of this route. Deliver actions sharing a scope are compensated together on failure.</summary>
     public string? AtomicScope { get; init; }
-
-    /// <summary>Optional deliver-module step that undoes this route's delivery if a later route in the same atomic scope fails.</summary>
-    public FlowStepRequest? Compensation { get; init; }
 }

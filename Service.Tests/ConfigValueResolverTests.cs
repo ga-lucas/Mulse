@@ -40,7 +40,7 @@ public class ConfigValueResolverTests
                 new DeliveryRouteDefinition
                 {
                     Render = new ModuleStepDefinition { Module = "json-render" },
-                    Deliver = new ModuleStepDefinition { Module = "http-deliver" }
+                    Delivers = [new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "http-deliver" } }]
                 }
             ]
         };

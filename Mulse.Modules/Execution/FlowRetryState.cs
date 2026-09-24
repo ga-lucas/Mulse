@@ -15,7 +15,7 @@ public sealed class FlowRetryState
 
     /// <summary>
     /// Identifies which stage of the flow is stalled: "fetch:{fetchNodeId}", "parse:{parseNodeId}",
-    /// "augment:{index}", "delivery:{routeIndex}:render", or "delivery:{routeIndex}:deliver".
+    /// "augment:{index}", "delivery:{routeIndex}:render", or "delivery:{routeIndex}:deliver:{deliverIndex}".
     /// </summary>
     public string StageId { get; init; } = string.Empty;
 
@@ -29,7 +29,11 @@ public sealed class FlowRetryState
     /// <summary>When the overall flow execution originally started, preserved across resumes for the final result.</summary>
     public DateTimeOffset ExecutionStartedAt { get; init; }
 
-    /// <summary>The batch this stage should be (re)invoked with when it is retried.</summary>
+    /// <summary>
+    /// The batch this stage should be (re)invoked with when it is retried. For a deliver stage this is the route's
+    /// full rendered batch (before that deliver action's own conditions are applied), so the remaining deliver
+    /// actions of the same route can still run after the resumed one.
+    /// </summary>
     public List<FlowOrchestrationPayloadSnapshot> InputPayloads { get; init; } = [];
 
     /// <summary>
@@ -54,4 +58,10 @@ public sealed class FlowRetryState
 
     /// <summary>Atomic-scope deliveries already committed earlier in this same execution, for compensation on eventual failure.</summary>
     public List<FlowRetryCommittedDelivery> CommittedAtomicDeliveries { get; init; } = [];
+
+    /// <summary>
+    /// Atomic scopes that already failed permanently (and were compensated) earlier in this same execution, so a
+    /// resume keeps skipping their remaining deliver actions and still reports the execution as failed at the end.
+    /// </summary>
+    public List<string> FailedAtomicScopes { get; init; } = [];
 }

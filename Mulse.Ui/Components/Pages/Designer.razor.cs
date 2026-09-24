@@ -251,6 +251,9 @@ public partial class Designer : IAsyncDisposable
             case "route":
                 AddDeliveryRouteAt(x, y);
                 break;
+            case "deliver":
+                AddDeliverNodeAt(x, y);
+                break;
         }
 
         StateHasChanged();
@@ -407,8 +410,16 @@ public partial class Designer : IAsyncDisposable
         foreach (var route in flow.Deliveries)
         {
             var routeId = Guid.NewGuid().ToString("n");
-            CreateNode(NodeStage.Render, route.Render.Module, route.Render.Settings, order: routeIndex, routeId: routeId, name: route.Render.Name);
-            CreateNode(NodeStage.Deliver, route.Deliver.Module, route.Deliver.Settings, order: routeIndex, routeId: routeId, name: route.Deliver.Name);
+            var render = CreateNode(NodeStage.Render, route.Render.Module, route.Render.Settings, order: routeIndex, routeId: routeId, name: route.Render.Name);
+            render.AtomicScope = NormalizeAtomicScope(route.AtomicScope);
+            foreach (var action in route.Delivers ?? [])
+            {
+                var deliver = CreateNode(NodeStage.Deliver, action.Deliver.Module, action.Deliver.Settings, order: routeIndex, routeId: routeId, name: action.Deliver.Name);
+                deliver.Compensation = action.Compensation is { } compensation
+                    ? new FlowStepRequestViewModel(compensation.Module, new Dictionary<string, string>(compensation.Settings, StringComparer.OrdinalIgnoreCase), Name: compensation.Name)
+                    : null;
+            }
+
             routeIndex++;
         }
 
@@ -573,11 +584,11 @@ public partial class Designer : IAsyncDisposable
 
             foreach (var route in routes)
             {
-                if (route.Render is null || route.Deliver is null
+                if (route.Render is null || route.Delivers.Count == 0
                     || string.IsNullOrWhiteSpace(route.Render.ModuleId)
-                    || string.IsNullOrWhiteSpace(route.Deliver.ModuleId))
+                    || route.Delivers.Any(static deliver => string.IsNullOrWhiteSpace(deliver.ModuleId)))
                 {
-                    throw new InvalidOperationException("Every delivery route needs a render and a deliver module.");
+                    throw new InvalidOperationException("Every delivery route needs a render module and at least one deliver node, and every deliver node needs a module.");
                 }
             }
 
@@ -621,7 +632,12 @@ public partial class Designer : IAsyncDisposable
                 .ToArray();
             var augmentSteps = augments.Select(ToStepRequest).ToArray();
             var deliverySteps = routes
-                .Select(static route => new DeliveryRouteRequestViewModel(ToStepRequest(route.Render!), ToStepRequest(route.Deliver!)))
+                .Select(static route => new DeliveryRouteRequestViewModel(
+                    ToStepRequest(route.Render!),
+                    route.Delivers
+                        .Select(static deliver => new DeliveryActionRequestViewModel(ToStepRequest(deliver), ToCompensationRequest(deliver)))
+                        .ToArray(),
+                    NormalizeAtomicScope(route.Render!.AtomicScope)))
                 .ToArray();
 
             FlowViewModel saved;
@@ -738,8 +754,8 @@ public partial class Designer : IAsyncDisposable
         NodeStage.Fetch => "Acquires raw content. One or more parse nodes parse its output, and it can consume other parse nodes' finished output as its input.",
         NodeStage.Parse => "Parses the raw output of every linked fetch node with the same module and settings, then merges the results into one working batch.",
         NodeStage.Augment => "Join, decision, and mapping steps executed once every source has been fetched and parsed.",
-        NodeStage.Render => "Prepares outbound content for one delivery route.",
-        _ => "Dispatches the rendered payload for one delivery route."
+        NodeStage.Render => "Prepares outbound content for one delivery route, once; every deliver node of the route receives the same rendered output.",
+        _ => "Dispatches the rendered payload of its delivery route. A route can have several deliver nodes, each running independently."
     };
 
     private string NodeHeading(FlowNode node)
@@ -751,8 +767,36 @@ public partial class Designer : IAsyncDisposable
         NodeStage.Parse => string.IsNullOrWhiteSpace(node.GraphId) ? "Parse" : $"Parse - {node.GraphId}",
         NodeStage.Augment => $"Augment {AugmentNodes.IndexOf(node) + 1}",
         NodeStage.Render => $"Render {RouteNumber(node)}",
-        _ => $"Deliver {RouteNumber(node)}"
+        _ => DeliverHeading(node)
     };
+
+    /// <summary>"Deliver 2" for a route's only deliver node; "Deliver 2.1", "Deliver 2.2", ... once a route has several.</summary>
+    private string DeliverHeading(FlowNode node)
+    {
+        var route = FindRoute(node.RouteId);
+        if (route is null || route.Delivers.Count < 2)
+        {
+            return $"Deliver {RouteNumber(node)}";
+        }
+
+        return $"Deliver {RouteNumber(node)}.{IndexOfNode(route.Delivers, node) + 1}";
+    }
+
+    private RouteView? FindRoute(string routeId)
+        => Routes.FirstOrDefault(route => string.Equals(route.RouteId, routeId, StringComparison.Ordinal));
+
+    private static int IndexOfNode(IReadOnlyList<FlowNode> nodes, FlowNode node)
+    {
+        for (var index = 0; index < nodes.Count; index++)
+        {
+            if (ReferenceEquals(nodes[index], node))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
 
     private int RouteNumber(FlowNode node)
     {
@@ -792,6 +836,18 @@ public partial class Designer : IAsyncDisposable
 
     private static FlowStepRequestViewModel ToStepRequest(FlowNode node)
         => new(node.ModuleId, CreateSettingsCopy(node.Settings), Name: string.IsNullOrWhiteSpace(node.Name) ? null : node.Name.Trim());
+
+    /// <summary>
+    /// The deliver node's carried-through compensation step, or null when it has none or it names no module (e.g. the
+    /// empty placeholder a BizTalk atomic-scope draft starts with).
+    /// </summary>
+    private static FlowStepRequestViewModel? ToCompensationRequest(FlowNode deliver)
+        => deliver.Compensation is { } compensation && !string.IsNullOrWhiteSpace(compensation.Module)
+            ? compensation with { Settings = CreateSettingsCopy(compensation.Settings) }
+            : null;
+
+    private static string? NormalizeAtomicScope(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static Dictionary<string, string> CreateSettingsCopy(Dictionary<string, string> settings)
     {
@@ -893,6 +949,18 @@ public partial class Designer : IAsyncDisposable
         /// <summary>Parse nodes only: ids of the fetch nodes whose raw output this parse node parses.</summary>
         public List<string> FetchNodeIds { get; } = [];
 
+        /// <summary>
+        /// Render nodes only: the optional atomic-transaction scope of this node's delivery route, applying to every
+        /// deliver node sharing its <see cref="RouteId"/>.
+        /// </summary>
+        public string? AtomicScope { get; set; }
+
+        /// <summary>
+        /// Deliver nodes only: the optional compensation step that undoes this deliver action inside an atomic scope.
+        /// Carried through load/save unchanged; it isn't edited on the canvas.
+        /// </summary>
+        public FlowStepRequestViewModel? Compensation { get; set; }
+
         public double X { get; set; }
 
         public double Y { get; set; }
@@ -900,7 +968,11 @@ public partial class Designer : IAsyncDisposable
 
     private sealed record FlowEdge(FlowNode From, FlowNode To, bool IsDependency);
 
-    private sealed record RouteView(string RouteId, int Order, FlowNode? Render, FlowNode? Deliver);
+    /// <summary>
+    /// One delivery route on the canvas: the render node and every deliver node sharing <paramref name="RouteId"/>.
+    /// <paramref name="Delivers"/> is ordered by <see cref="FlowNode.Order"/>, then canvas creation order.
+    /// </summary>
+    private sealed record RouteView(string RouteId, int Order, FlowNode? Render, IReadOnlyList<FlowNode> Delivers);
 
     private enum JoinMappingField
     {

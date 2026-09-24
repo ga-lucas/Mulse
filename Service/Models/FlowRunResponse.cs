@@ -10,7 +10,8 @@ public sealed record FlowRunResponse(
     int ResponsePayloadCount = 0,
     string Outcome = "Completed",
     DateTimeOffset? NextAttemptAt = null,
-    IReadOnlyList<FlowRunResponsePayload>? ResponsePayloads = null);
+    IReadOnlyList<FlowRunResponsePayload>? ResponsePayloads = null,
+    string? Detail = null);
 
 /// <summary>
 /// A single response payload captured from a request-response deliver module (see

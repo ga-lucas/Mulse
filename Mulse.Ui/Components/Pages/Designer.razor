@@ -251,10 +251,13 @@
             <button class="toolbox-item" data-node-type="route" data-node-label="Delivery route" @onclick="AddDeliveryRoute">
                 <span class="toolbox-icon">⑂→</span> Delivery route
             </button>
+            <button class="toolbox-item" data-node-type="deliver" data-node-label="Extra deliver" @onclick="AddDeliverNode" disabled="@(Routes.Count == 0)" title="Adds another deliver node to an existing delivery route, so the route's single render output is also delivered here. Drop it onto a route (or click it while one of the route's nodes is selected). Each deliver node runs independently.">
+                <span class="toolbox-icon">⑂+</span> Extra deliver
+            </button>
         </div>
     </FloatingPanel>
 
-    <FloatingPanel Title="Flow overview" Icon="🗺" X="24" Y="280" Width="260">
+    <FloatingPanel Title="Flow overview" Icon="🗺" X="24" Y="400" Width="260">
         @if (_unresolvedConfigCount > 0)
         {
             <p class="status-banner error compact">
@@ -780,13 +783,36 @@
 
                 @if (node.Stage is NodeStage.Render or NodeStage.Deliver)
                 {
+                    var route = FindRoute(node.RouteId);
+                    var deliverCount = route?.Delivers.Count ?? 0;
                     <h3>Delivery route</h3>
-                    <p class="panel-hint">Route @RouteNumber(node) pairs one render step with one deliver step.</p>
+                    <p class="panel-hint">Route @RouteNumber(node) renders once and hands the same rendered output to its @deliverCount deliver node(s). Each deliver node runs independently: if one fails, the others still run (unless the route has an atomic scope).</p>
+
+                    @if (route?.Render is { } routeRender)
+                    {
+                        <label class="field-label">Atomic scope (optional)</label>
+                        <input class="mapping-input" value="@routeRender.AtomicScope" placeholder="e.g. order-commit"
+                               @onchange="@(args => { routeRender.AtomicScope = NormalizeAtomicScope(args.Value?.ToString()); })" />
+                        <p class="field-hint">Routes sharing a scope are all-or-nothing: if any of their deliver nodes fails permanently, the scope's already-delivered actions are compensated and its remaining ones are skipped. Leave empty for independent, best-effort delivery.</p>
+                    }
+
+                    @if (node.Stage == NodeStage.Deliver && node.Compensation is { } compensation && !string.IsNullOrWhiteSpace(compensation.Module))
+                    {
+                        <p class="field-hint">Compensation: <code>@compensation.Module</code> (kept as-is when saving; configure it through the flows API).</p>
+                    }
+
+                    <div class="action-row">
+                        <button class="secondary-button" @onclick="() => AddDeliverToRoute(node.RouteId)" title="Adds another deliver node that receives this route's rendered output.">Add deliver node</button>
+                    </div>
                 }
 
                 <div class="action-row">
                     @if (node.Stage is NodeStage.Render or NodeStage.Deliver)
                     {
+                        @if (node.Stage == NodeStage.Deliver && (FindRoute(node.RouteId)?.Delivers.Count ?? 0) > 1)
+                        {
+                            <button class="secondary-button" @onclick="() => RemoveDeliverNode(node)" title="Removes only this deliver node; the route keeps its render node and other deliver nodes.">Remove deliver node</button>
+                        }
                         <button class="secondary-button" @onclick="() => RemoveRoute(node.RouteId)">Remove route</button>
                     }
                     else if (node.Stage == NodeStage.Fetch)

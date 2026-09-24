@@ -1,8 +1,7 @@
 namespace Service.Models;
 
-/// <summary>Represents one configured render and deliver route inside a flow.</summary>
+/// <summary>Represents one configured delivery route inside a flow: a single render step and its deliver actions.</summary>
 public sealed record DeliveryRouteResponse(
     ModuleStepResponse Render,
-    ModuleStepResponse Deliver,
-    string? AtomicScope = null,
-    ModuleStepResponse? Compensation = null);
+    IReadOnlyList<DeliveryActionResponse> Delivers,
+    string? AtomicScope = null);

@@ -234,7 +234,11 @@
         try
         {
             var result = await ApiClient.RunFlowAsync(flowId, CancellationToken.None);
-            _lastRunMessage = $"Ran {result.FlowId} with {result.PayloadCount} payload(s) across {result.DeliverModules.Count} delivery route(s).";
+            _lastRunMessage = $"Ran {result.FlowId} with {result.PayloadCount} payload(s) across {result.DeliverModules.Count} deliver action(s).";
+            if (!string.IsNullOrWhiteSpace(result.Detail))
+            {
+                _lastRunMessage += $" {result.Detail}";
+            }
         }
         catch (Exception exception)
         {

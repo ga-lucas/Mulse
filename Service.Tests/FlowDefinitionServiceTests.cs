@@ -15,7 +15,7 @@ public class FlowDefinitionServiceTests
         ("http-deliver", ModuleKind.Deliver));
 
     private static readonly List<DeliveryRouteDefinition> Deliveries =
-        [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Deliver = new ModuleStepDefinition { Module = "http-deliver" } }];
+        [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Delivers = [new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "http-deliver" } }] }];
 
     private static FetchNodeDefinition Fetch(string id, string module = "file-system-fetch", params string[] inputParseIds)
         => new() { Id = id, Fetch = new ModuleStepDefinition { Module = module }, InputParseIds = [.. inputParseIds] };
@@ -25,6 +25,9 @@ public class FlowDefinitionServiceTests
 
     private static PipelineDefinition Pipeline(string id, List<FetchNodeDefinition> fetches, List<ParseNodeDefinition> parses)
         => new() { Id = id, Fetches = fetches, Parses = parses, Deliveries = Deliveries };
+
+    private static PipelineDefinition PipelineWithDeliveries(string id, List<DeliveryRouteDefinition> deliveries)
+        => new() { Id = id, Fetches = [Fetch("primary-fetch")], Parses = [Parse("primary", "primary-fetch")], Deliveries = deliveries };
 
     private static PipelineDefinition ValidPipeline(string id = "flow-1")
         => Pipeline(id, [Fetch("primary-fetch")], [Parse("primary", "primary-fetch")]);
@@ -233,5 +236,58 @@ public class FlowDefinitionServiceTests
 
         var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
         Assert.Contains("fetch node 'unused-fetch' is not parsed by any parse node", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithDeliveryRouteWithoutDelivers_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var pipeline = PipelineWithDeliveries("flow-no-delivers",
+            [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Delivers = [] }]);
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
+        Assert.Contains("delivery route 0 must define at least one deliver action", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithMultipleDeliversPerRoute_Succeeds()
+    {
+        var service = CreateService();
+        var pipeline = PipelineWithDeliveries("flow-fan-out",
+            [
+                new DeliveryRouteDefinition
+                {
+                    Render = new ModuleStepDefinition { Module = "json-render" },
+                    Delivers =
+                    [
+                        new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "http-deliver" } },
+                        new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "http-deliver" } }
+                    ]
+                }
+            ]);
+
+        var result = await service.CreateAsync(pipeline, CancellationToken.None);
+
+        Assert.Equal(2, Assert.Single(result.Deliveries).Delivers.Count);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithUnknownModuleInSecondDeliver_ThrowsInvalidOperationException()
+    {
+        var service = CreateService();
+        var pipeline = PipelineWithDeliveries("flow-bad-second-deliver",
+            [
+                new DeliveryRouteDefinition
+                {
+                    Render = new ModuleStepDefinition { Module = "json-render" },
+                    Delivers =
+                    [
+                        new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "http-deliver" } },
+                        new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "missing-deliver" } }
+                    ]
+                }
+            ]);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateAsync(pipeline, CancellationToken.None));
     }
 }

@@ -38,7 +38,7 @@ public class FlowMappingsTests
                 new DeliveryRouteRequest
                 {
                     Render = new FlowStepRequest { Module = "json-render" },
-                    Deliver = new FlowStepRequest { Module = "http-deliver" },
+                    Delivers = [new DeliveryActionRequest { Deliver = new FlowStepRequest { Module = "http-deliver" } }],
                     AtomicScope = "scope-1"
                 }
             ],
@@ -109,7 +109,7 @@ public class FlowMappingsTests
             Trigger = new PipelineTriggerOptions { Mode = PipelineTriggerMode.OnDemand },
             Fetches = [new FetchNodeDefinition { Id = "f1", Fetch = new ModuleStepDefinition { Module = "a" } }],
             Parses = [new ParseNodeDefinition { Id = "s1", Parse = new ModuleStepDefinition { Module = "b" }, FetchNodeIds = ["f1"] }],
-            Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "r" }, Deliver = new ModuleStepDefinition { Module = "d" } }]
+            Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "r" }, Delivers = [new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "d" } }] }]
         };
 
         var disabled = FlowMappings.WithEnabled(pipeline, enabled: false);
@@ -146,7 +146,7 @@ public class FlowMappingsTests
                 new ParseNodeDefinition { Id = "lookup", Parse = new ModuleStepDefinition { Module = "json-parse" }, FetchNodeIds = ["lookup-fetch"] }
             ],
             Augments = [new ModuleStepDefinition { Module = "multi-source-join-map-augment" }],
-            Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Deliver = new ModuleStepDefinition { Module = "http-deliver" } }]
+            Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Delivers = [new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "http-deliver" } }] }]
         };
 
         var response = FlowMappings.MapFlow(pipeline);
@@ -164,6 +164,67 @@ public class FlowMappingsTests
         Assert.Equal(2, response.Parses.Count);
         Assert.Equal(["inbound-a", "inbound-b"], response.Parses[0].FetchNodeIds);
         Assert.Equal(["lookup-fetch"], response.Parses[1].FetchNodeIds);
+    }
+
+    [Fact]
+    public void MapFlow_RoundTripsRouteWithMultipleDeliverActions()
+    {
+        var request = new CreateFlowRequest
+        {
+            Id = "fan-out",
+            Trigger = new FlowTriggerRequest { Mode = PipelineTriggerMode.OnDemand },
+            Fetches = [new FlowFetchNodeRequest { Id = "primary-fetch", Fetch = new FlowStepRequest { Module = "file-system-fetch" } }],
+            Parses = [new FlowParseNodeRequest { Id = "primary", Parse = new FlowStepRequest { Module = "json-parse" }, FetchNodeIds = ["primary-fetch"] }],
+            Deliveries =
+            [
+                new DeliveryRouteRequest
+                {
+                    Render = new FlowStepRequest { Module = "json-render" },
+                    Delivers =
+                    [
+                        new DeliveryActionRequest
+                        {
+                            Deliver = new FlowStepRequest { Module = "email-deliver", Settings = new Dictionary<string, string> { ["to"] = "ops@example.com" } },
+                            Compensation = new FlowStepRequest { Module = "email-recall-deliver", Settings = new Dictionary<string, string> { ["reason"] = "rollback" } }
+                        },
+                        new DeliveryActionRequest
+                        {
+                            Deliver = new FlowStepRequest { Module = "sftp-deliver", Settings = new Dictionary<string, string> { ["host"] = "sftp.example.com" } }
+                        }
+                    ],
+                    AtomicScope = "order-commit"
+                }
+            ]
+        };
+
+        var pipeline = FlowMappings.MapPipeline(request);
+
+        var route = Assert.Single(pipeline.Deliveries);
+        Assert.Equal("order-commit", route.AtomicScope);
+        Assert.Equal(2, route.Delivers.Count);
+        Assert.Equal("email-deliver", route.Delivers[0].Deliver.Module);
+        Assert.Equal("ops@example.com", route.Delivers[0].Deliver.Settings["to"]);
+        Assert.Equal("email-recall-deliver", route.Delivers[0].Compensation!.Module);
+        Assert.Equal("rollback", route.Delivers[0].Compensation!.Settings["reason"]);
+        Assert.Equal("sftp-deliver", route.Delivers[1].Deliver.Module);
+        Assert.Equal("sftp.example.com", route.Delivers[1].Deliver.Settings["host"]);
+        Assert.Null(route.Delivers[1].Compensation);
+
+        var response = FlowMappings.MapFlow(pipeline);
+
+        Assert.Equal(["json-render"], response.RenderModules);
+        Assert.Equal(["email-deliver", "sftp-deliver"], response.DeliverModules);
+        var routeResponse = Assert.Single(response.Deliveries);
+        Assert.Equal("json-render", routeResponse.Render.Module);
+        Assert.Equal("order-commit", routeResponse.AtomicScope);
+        Assert.Equal(2, routeResponse.Delivers.Count);
+        Assert.Equal("email-deliver", routeResponse.Delivers[0].Deliver.Module);
+        Assert.Equal("ops@example.com", routeResponse.Delivers[0].Deliver.Settings["to"]);
+        Assert.Equal("email-recall-deliver", routeResponse.Delivers[0].Compensation!.Module);
+        Assert.Equal("rollback", routeResponse.Delivers[0].Compensation!.Settings["reason"]);
+        Assert.Equal("sftp-deliver", routeResponse.Delivers[1].Deliver.Module);
+        Assert.Equal("sftp.example.com", routeResponse.Delivers[1].Deliver.Settings["host"]);
+        Assert.Null(routeResponse.Delivers[1].Compensation);
     }
 
     [Fact]
@@ -215,7 +276,7 @@ public class FlowMappingsTests
             [],
             [new BizTalkDraftDeliveryRouteResponse(
                 new BizTalkDraftStepResponse("xml-render", new Dictionary<string, string>()),
-                new BizTalkDraftStepResponse("file-system-deliver", new Dictionary<string, string>()))],
+                [new BizTalkDraftDeliveryActionResponse(new BizTalkDraftStepResponse("file-system-deliver", new Dictionary<string, string>()))])],
             [],
             []);
 
@@ -228,5 +289,7 @@ public class FlowMappingsTests
         Assert.Equal("primary", parse.Id);
         Assert.Equal("xml-xsd-parse", parse.Parse.Module);
         Assert.Equal(["primary-fetch"], parse.FetchNodeIds);
+        var route = Assert.Single(pipeline.Deliveries);
+        Assert.Equal("file-system-deliver", Assert.Single(route.Delivers).Deliver.Module);
     }
 }

@@ -95,12 +95,86 @@ Content-Type: application/json
           "indented": "true"
         }
       },
-      "deliver": {
-        "module": "logging-deliver",
-        "settings": {
-          "previewLength": "400"
+      "delivers": [
+        {
+          "deliver": {
+            "module": "logging-deliver",
+            "settings": {
+              "previewLength": "400"
+            }
+          }
         }
-      }
+      ]
+    }
+  ]
+}
+
+### Create a flow that renders once and delivers the same output to several destinations
+# Each deliver action runs independently: if one fails permanently the others still run (unless the route sets an
+# "atomicScope", in which case a failure compensates the scope's committed deliver actions via their "compensation").
+POST {{baseUrl}}/api/flows
+Content-Type: application/json
+
+{
+  "id": "fan-out-flow",
+  "enabled": true,
+  "trigger": {
+    "mode": "OnDemand",
+    "runOnStartup": false
+  },
+  "fetches": [
+    {
+      "id": "primary-fetch",
+      "fetch": {
+        "module": "file-system-fetch",
+        "settings": {
+          "path": "SampleData\\Inbox",
+          "searchPattern": "*.json"
+        }
+      },
+      "inputParseIds": []
+    }
+  ],
+  "parses": [
+    {
+      "id": "primary",
+      "parse": {
+        "module": "json-parse",
+        "settings": {}
+      },
+      "fetchNodeIds": [
+        "primary-fetch"
+      ]
+    }
+  ],
+  "augments": [],
+  "deliveries": [
+    {
+      "render": {
+        "module": "json-render",
+        "settings": {
+          "indented": "true"
+        }
+      },
+      "delivers": [
+        {
+          "deliver": {
+            "module": "logging-deliver",
+            "settings": {
+              "previewLength": "400"
+            }
+          }
+        },
+        {
+          "deliver": {
+            "module": "file-system-deliver",
+            "settings": {
+              "path": "SampleData\\Outbox",
+              "extension": ".json"
+            }
+          }
+        }
+      ]
     }
   ]
 }
@@ -175,12 +249,16 @@ Content-Type: application/json
           "indented": "true"
         }
       },
-      "deliver": {
-        "module": "logging-deliver",
-        "settings": {
-          "previewLength": "400"
+      "delivers": [
+        {
+          "deliver": {
+            "module": "logging-deliver",
+            "settings": {
+              "previewLength": "400"
+            }
+          }
         }
-      }
+      ]
     }
   ]
 }
@@ -237,13 +315,17 @@ Content-Type: application/json
           "conditionJson": "[{\"source\":\"Metadata\",\"path\":\"targetRoute\",\"operator\":\"Equals\",\"value\":\"priority-api\"}]"
         }
       },
-      "deliver": {
-        "module": "http-deliver",
-        "settings": {
-          "url": "https://api.example.test/orders/high-priority",
-          "method": "POST"
+      "delivers": [
+        {
+          "deliver": {
+            "module": "http-deliver",
+            "settings": {
+              "url": "https://api.example.test/orders/high-priority",
+              "method": "POST"
+            }
+          }
         }
-      }
+      ]
     },
     {
       "render": {
@@ -252,13 +334,17 @@ Content-Type: application/json
           "conditionJson": "[{\"source\":\"Metadata\",\"path\":\"targetRoute\",\"operator\":\"Equals\",\"value\":\"xml-archive\"}]"
         }
       },
-      "deliver": {
-        "module": "file-system-deliver",
-        "settings": {
-          "path": "SampleData\\Outbox",
-          "extension": ".xml"
+      "delivers": [
+        {
+          "deliver": {
+            "module": "file-system-deliver",
+            "settings": {
+              "path": "SampleData\\Outbox",
+              "extension": ".xml"
+            }
+          }
         }
-      }
+      ]
     }
   ]
 }
@@ -349,14 +435,18 @@ Content-Type: application/json
           "indented": "false"
         }
       },
-      "deliver": {
-        "module": "http-deliver",
-        "settings": {
-          "url": "https://api.example.test/orders",
-          "method": "POST",
-          "contentType": "application/json"
+      "delivers": [
+        {
+          "deliver": {
+            "module": "http-deliver",
+            "settings": {
+              "url": "https://api.example.test/orders",
+              "method": "POST",
+              "contentType": "application/json"
+            }
+          }
         }
-      }
+      ]
     },
     {
       "render": {
@@ -366,13 +456,17 @@ Content-Type: application/json
           "itemElement": "Item"
         }
       },
-      "deliver": {
-        "module": "file-system-deliver",
-        "settings": {
-          "path": "SampleData\\Outbox",
-          "extension": ".xml"
+      "delivers": [
+        {
+          "deliver": {
+            "module": "file-system-deliver",
+            "settings": {
+              "path": "SampleData\\Outbox",
+              "extension": ".xml"
+            }
+          }
         }
-      }
+      ]
     }
   ],
   "mappings": [
@@ -450,25 +544,33 @@ Content-Type: application/json
           "indented": "true"
         }
       },
-      "deliver": {
-        "module": "logging-deliver",
-        "settings": {
-          "previewLength": "400"
+      "delivers": [
+        {
+          "deliver": {
+            "module": "logging-deliver",
+            "settings": {
+              "previewLength": "400"
+            }
+          }
         }
-      }
+      ]
     },
     {
       "render": {
         "module": "json-render",
         "settings": {}
       },
-      "deliver": {
-        "module": "file-system-deliver",
-        "settings": {
-          "path": "SampleData\\Outbox",
-          "extension": ".json"
+      "delivers": [
+        {
+          "deliver": {
+            "module": "file-system-deliver",
+            "settings": {
+              "path": "SampleData\\Outbox",
+              "extension": ".json"
+            }
+          }
         }
-      }
+      ]
     }
   ]
 }
@@ -527,25 +629,33 @@ Content-Type: application/json
           "indented": "true"
         }
       },
-      "deliver": {
-        "module": "logging-deliver",
-        "settings": {
-          "previewLength": "400"
+      "delivers": [
+        {
+          "deliver": {
+            "module": "logging-deliver",
+            "settings": {
+              "previewLength": "400"
+            }
+          }
         }
-      }
+      ]
     },
     {
       "render": {
         "module": "json-render",
         "settings": {}
       },
-      "deliver": {
-        "module": "file-system-deliver",
-        "settings": {
-          "path": "SampleData\\Outbox",
-          "extension": ".json"
+      "delivers": [
+        {
+          "deliver": {
+            "module": "file-system-deliver",
+            "settings": {
+              "path": "SampleData\\Outbox",
+              "extension": ".json"
+            }
+          }
         }
-      }
+      ]
     }
   ]
 }

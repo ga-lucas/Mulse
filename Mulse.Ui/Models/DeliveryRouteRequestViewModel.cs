@@ -2,4 +2,5 @@ namespace Mulse.Ui.Models;
 
 public sealed record DeliveryRouteRequestViewModel(
     FlowStepRequestViewModel Render,
-    FlowStepRequestViewModel Deliver);
+    IReadOnlyList<DeliveryActionRequestViewModel> Delivers,
+    string? AtomicScope = null);

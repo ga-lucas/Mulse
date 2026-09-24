@@ -19,7 +19,7 @@ internal static class FlowMappings
             flow.Parses.Select(static parse => parse.Parse.Module).ToArray(),
             flow.Augments.Select(static step => step.Module).ToArray(),
             flow.Deliveries.Select(static route => route.Render.Module).ToArray(),
-            flow.Deliveries.Select(static route => route.Deliver.Module).ToArray(),
+            flow.Deliveries.SelectMany(static route => route.Delivers.Select(static action => action.Deliver.Module)).ToArray(),
             flow.Fetches.Select(MapFetchNode).ToArray(),
             flow.Parses.Select(MapParseNode).ToArray(),
             flow.Augments.Select(MapStep).ToArray(),
@@ -141,16 +141,27 @@ internal static class FlowMappings
     }
 
     private static DeliveryRouteResponse MapDelivery(DeliveryRouteDefinition route)
-        => new(MapStep(route.Render), MapStep(route.Deliver), route.AtomicScope, route.Compensation is null ? null : MapStep(route.Compensation));
+        => new(MapStep(route.Render), route.Delivers.Select(MapDeliveryAction).ToArray(), route.AtomicScope);
+
+    private static DeliveryActionResponse MapDeliveryAction(DeliveryActionDefinition action)
+        => new(MapStep(action.Deliver), action.Compensation is null ? null : MapStep(action.Compensation));
 
     private static DeliveryRouteDefinition MapDelivery(DeliveryRouteRequest route)
     {
         return new DeliveryRouteDefinition
         {
             Render = MapStep(route.Render),
-            Deliver = MapStep(route.Deliver),
-            AtomicScope = route.AtomicScope,
-            Compensation = route.Compensation is null ? null : MapStep(route.Compensation)
+            Delivers = (route.Delivers ?? []).Select(MapDeliveryAction).ToList(),
+            AtomicScope = route.AtomicScope
+        };
+    }
+
+    private static DeliveryActionDefinition MapDeliveryAction(DeliveryActionRequest action)
+    {
+        return new DeliveryActionDefinition
+        {
+            Deliver = MapStep(action.Deliver),
+            Compensation = action.Compensation is null ? null : MapStep(action.Compensation)
         };
     }
 
@@ -159,9 +170,17 @@ internal static class FlowMappings
         return new DeliveryRouteDefinition
         {
             Render = MapStep(route.Render),
-            Deliver = MapStep(route.Deliver),
-            AtomicScope = route.AtomicScope,
-            Compensation = route.Compensation is null ? null : MapStep(route.Compensation)
+            Delivers = route.Delivers.Select(MapDeliveryAction).ToList(),
+            AtomicScope = route.AtomicScope
+        };
+    }
+
+    private static DeliveryActionDefinition MapDeliveryAction(BizTalkDraftDeliveryActionResponse action)
+    {
+        return new DeliveryActionDefinition
+        {
+            Deliver = MapStep(action.Deliver),
+            Compensation = action.Compensation is null ? null : MapStep(action.Compensation)
         };
     }
 

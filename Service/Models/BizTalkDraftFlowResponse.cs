@@ -38,11 +38,15 @@ public sealed record BizTalkDraftStepResponse(
     IReadOnlyDictionary<string, string> Settings,
     RetryPolicyDefinition? Retry = null);
 
-/// <summary>Represents one generated draft delivery route.</summary>
+/// <summary>Represents one generated draft delivery route: a single render step and its deliver actions.</summary>
 public sealed record BizTalkDraftDeliveryRouteResponse(
     BizTalkDraftStepResponse Render,
+    IReadOnlyList<BizTalkDraftDeliveryActionResponse> Delivers,
+    string? AtomicScope = null);
+
+/// <summary>Represents one generated deliver action of a draft delivery route, with its optional compensation step.</summary>
+public sealed record BizTalkDraftDeliveryActionResponse(
     BizTalkDraftStepResponse Deliver,
-    string? AtomicScope = null,
     BizTalkDraftStepResponse? Compensation = null);
 
 /// <summary>Represents a configuration or secret requirement identified during migration.</summary>

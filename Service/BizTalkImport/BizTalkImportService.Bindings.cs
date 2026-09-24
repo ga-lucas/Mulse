@@ -179,6 +179,8 @@ public sealed partial class BizTalkImportService
             binding.SendPorts.Select(port =>
             {
                 var previewRoute = CreateRouteForSendPort(CreateSlug($"{binding.Name}-{port.Name}"), CreateDefaultProjectProfile(), port, routeIndex: 0, requirements: null, draftWarnings: []);
+                // A send port always drafts exactly one deliver action today; guard anyway so an empty list can't throw.
+                var previewDeliver = previewRoute.Delivers.Count > 0 ? previewRoute.Delivers[0].Deliver : null;
                 return new BizTalkSendPortResponse(
                     port.Name,
                     port.Description,
@@ -189,9 +191,9 @@ public sealed partial class BizTalkImportService
                     port.FilterExpression,
                     port.IsTwoWay,
                     previewRoute.Render.Module,
-                    previewRoute.Deliver.Module,
+                    previewDeliver?.Module ?? string.Empty,
                     previewRoute.Render.Settings,
-                    previewRoute.Deliver.Settings);
+                    previewDeliver?.Settings ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
             }).ToArray());
     }
 

@@ -112,8 +112,16 @@ public partial class Designer
         foreach (var route in draft.Deliveries)
         {
             var routeId = Guid.NewGuid().ToString("n");
-            CreateNode(NodeStage.Render, route.Render.Module, route.Render.Settings, order: routeIndex, routeId: routeId);
-            CreateNode(NodeStage.Deliver, route.Deliver.Module, route.Deliver.Settings, order: routeIndex, routeId: routeId);
+            var render = CreateNode(NodeStage.Render, route.Render.Module, route.Render.Settings, order: routeIndex, routeId: routeId);
+            render.AtomicScope = NormalizeAtomicScope(route.AtomicScope);
+            foreach (var action in route.Delivers ?? [])
+            {
+                var deliver = CreateNode(NodeStage.Deliver, action.Deliver.Module, action.Deliver.Settings, order: routeIndex, routeId: routeId);
+                deliver.Compensation = action.Compensation is { } compensation
+                    ? new FlowStepRequestViewModel(compensation.Module, new Dictionary<string, string>(compensation.Settings, StringComparer.OrdinalIgnoreCase))
+                    : null;
+            }
+
             routeIndex++;
         }
 
