@@ -10,5 +10,8 @@ public enum WorkflowFieldSourceKind
     Right,
 
     /// <summary>Use the mapping's literal value.</summary>
-    Literal
+    Literal,
+
+    /// <summary>Compute a value by invoking a named transform module against one or more resolved inputs.</summary>
+    Transform
 }

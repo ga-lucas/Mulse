@@ -49,7 +49,8 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
             Id = pipeline.Id,
             Enabled = pipeline.Enabled,
             Trigger = pipeline.Trigger,
-            Sources = pipeline.Sources.Select(source => ResolveSource(source, configValues, missingReferences)).ToList(),
+            Fetches = pipeline.Fetches.Select(fetch => ResolveFetchNode(fetch, configValues, missingReferences)).ToList(),
+            Parses = pipeline.Parses.Select(parse => ResolveParseNode(parse, configValues, missingReferences)).ToList(),
             Augments = pipeline.Augments.Select(step => ResolveStep(step, configValues, missingReferences)).ToList(),
             Deliveries = pipeline.Deliveries.Select(route => ResolveDelivery(route, configValues, missingReferences)).ToList(),
             Retry = pipeline.Retry
@@ -67,14 +68,23 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
         return resolved;
     }
 
-    private static SourceDefinition ResolveSource(SourceDefinition source, IReadOnlyDictionary<string, string> configValues, List<string> missingReferences)
+    private static FetchNodeDefinition ResolveFetchNode(FetchNodeDefinition fetch, IReadOnlyDictionary<string, string> configValues, List<string> missingReferences)
     {
-        return new SourceDefinition
+        return new FetchNodeDefinition
         {
-            Id = source.Id,
-            Fetch = ResolveStep(source.Fetch, configValues, missingReferences),
-            Parse = ResolveStep(source.Parse, configValues, missingReferences),
-            InputSourceIds = source.InputSourceIds.ToList()
+            Id = fetch.Id,
+            Fetch = ResolveStep(fetch.Fetch, configValues, missingReferences),
+            InputParseIds = fetch.InputParseIds.ToList()
+        };
+    }
+
+    private static ParseNodeDefinition ResolveParseNode(ParseNodeDefinition parse, IReadOnlyDictionary<string, string> configValues, List<string> missingReferences)
+    {
+        return new ParseNodeDefinition
+        {
+            Id = parse.Id,
+            Parse = ResolveStep(parse.Parse, configValues, missingReferences),
+            FetchNodeIds = parse.FetchNodeIds.ToList()
         };
     }
 
@@ -132,11 +142,14 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
 
         foreach (var pipeline in pipelines)
         {
-            for (var i = 0; i < pipeline.Sources.Count; i++)
+            for (var i = 0; i < pipeline.Fetches.Count; i++)
             {
-                var source = pipeline.Sources[i];
-                ScanStep(source.Fetch, pipeline.Id, $"sources[{i}].fetch.settings", configValues, usages);
-                ScanStep(source.Parse, pipeline.Id, $"sources[{i}].parse.settings", configValues, usages);
+                ScanStep(pipeline.Fetches[i].Fetch, pipeline.Id, $"fetches[{i}].fetch.settings", configValues, usages);
+            }
+
+            for (var i = 0; i < pipeline.Parses.Count; i++)
+            {
+                ScanStep(pipeline.Parses[i].Parse, pipeline.Id, $"parses[{i}].parse.settings", configValues, usages);
             }
 
             for (var i = 0; i < pipeline.Augments.Count; i++)

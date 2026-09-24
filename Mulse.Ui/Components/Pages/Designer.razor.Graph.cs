@@ -3,7 +3,7 @@ using Mulse.Ui.Models;
 
 namespace Mulse.Ui.Components.Pages;
 
-// Canvas graph editing: source lanes, augment/route nodes, auto-layout, and edge geometry.
+// Canvas graph editing: fetch/parse nodes (grouped into source lanes), augment/route nodes, auto-layout, and edge geometry.
 public partial class Designer
 {
     private List<FlowNode> AugmentNodes => _nodes.Where(static node => node.Stage == NodeStage.Augment).OrderBy(static node => node.Order).ToList();
@@ -33,212 +33,369 @@ public partial class Designer
 
     private string? SourceGraphError => DescribeSourceGraphError();
 
+    /// <summary>The toolbox's primary "Source" action: one fetch node plus one parse node that parses it, pre-linked.</summary>
     private void AddSourceLane()
     {
-        var fetchModule = ModulesForStage(NodeStage.Fetch).FirstOrDefault();
-        var parseModule = ModulesForStage(NodeStage.Parse).FirstOrDefault();
-
-        var lane = CreateSourceLane(NextSourceId(), fetchModule?.Id ?? string.Empty, null, parseModule?.Id ?? string.Empty, null, null);
-        ApplyModuleDefaults(lane.Fetch, fetchModule);
-        ApplyModuleDefaults(lane.Parse, parseModule);
-
+        var (fetch, parse) = CreateDefaultSourcePair();
         AutoLayout();
-        _selectedNodeId = lane.Fetch.Id;
-        _statusMessage = $"Added source '{lane.Id}'. Pick its fetch and parse modules, and wire its inputs if it depends on another source.";
+        _selectedNodeId = fetch.Id;
+        _statusMessage = $"Added source '{parse.GraphId}' (fetch node '{fetch.GraphId}' parsed by parse node '{parse.GraphId}'). Pick their modules, and wire the fetch's inputs if it depends on another parse node's output.";
     }
 
-    /// <summary>Same as <see cref="AddSourceLane"/>, but places the lane at an explicit drop position (from a toolbox drag) instead of running <see cref="AutoLayout"/>.</summary>
+    /// <summary>Same as <see cref="AddSourceLane"/>, but places the pair at an explicit drop position (from a toolbox drag) instead of running <see cref="AutoLayout"/>.</summary>
     private void AddSourceLaneAt(double x, double y)
     {
+        var (fetch, parse) = CreateDefaultSourcePair();
+        fetch.X = x;
+        fetch.Y = y;
+        parse.X = x + ColumnSpacing;
+        parse.Y = y;
+
+        _selectedNodeId = fetch.Id;
+        _statusMessage = $"Added source '{parse.GraphId}' (fetch node '{fetch.GraphId}' parsed by parse node '{parse.GraphId}'). Pick their modules, and wire the fetch's inputs if it depends on another parse node's output.";
+    }
+
+    private (FlowNode Fetch, FlowNode Parse) CreateDefaultSourcePair()
+    {
         var fetchModule = ModulesForStage(NodeStage.Fetch).FirstOrDefault();
         var parseModule = ModulesForStage(NodeStage.Parse).FirstOrDefault();
 
-        var lane = CreateSourceLane(NextSourceId(), fetchModule?.Id ?? string.Empty, null, parseModule?.Id ?? string.Empty, null, null);
-        ApplyModuleDefaults(lane.Fetch, fetchModule);
-        ApplyModuleDefaults(lane.Parse, parseModule);
-
-        lane.Fetch.X = x;
-        lane.Fetch.Y = y;
-        lane.Parse.X = x + ColumnSpacing;
-        lane.Parse.Y = y;
-
-        _selectedNodeId = lane.Fetch.Id;
-        _statusMessage = $"Added source '{lane.Id}'. Pick its fetch and parse modules, and wire its inputs if it depends on another source.";
+        var pair = CreateSourcePair(NextParseId(), fetchModule?.Id ?? string.Empty, null, parseModule?.Id ?? string.Empty, null);
+        ApplyModuleDefaults(pair.Fetch, fetchModule);
+        ApplyModuleDefaults(pair.Parse, parseModule);
+        return pair;
     }
 
-    private void RemoveSourceLane(SourceLane lane)
+    /// <summary>
+    /// Adds a standalone fetch node. When a parse node is currently selected, the new fetch is linked to it
+    /// straight away (the "attach another same-format fetch to an existing parse node" workflow).
+    /// </summary>
+    private void AddFetchNode()
     {
-        _nodes.Remove(lane.Fetch);
-        _nodes.Remove(lane.Parse);
-        _sources.Remove(lane);
+        var targetParse = SelectedNode is { Stage: NodeStage.Parse } selectedParse ? selectedParse : null;
+        var fetch = CreateStandaloneFetch(targetParse);
+        AutoLayout();
+        _selectedNodeId = fetch.Id;
+        _statusMessage = DescribeStandaloneFetch(fetch, targetParse);
+    }
 
-        foreach (var other in _sources)
+    /// <summary>
+    /// Toolbox-drop variant of <see cref="AddFetchNode"/>: dropping onto (or close to) an existing parse node's
+    /// source group links the new fetch to that parse node; dropping elsewhere leaves it unlinked.
+    /// </summary>
+    private void AddFetchNodeAt(double x, double y)
+    {
+        var targetParse = FindParseGroupAt(x, y);
+        var fetch = CreateStandaloneFetch(targetParse);
+        fetch.X = x;
+        fetch.Y = y;
+        _selectedNodeId = fetch.Id;
+        _statusMessage = DescribeStandaloneFetch(fetch, targetParse);
+    }
+
+    private FlowNode CreateStandaloneFetch(FlowNode? targetParse)
+    {
+        var fetchModule = ModulesForStage(NodeStage.Fetch).FirstOrDefault();
+        var baseId = targetParse is null ? "fetch" : $"{targetParse.GraphId}-fetch";
+        var fetch = CreateFetchNode(NextFetchId(baseId), fetchModule?.Id ?? string.Empty, null, null);
+        ApplyModuleDefaults(fetch, fetchModule);
+        targetParse?.FetchNodeIds.Add(fetch.GraphId);
+        return fetch;
+    }
+
+    private static string DescribeStandaloneFetch(FlowNode fetch, FlowNode? targetParse)
+        => targetParse is null
+            ? $"Added fetch node '{fetch.GraphId}'. Link it to a parse node (in its properties, or from the parse node's list of fetch nodes) before saving."
+            : $"Added fetch node '{fetch.GraphId}', parsed by parse node '{targetParse.GraphId}' alongside its other fetch nodes.";
+
+    /// <summary>The parse node whose source-group bounds contain the canvas point, if any (closest parse node wins when groups overlap).</summary>
+    private FlowNode? FindParseGroupAt(double x, double y)
+    {
+        return ParseNodes
+            .Select(parse => (Parse: parse, Bounds: LaneBounds(parse)))
+            .Where(candidate => x >= candidate.Bounds.X - LaneGap
+                && x <= candidate.Bounds.X + candidate.Bounds.Width + LaneGap
+                && y >= candidate.Bounds.Y - LaneGap
+                && y <= candidate.Bounds.Y + candidate.Bounds.Height + LaneGap)
+            .OrderBy(candidate => Math.Abs(candidate.Parse.X - x) + Math.Abs(candidate.Parse.Y - y))
+            .Select(static candidate => candidate.Parse)
+            .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Removes a fetch node and strips its id from every parse node's <see cref="FlowNode.FetchNodeIds"/>. A parse
+    /// node left with no fetch nodes is kept (and flagged by validation) so its module settings aren't lost.
+    /// </summary>
+    private void RemoveFetchNode(FlowNode fetch)
+    {
+        _nodes.Remove(fetch);
+
+        foreach (var parse in ParseNodes)
         {
-            other.InputSourceIds.RemoveAll(inputSourceId => string.Equals(inputSourceId, lane.Id, StringComparison.OrdinalIgnoreCase));
+            parse.FetchNodeIds.RemoveAll(fetchId => string.Equals(fetchId, fetch.GraphId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        _selectedNodeId = null;
+        AutoLayout();
+        _statusMessage = $"Removed fetch node '{fetch.GraphId}'.";
+    }
+
+    /// <summary>
+    /// Removes a parse node and strips its id from every fetch node's <see cref="FlowNode.InputParseIds"/> and from
+    /// join augment source pickers. With <paramref name="includeExclusiveFetches"/> false, the fetch nodes it used to
+    /// parse are deliberately left on the canvas, unlinked, rather than cascade-deleted: a fetch can be shared by
+    /// several parse nodes, and its (often connection-heavy) settings are usually worth re-linking to a replacement
+    /// parse node. Validation flags orphaned fetch nodes until they're linked again or removed. The "remove with
+    /// fetches" action cascades only to fetch nodes that no other parse node still parses.
+    /// </summary>
+    private void RemoveParseNode(FlowNode parse, bool includeExclusiveFetches)
+    {
+        var exclusiveFetches = includeExclusiveFetches
+            ? FetchesForParse(parse).Where(fetch => ParsesForFetch(fetch).All(other => ReferenceEquals(other, parse))).ToList()
+            : [];
+
+        _nodes.Remove(parse);
+
+        foreach (var fetch in FetchNodes)
+        {
+            fetch.InputParseIds.RemoveAll(parseId => string.Equals(parseId, parse.GraphId, StringComparison.OrdinalIgnoreCase));
         }
 
         foreach (var augment in AugmentNodes)
         {
             foreach (var key in new[] { LeftSourceKey, RightSourceKey })
             {
-                if (augment.Settings.TryGetValue(key, out var value) && string.Equals(value, lane.Id, StringComparison.OrdinalIgnoreCase))
+                if (augment.Settings.TryGetValue(key, out var value) && string.Equals(value, parse.GraphId, StringComparison.OrdinalIgnoreCase))
                 {
                     augment.Settings[key] = string.Empty;
                 }
             }
         }
 
+        foreach (var fetch in exclusiveFetches)
+        {
+            _nodes.Remove(fetch);
+        }
+
         _selectedNodeId = null;
         AutoLayout();
-        _statusMessage = $"Removed source '{lane.Id}'.";
+        _statusMessage = exclusiveFetches.Count == 0
+            ? $"Removed parse node '{parse.GraphId}'."
+            : $"Removed parse node '{parse.GraphId}' and its fetch node(s) {string.Join(", ", exclusiveFetches.Select(static fetch => $"'{fetch.GraphId}'"))}.";
     }
 
-    private void RenameSource(SourceLane lane, string? value)
+    /// <summary>
+    /// Renames a fetch or parse node. Renaming a fetch rewrites every parse node's <see cref="FlowNode.FetchNodeIds"/>;
+    /// renaming a parse rewrites every fetch node's <see cref="FlowNode.InputParseIds"/> and join augment source settings.
+    /// </summary>
+    private void RenameGraphNode(FlowNode node, string? value)
     {
         var newId = (value ?? string.Empty).Trim();
-        if (string.Equals(newId, lane.Id, StringComparison.Ordinal))
+        if (string.Equals(newId, node.GraphId, StringComparison.Ordinal))
         {
             return;
         }
 
+        var kind = node.Stage == NodeStage.Fetch ? "fetch" : "parse";
         if (string.IsNullOrWhiteSpace(newId))
         {
-            _errorMessage = "A source id cannot be empty.";
+            _errorMessage = $"A {kind} node id cannot be empty.";
             return;
         }
 
-        if (_sources.Any(other => !ReferenceEquals(other, lane) && string.Equals(other.Id, newId, StringComparison.OrdinalIgnoreCase)))
+        if (IsGraphIdTaken(newId, except: node))
         {
-            _errorMessage = $"Source id '{newId}' is already used by another source.";
+            _errorMessage = $"Id '{newId}' is already used by another fetch or parse node. Fetch and parse node ids must be unique within a flow.";
             return;
         }
 
-        var previousId = lane.Id;
-        lane.Id = newId;
-        lane.Fetch.SourceId = newId;
-        lane.Parse.SourceId = newId;
+        var previousId = node.GraphId;
+        node.GraphId = newId;
 
-        foreach (var other in _sources)
+        if (node.Stage == NodeStage.Fetch)
         {
-            for (var index = 0; index < other.InputSourceIds.Count; index++)
+            foreach (var parse in ParseNodes)
             {
-                if (string.Equals(other.InputSourceIds[index], previousId, StringComparison.OrdinalIgnoreCase))
-                {
-                    other.InputSourceIds[index] = newId;
-                }
+                ReplaceId(parse.FetchNodeIds, previousId, newId);
             }
         }
-
-        foreach (var augment in AugmentNodes)
+        else
         {
-            foreach (var key in new[] { LeftSourceKey, RightSourceKey })
+            foreach (var fetch in FetchNodes)
             {
-                if (augment.Settings.TryGetValue(key, out var current) && string.Equals(current, previousId, StringComparison.OrdinalIgnoreCase))
+                ReplaceId(fetch.InputParseIds, previousId, newId);
+            }
+
+            foreach (var augment in AugmentNodes)
+            {
+                foreach (var key in new[] { LeftSourceKey, RightSourceKey })
                 {
-                    augment.Settings[key] = newId;
+                    if (augment.Settings.TryGetValue(key, out var current) && string.Equals(current, previousId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        augment.Settings[key] = newId;
+                    }
                 }
             }
         }
 
         _errorMessage = null;
-        _statusMessage = $"Renamed source '{previousId}' to '{newId}'.";
+        _statusMessage = $"Renamed {kind} node '{previousId}' to '{newId}'.";
     }
 
-    private void ToggleSourceDependency(SourceLane lane, string inputSourceId, bool selected)
+    private static void ReplaceId(List<string> ids, string previousId, string newId)
+    {
+        for (var index = 0; index < ids.Count; index++)
+        {
+            if (string.Equals(ids[index], previousId, StringComparison.OrdinalIgnoreCase))
+            {
+                ids[index] = newId;
+            }
+        }
+    }
+
+    /// <summary>Links/unlinks a fetch node as one of the raw inputs <paramref name="parse"/> parses.</summary>
+    private static void ToggleParseFetchLink(FlowNode parse, string fetchId, bool selected)
+        => ToggleId(parse.FetchNodeIds, fetchId, selected);
+
+    /// <summary>Adds/removes a parse node whose finished output is merged into <paramref name="fetch"/>'s input.</summary>
+    private static void ToggleFetchInputParse(FlowNode fetch, string parseId, bool selected)
+        => ToggleId(fetch.InputParseIds, parseId, selected);
+
+    private static void ToggleId(List<string> ids, string id, bool selected)
     {
         if (selected)
         {
-            if (!lane.InputSourceIds.Contains(inputSourceId, StringComparer.OrdinalIgnoreCase))
+            if (!ids.Contains(id, StringComparer.OrdinalIgnoreCase))
             {
-                lane.InputSourceIds.Add(inputSourceId);
+                ids.Add(id);
             }
         }
         else
         {
-            lane.InputSourceIds.RemoveAll(existing => string.Equals(existing, inputSourceId, StringComparison.OrdinalIgnoreCase));
+            ids.RemoveAll(existing => string.Equals(existing, id, StringComparison.OrdinalIgnoreCase));
         }
     }
 
+    /// <summary>
+    /// Client-side mirror of the backend's source-graph validation (FlowRuntime.OrderSourceGraph): unique ids across
+    /// fetch and parse nodes, no dangling references, every parse node parses at least one fetch node, every fetch
+    /// node is parsed by at least one parse node, and no cycle through fetch inputs and parse links.
+    /// </summary>
     private string? DescribeSourceGraphError()
     {
-        if (_sources.Any(static source => string.IsNullOrWhiteSpace(source.Id)))
+        var fetchNodes = FetchNodes;
+        var parseNodes = ParseNodes;
+
+        if (fetchNodes.Any(static node => string.IsNullOrWhiteSpace(node.GraphId)))
         {
-            return "Every source needs a non-empty id.";
+            return "Every fetch node needs a non-empty id.";
         }
 
-        var duplicate = _sources
-            .GroupBy(static source => source.Id, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault(static group => group.Count() > 1);
-        if (duplicate is not null)
+        if (parseNodes.Any(static node => string.IsNullOrWhiteSpace(node.GraphId)))
         {
-            return $"Source id '{duplicate.Key}' is used more than once. Source ids must be unique within a flow.";
+            return "Every parse node needs a non-empty id.";
         }
 
-        foreach (var source in _sources)
+        var duplicateFetch = fetchNodes.GroupBy(static node => node.GraphId, StringComparer.OrdinalIgnoreCase).FirstOrDefault(static group => group.Count() > 1);
+        if (duplicateFetch is not null)
         {
-            foreach (var inputSourceId in source.InputSourceIds)
+            return $"Fetch node id '{duplicateFetch.Key}' is used more than once. Fetch node ids must be unique within a flow.";
+        }
+
+        var duplicateParse = parseNodes.GroupBy(static node => node.GraphId, StringComparer.OrdinalIgnoreCase).FirstOrDefault(static group => group.Count() > 1);
+        if (duplicateParse is not null)
+        {
+            return $"Parse node id '{duplicateParse.Key}' is used more than once. Parse node ids must be unique within a flow.";
+        }
+
+        var shared = fetchNodes.FirstOrDefault(fetch => FindParse(fetch.GraphId) is not null);
+        if (shared is not null)
+        {
+            return $"Id '{shared.GraphId}' is used by both a fetch node and a parse node. Fetch and parse node ids must be unique within a flow.";
+        }
+
+        foreach (var parse in parseNodes)
+        {
+            if (parse.FetchNodeIds.Count == 0)
             {
-                if (string.Equals(inputSourceId, source.Id, StringComparison.OrdinalIgnoreCase))
-                {
-                    return $"Source '{source.Id}' cannot depend on itself.";
-                }
+                return $"Parse node '{parse.GraphId}' does not parse any fetch node. Link at least one fetch node to it.";
+            }
 
-                if (FindSource(inputSourceId) is null)
-                {
-                    return $"Source '{source.Id}' depends on unknown source '{inputSourceId}'.";
-                }
+            if (parse.FetchNodeIds.FirstOrDefault(fetchId => FindFetch(fetchId) is null) is { } unknownFetchId)
+            {
+                return $"Parse node '{parse.GraphId}' references unknown fetch node '{unknownFetchId}'.";
             }
         }
 
-        var cycle = FindSourceCycle();
+        foreach (var fetch in fetchNodes)
+        {
+            if (fetch.InputParseIds.FirstOrDefault(parseId => FindParse(parseId) is null) is { } unknownParseId)
+            {
+                return $"Fetch node '{fetch.GraphId}' takes input from unknown parse node '{unknownParseId}'.";
+            }
+
+            if (ParsesForFetch(fetch).Count == 0)
+            {
+                return $"Fetch node '{fetch.GraphId}' is not parsed by any parse node. Link it to a parse node, or remove it.";
+            }
+        }
+
+        var cycle = FindSourceGraphCycle();
         return cycle is null
             ? null
-            : $"The source dependency graph has a cycle: {string.Join(" -> ", cycle)}. Remove one of those 'depends on' links before saving.";
+            : $"The source graph has a cycle: {string.Join(" -> ", cycle)}. Remove one of those input links before saving.";
     }
 
-    private List<string>? FindSourceCycle()
+    /// <summary>
+    /// Depth-first search over the combined fetch/parse graph, where a fetch node depends on the parse nodes in its
+    /// <see cref="FlowNode.InputParseIds"/> and a parse node depends on the fetch nodes in its <see cref="FlowNode.FetchNodeIds"/>.
+    /// Returns the ids along the first cycle found, or null when the graph is acyclic.
+    /// </summary>
+    private List<string>? FindSourceGraphCycle()
     {
-        var states = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var stack = new List<string>();
+        var states = new Dictionary<FlowNode, int>();
+        var stack = new List<FlowNode>();
 
-        List<string>? Visit(string sourceId)
+        IEnumerable<FlowNode> Dependencies(FlowNode node)
+            => node.Stage == NodeStage.Fetch
+                ? node.InputParseIds.Select(FindParse).OfType<FlowNode>()
+                : node.FetchNodeIds.Select(FindFetch).OfType<FlowNode>();
+
+        List<string>? Visit(FlowNode node)
         {
-            if (states.TryGetValue(sourceId, out var state))
+            if (states.TryGetValue(node, out var state))
             {
                 if (state == 1)
                 {
                     return null;
                 }
 
-                var startIndex = stack.FindIndex(entry => string.Equals(entry, sourceId, StringComparison.OrdinalIgnoreCase));
-                var cycle = stack.Skip(startIndex < 0 ? 0 : startIndex).ToList();
-                cycle.Add(sourceId);
+                var startIndex = stack.IndexOf(node);
+                var cycle = stack.Skip(startIndex < 0 ? 0 : startIndex).Select(static entry => entry.GraphId).ToList();
+                cycle.Add(node.GraphId);
                 return cycle;
             }
 
-            states[sourceId] = 0;
-            stack.Add(sourceId);
+            states[node] = 0;
+            stack.Add(node);
 
-            if (FindSource(sourceId) is { } lane)
+            foreach (var dependency in Dependencies(node))
             {
-                foreach (var inputSourceId in lane.InputSourceIds)
+                var cycle = Visit(dependency);
+                if (cycle is not null)
                 {
-                    var cycle = Visit(inputSourceId);
-                    if (cycle is not null)
-                    {
-                        return cycle;
-                    }
+                    return cycle;
                 }
             }
 
-            states[sourceId] = 1;
+            states[node] = 1;
             stack.RemoveAt(stack.Count - 1);
             return null;
         }
 
-        foreach (var source in _sources)
+        foreach (var node in _nodes.Where(static node => node.Stage is NodeStage.Fetch or NodeStage.Parse))
         {
-            var cycle = Visit(source.Id);
+            var cycle = Visit(node);
             if (cycle is not null)
             {
                 return cycle;
@@ -269,10 +426,11 @@ public partial class Designer
         var node = CreateNode(NodeStage.Augment, module.Id, order: order);
         ApplyModuleDefaults(node, module);
 
-        if (_sources.Count >= 2)
+        var parseNodes = ParseNodes;
+        if (parseNodes.Count >= 2)
         {
-            node.Settings[LeftSourceKey] = _sources[0].Id;
-            node.Settings[RightSourceKey] = _sources[1].Id;
+            node.Settings[LeftSourceKey] = parseNodes[0].GraphId;
+            node.Settings[RightSourceKey] = parseNodes[1].GraphId;
         }
 
         AutoLayout();
@@ -308,10 +466,11 @@ public partial class Designer
         var node = CreateNode(NodeStage.Augment, module.Id, order: order);
         ApplyModuleDefaults(node, module);
 
-        if (_sources.Count >= 2)
+        var parseNodes = ParseNodes;
+        if (parseNodes.Count >= 2)
         {
-            node.Settings[LeftSourceKey] = _sources[0].Id;
-            node.Settings[RightSourceKey] = _sources[1].Id;
+            node.Settings[LeftSourceKey] = parseNodes[0].GraphId;
+            node.Settings[RightSourceKey] = parseNodes[1].GraphId;
         }
 
         node.X = x;
@@ -439,26 +598,51 @@ public partial class Designer
         _newSettingKey = string.Empty;
     }
 
+    /// <summary>
+    /// Lays out each parse node's source group as a lane: its linked fetch nodes stacked vertically in the left
+    /// column, with the parse node centred beside them. A fetch shared by several parse nodes sits in the first
+    /// group that lists it; fetch nodes no parse node parses yet get their own rows below the groups. Augments and
+    /// delivery routes follow to the right, vertically centred on the source groups.
+    /// </summary>
     private void AutoLayout()
     {
         var laneStride = NodeHeight + LaneHeaderHeight + LaneGap;
+        var fetchStride = NodeHeight + LanePaddingX;
         var laneTop = CanvasPadding + LaneHeaderHeight;
-        var laneIndex = 0;
+        var fetchX = CanvasPadding + LanePaddingX;
+        var cursorY = laneTop;
+        double? lastRowY = null;
+        var placed = new HashSet<FlowNode>();
 
-        foreach (var source in _sources)
+        foreach (var parse in ParseNodes)
         {
-            var y = laneTop + (laneIndex * laneStride);
-            source.Fetch.X = CanvasPadding + LanePaddingX;
-            source.Fetch.Y = y;
-            source.Parse.X = source.Fetch.X + ColumnSpacing;
-            source.Parse.Y = y;
-            laneIndex++;
+            var fetches = FetchesForParse(parse).Where(placed.Add).ToList();
+            var rows = Math.Max(1, fetches.Count);
+
+            for (var index = 0; index < fetches.Count; index++)
+            {
+                fetches[index].X = fetchX;
+                fetches[index].Y = cursorY + (index * fetchStride);
+            }
+
+            parse.X = fetchX + ColumnSpacing;
+            parse.Y = cursorY + ((rows - 1) * fetchStride / 2);
+            lastRowY = cursorY + ((rows - 1) * fetchStride);
+            cursorY += ((rows - 1) * fetchStride) + laneStride;
+        }
+
+        foreach (var orphan in FetchNodes.Where(placed.Add))
+        {
+            orphan.X = fetchX;
+            orphan.Y = cursorY;
+            lastRowY = cursorY;
+            cursorY += laneStride;
         }
 
         var downstreamX = CanvasPadding + LanePaddingX + ColumnSpacing + NodeWidth + LanePaddingX + LaneGap;
-        var downstreamY = _sources.Count == 0
-            ? CanvasPadding
-            : laneTop + ((_sources.Count - 1) * laneStride / 2);
+        var downstreamY = lastRowY is { } bottom
+            ? laneTop + ((bottom - laneTop) / 2)
+            : CanvasPadding;
 
         var column = 0;
         foreach (var augment in AugmentNodes)
@@ -487,42 +671,58 @@ public partial class Designer
         }
     }
 
-    private (double X, double Y, double Width, double Height) LaneBounds(SourceLane source)
+    /// <summary>Bounding box of one source lane: a parse node plus every fetch node it currently parses.</summary>
+    private (double X, double Y, double Width, double Height) LaneBounds(FlowNode parse)
     {
-        var minX = Math.Max(0, Math.Min(source.Fetch.X, source.Parse.X) - LanePaddingX);
-        var minY = Math.Max(0, Math.Min(source.Fetch.Y, source.Parse.Y) - LaneHeaderHeight);
-        var maxX = Math.Max(source.Fetch.X, source.Parse.X) + NodeWidth + LanePaddingX;
-        var maxY = Math.Max(source.Fetch.Y, source.Parse.Y) + NodeHeight + LanePaddingX;
+        var members = FetchesForParse(parse);
+        members.Add(parse);
+        var minX = Math.Max(0, members.Min(static node => node.X) - LanePaddingX);
+        var minY = Math.Max(0, members.Min(static node => node.Y) - LaneHeaderHeight);
+        var maxX = members.Max(static node => node.X) + NodeWidth + LanePaddingX;
+        var maxY = members.Max(static node => node.Y) + NodeHeight + LanePaddingX;
         return (minX, minY, maxX - minX, maxY - minY);
     }
 
-    private static string LaneLabel(SourceLane source)
+    private string LaneLabel(FlowNode parse)
     {
-        var label = $"Source: {source.Id}";
-        return source.InputSourceIds.Count == 0
+        var fetches = FetchesForParse(parse);
+        var label = $"Source: {parse.GraphId}";
+        if (fetches.Count > 1)
+        {
+            label += $" (combines {fetches.Count} fetches)";
+        }
+
+        var inputParseIds = fetches
+            .SelectMany(static fetch => fetch.InputParseIds)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return inputParseIds.Length == 0
             ? label
-            : $"{label} (input from {string.Join(", ", source.InputSourceIds)})";
+            : $"{label} (input from {string.Join(", ", inputParseIds)})";
     }
 
     private List<FlowEdge> BuildEdges()
     {
         var edges = new List<FlowEdge>();
+        var parseNodes = ParseNodes;
 
-        foreach (var source in _sources)
+        foreach (var parse in parseNodes)
         {
-            edges.Add(new FlowEdge(source.Fetch, source.Parse, IsDependency: false));
-
-            foreach (var inputSourceId in source.InputSourceIds)
+            foreach (var fetch in FetchesForParse(parse))
             {
-                var upstream = FindSource(inputSourceId);
-                if (upstream is not null && !ReferenceEquals(upstream, source))
-                {
-                    edges.Add(new FlowEdge(upstream.Parse, source.Fetch, IsDependency: true));
-                }
+                edges.Add(new FlowEdge(fetch, parse, IsDependency: false));
             }
         }
 
-        var heads = _sources.Select(static source => source.Parse).ToList();
+        foreach (var fetch in FetchNodes)
+        {
+            foreach (var upstream in fetch.InputParseIds.Select(FindParse).OfType<FlowNode>().Distinct())
+            {
+                edges.Add(new FlowEdge(upstream, fetch, IsDependency: true));
+            }
+        }
+
+        var heads = parseNodes;
         FlowNode? tail = null;
 
         foreach (var augment in AugmentNodes)

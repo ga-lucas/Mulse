@@ -14,14 +14,22 @@ public class FlowMappingsTests
             Id = "flow-1",
             Enabled = true,
             Trigger = new FlowTriggerRequest { Mode = PipelineTriggerMode.Interval, Interval = TimeSpan.FromMinutes(5), RunOnStartup = true },
-            Sources =
+            Fetches =
             [
-                new FlowSourceRequest
+                new FlowFetchNodeRequest
+                {
+                    Id = "primary-fetch",
+                    Fetch = new FlowStepRequest { Module = "file-system-fetch", Settings = new Dictionary<string, string> { ["path"] = "C:\\data" } },
+                    InputParseIds = []
+                }
+            ],
+            Parses =
+            [
+                new FlowParseNodeRequest
                 {
                     Id = "primary",
-                    Fetch = new FlowStepRequest { Module = "file-system-fetch", Settings = new Dictionary<string, string> { ["path"] = "C:\\data" } },
                     Parse = new FlowStepRequest { Module = "json-parse" },
-                    InputSourceIds = []
+                    FetchNodeIds = ["primary-fetch"]
                 }
             ],
             Augments = [new FlowStepRequest { Module = "decision-augment" }],
@@ -44,11 +52,15 @@ public class FlowMappingsTests
         Assert.Equal(PipelineTriggerMode.Interval, pipeline.Trigger.Mode);
         Assert.Equal(TimeSpan.FromMinutes(5), pipeline.Trigger.Interval);
         Assert.True(pipeline.Trigger.RunOnStartup);
-        Assert.Single(pipeline.Sources);
-        Assert.Equal("primary", pipeline.Sources[0].Id);
-        Assert.Equal("file-system-fetch", pipeline.Sources[0].Fetch.Module);
-        Assert.Equal("C:\\data", pipeline.Sources[0].Fetch.Settings["path"]);
-        Assert.Equal("json-parse", pipeline.Sources[0].Parse.Module);
+        var fetch = Assert.Single(pipeline.Fetches);
+        Assert.Equal("primary-fetch", fetch.Id);
+        Assert.Equal("file-system-fetch", fetch.Fetch.Module);
+        Assert.Equal("C:\\data", fetch.Fetch.Settings["path"]);
+        Assert.Empty(fetch.InputParseIds);
+        var parse = Assert.Single(pipeline.Parses);
+        Assert.Equal("primary", parse.Id);
+        Assert.Equal("json-parse", parse.Parse.Module);
+        Assert.Equal(["primary-fetch"], parse.FetchNodeIds);
         Assert.Single(pipeline.Augments);
         Assert.Equal("decision-augment", pipeline.Augments[0].Module);
         Assert.Single(pipeline.Deliveries);
@@ -65,26 +77,26 @@ public class FlowMappingsTests
         // IFlowPipelineRequest, so FlowMappings.MapPipeline has a single implementation shared by both.
         // This test guards against that consolidation regressing if either request type diverges later.
         var trigger = new FlowTriggerRequest { Mode = PipelineTriggerMode.OnDemand, RunOnStartup = false };
-        var sources = new List<FlowSourceRequest>
+        var fetches = new List<FlowFetchNodeRequest>
         {
-            new()
-            {
-                Id = "s1",
-                Fetch = new FlowStepRequest { Module = "sftp-fetch" },
-                Parse = new FlowStepRequest { Module = "xml-parse" }
-            }
+            new() { Id = "f1", Fetch = new FlowStepRequest { Module = "sftp-fetch" } }
+        };
+        var parses = new List<FlowParseNodeRequest>
+        {
+            new() { Id = "s1", Parse = new FlowStepRequest { Module = "xml-parse" }, FetchNodeIds = ["f1"] }
         };
 
-        var createRequest = new CreateFlowRequest { Id = "flow-2", Trigger = trigger, Sources = sources };
-        var updateRequest = new UpdateFlowRequest { Id = "flow-2", Trigger = trigger, Sources = sources };
+        var createRequest = new CreateFlowRequest { Id = "flow-2", Trigger = trigger, Fetches = fetches, Parses = parses };
+        var updateRequest = new UpdateFlowRequest { Id = "flow-2", Trigger = trigger, Fetches = fetches, Parses = parses };
 
         var fromCreate = FlowMappings.MapPipeline(createRequest);
         var fromUpdate = FlowMappings.MapPipeline(updateRequest);
 
         Assert.Equal(fromCreate.Id, fromUpdate.Id);
         Assert.Equal(fromCreate.Trigger.Mode, fromUpdate.Trigger.Mode);
-        Assert.Equal(fromCreate.Sources[0].Fetch.Module, fromUpdate.Sources[0].Fetch.Module);
-        Assert.Equal(fromCreate.Sources[0].Parse.Module, fromUpdate.Sources[0].Parse.Module);
+        Assert.Equal(fromCreate.Fetches[0].Fetch.Module, fromUpdate.Fetches[0].Fetch.Module);
+        Assert.Equal(fromCreate.Parses[0].Parse.Module, fromUpdate.Parses[0].Parse.Module);
+        Assert.Equal(fromCreate.Parses[0].FetchNodeIds, fromUpdate.Parses[0].FetchNodeIds);
     }
 
     [Fact]
@@ -95,7 +107,8 @@ public class FlowMappingsTests
             Id = "flow-3",
             Enabled = true,
             Trigger = new PipelineTriggerOptions { Mode = PipelineTriggerMode.OnDemand },
-            Sources = [new SourceDefinition { Id = "s1", Fetch = new ModuleStepDefinition { Module = "a" }, Parse = new ModuleStepDefinition { Module = "b" } }],
+            Fetches = [new FetchNodeDefinition { Id = "f1", Fetch = new ModuleStepDefinition { Module = "a" } }],
+            Parses = [new ParseNodeDefinition { Id = "s1", Parse = new ModuleStepDefinition { Module = "b" }, FetchNodeIds = ["f1"] }],
             Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "r" }, Deliver = new ModuleStepDefinition { Module = "d" } }]
         };
 
@@ -103,33 +116,34 @@ public class FlowMappingsTests
 
         Assert.False(disabled.Enabled);
         Assert.Equal(pipeline.Id, disabled.Id);
-        Assert.Same(pipeline.Sources, disabled.Sources);
+        Assert.Same(pipeline.Fetches, disabled.Fetches);
+        Assert.Same(pipeline.Parses, disabled.Parses);
         Assert.Same(pipeline.Deliveries, disabled.Deliveries);
     }
 
     [Fact]
-    public void MapFlow_RoundTripsSourcesAugmentsAndDeliveries()
+    public void MapFlow_RoundTripsFetchesParsesAugmentsAndDeliveries()
     {
         var pipeline = new PipelineDefinition
         {
             Id = "flow-4",
             Enabled = true,
             Trigger = new PipelineTriggerOptions { Mode = PipelineTriggerMode.Push },
-            Sources =
+            Fetches =
             [
-                new SourceDefinition
+                new FetchNodeDefinition { Id = "inbound-a", Fetch = new ModuleStepDefinition { Module = "http-inbound-fetch" } },
+                new FetchNodeDefinition { Id = "inbound-b", Fetch = new ModuleStepDefinition { Module = "file-system-fetch" } },
+                new FetchNodeDefinition
                 {
-                    Id = "primary",
-                    Fetch = new ModuleStepDefinition { Module = "http-inbound-fetch" },
-                    Parse = new ModuleStepDefinition { Module = "json-parse" }
-                },
-                new SourceDefinition
-                {
-                    Id = "lookup",
+                    Id = "lookup-fetch",
                     Fetch = new ModuleStepDefinition { Module = "sql-lookup-fetch" },
-                    Parse = new ModuleStepDefinition { Module = "json-parse" },
-                    InputSourceIds = ["primary"]
+                    InputParseIds = ["primary"]
                 }
+            ],
+            Parses =
+            [
+                new ParseNodeDefinition { Id = "primary", Parse = new ModuleStepDefinition { Module = "json-parse" }, FetchNodeIds = ["inbound-a", "inbound-b"] },
+                new ParseNodeDefinition { Id = "lookup", Parse = new ModuleStepDefinition { Module = "json-parse" }, FetchNodeIds = ["lookup-fetch"] }
             ],
             Augments = [new ModuleStepDefinition { Module = "multi-source-join-map-augment" }],
             Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Deliver = new ModuleStepDefinition { Module = "http-deliver" } }]
@@ -138,13 +152,81 @@ public class FlowMappingsTests
         var response = FlowMappings.MapFlow(pipeline);
 
         Assert.Equal("flow-4", response.Id);
-        Assert.Equal(["primary", "lookup"], response.SourceIds);
-        Assert.Equal(["http-inbound-fetch", "sql-lookup-fetch"], response.FetchModules);
+        Assert.Equal(["inbound-a", "inbound-b", "lookup-fetch"], response.FetchIds);
+        Assert.Equal(["primary", "lookup"], response.ParseIds);
+        Assert.Equal(["http-inbound-fetch", "file-system-fetch", "sql-lookup-fetch"], response.FetchModules);
         Assert.Equal(["json-parse", "json-parse"], response.ParseModules);
         Assert.Equal(["multi-source-join-map-augment"], response.AugmentModules);
         Assert.Equal(["json-render"], response.RenderModules);
         Assert.Equal(["http-deliver"], response.DeliverModules);
-        Assert.Equal(2, response.Sources.Count);
-        Assert.Equal(["primary"], response.Sources[1].InputSourceIds);
+        Assert.Equal(3, response.Fetches.Count);
+        Assert.Equal(["primary"], response.Fetches[2].InputParseIds);
+        Assert.Equal(2, response.Parses.Count);
+        Assert.Equal(["inbound-a", "inbound-b"], response.Parses[0].FetchNodeIds);
+        Assert.Equal(["lookup-fetch"], response.Parses[1].FetchNodeIds);
+    }
+
+    [Fact]
+    public void MapStep_RoundTripsOptionalNameThroughRequestAndResponse()
+    {
+        var request = new CreateFlowRequest
+        {
+            Id = "flow-named",
+            Trigger = new FlowTriggerRequest { Mode = PipelineTriggerMode.OnDemand },
+            Fetches =
+            [
+                new FlowFetchNodeRequest
+                {
+                    Id = "primary-fetch",
+                    Fetch = new FlowStepRequest { Module = "file-system-fetch", Name = "Orders SFTP fetch" },
+                    InputParseIds = []
+                }
+            ],
+            Parses =
+            [
+                new FlowParseNodeRequest
+                {
+                    Id = "primary",
+                    Parse = new FlowStepRequest { Module = "json-parse" },
+                    FetchNodeIds = ["primary-fetch"]
+                }
+            ]
+        };
+
+        var pipeline = FlowMappings.MapPipeline(request);
+        Assert.Equal("Orders SFTP fetch", pipeline.Fetches[0].Fetch.Name);
+        Assert.Null(pipeline.Parses[0].Parse.Name);
+
+        var response = FlowMappings.MapFlow(pipeline);
+        Assert.Equal("Orders SFTP fetch", response.Fetches[0].Fetch.Name);
+        Assert.Null(response.Parses[0].Parse.Name);
+    }
+
+    [Fact]
+    public void MapPipeline_FromBizTalkDraft_MapsSplitFetchAndParseNodes()
+    {
+        var step = new BizTalkDraftStepResponse("file-system-fetch", new Dictionary<string, string> { ["path"] = "C:\\in" });
+        var draft = new BizTalkDraftFlowResponse(
+            "draft-1",
+            false,
+            new BizTalkDraftTriggerResponse(PipelineTriggerMode.OnDemand, null, false),
+            [new BizTalkDraftFetchResponse("primary-fetch", step, [])],
+            [new BizTalkDraftParseResponse("primary", new BizTalkDraftStepResponse("xml-xsd-parse", new Dictionary<string, string>()), ["primary-fetch"])],
+            [],
+            [new BizTalkDraftDeliveryRouteResponse(
+                new BizTalkDraftStepResponse("xml-render", new Dictionary<string, string>()),
+                new BizTalkDraftStepResponse("file-system-deliver", new Dictionary<string, string>()))],
+            [],
+            []);
+
+        var pipeline = FlowMappings.MapPipeline(draft);
+
+        var fetch = Assert.Single(pipeline.Fetches);
+        Assert.Equal("primary-fetch", fetch.Id);
+        Assert.Equal("C:\\in", fetch.Fetch.Settings["path"]);
+        var parse = Assert.Single(pipeline.Parses);
+        Assert.Equal("primary", parse.Id);
+        Assert.Equal("xml-xsd-parse", parse.Parse.Module);
+        Assert.Equal(["primary-fetch"], parse.FetchNodeIds);
     }
 }

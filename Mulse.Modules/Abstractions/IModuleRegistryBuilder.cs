@@ -11,4 +11,6 @@ public interface IModuleRegistryBuilder
     void AddRender<TModule>() where TModule : class, IRenderModule;
 
     void AddDeliver<TModule>() where TModule : class, IDeliverModule;
+
+    void AddTransform<TModule>() where TModule : class, ITransformModule;
 }

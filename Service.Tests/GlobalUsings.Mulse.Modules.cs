@@ -10,6 +10,7 @@ global using Mulse.Modules.BuiltIn.Deliver;
 global using Mulse.Modules.BuiltIn.Fetch;
 global using Mulse.Modules.BuiltIn.Parse;
 global using Mulse.Modules.BuiltIn.Render;
+global using Mulse.Modules.BuiltIn.Transform;
 global using Mulse.Modules.Decisions;
 global using Mulse.Modules.Execution;
 global using Mulse.Modules.Payloads;

@@ -11,7 +11,7 @@ namespace Mulse.Ui.Components.Pages;
 
 // This page's logic is split across several partial-class files by concern:
 //   Designer.razor.cs         - state, lifecycle, load/save, and shared helpers/nested types (this file)
-//   Designer.razor.Graph.cs   - canvas graph editing (sources, augments, routes, layout, edges)
+//   Designer.razor.Graph.cs   - canvas graph editing (fetch/parse nodes, augments, routes, layout, edges)
 //   Designer.razor.Sample.cs  - "seed from sample data" panel
 //   Designer.razor.BizTalk.cs - "import from BizTalk" panel
 //   Designer.razor.Join.cs    - multi-source join/map augment editor + generic settings editor
@@ -38,7 +38,12 @@ public partial class Designer : IAsyncDisposable
 
     private static readonly string[] TriggerModeOptions = ["Disabled", "OnDemand", "Interval", "Push"];
     private static readonly string[] RetryBackoffOptions = ["Fixed", "Linear", "Exponential"];
-    private static readonly string[] SourceKindOptions = ["Left", "Right", "Literal"];
+    private static readonly string[] SourceKindOptions = ["Left", "Right", "Literal", "Transform"];
+
+    // Kinds that resolve a single value directly (no transform): used for transform inputs (nested transforms
+    // aren't supported) and for the sample-analysis mapping panel, whose mappings are sent to the design API
+    // without any transform configuration.
+    private static readonly string[] ScalarSourceKindOptions = ["Left", "Right", "Literal"];
     private static readonly string[] ConditionOptions = ["Always", "WhenMatched", "WhenUnmatched"];
     private static readonly string[] JoinKindOptions = ["Inner", "Left", "Right", "Full"];
     private static readonly string[] CardinalityOptions = ["FanOut", "Nested"];
@@ -52,7 +57,6 @@ public partial class Designer : IAsyncDisposable
     public string? FlowId { get; set; }
 
     private readonly List<FlowNode> _nodes = [];
-    private readonly List<SourceLane> _sources = [];
     private readonly Dictionary<string, JoinEditorState> _joinEditors = new(StringComparer.Ordinal);
     private readonly List<FieldMappingRow> _mappingRows = [];
 
@@ -116,13 +120,32 @@ public partial class Designer : IAsyncDisposable
 
     private FlowNode? SelectedNode => _nodes.FirstOrDefault(node => string.Equals(node.Id, _selectedNodeId, StringComparison.Ordinal));
 
-    private SourceLane? FindSource(string? sourceId)
-        => string.IsNullOrWhiteSpace(sourceId)
-            ? null
-            : _sources.FirstOrDefault(source => string.Equals(source.Id, sourceId, StringComparison.OrdinalIgnoreCase));
+    private List<FlowNode> FetchNodes => _nodes.Where(static node => node.Stage == NodeStage.Fetch).ToList();
 
-    private SourceLane? SourceForNode(FlowNode node)
-        => node.Stage is NodeStage.Fetch or NodeStage.Parse ? FindSource(node.SourceId) : null;
+    private List<FlowNode> ParseNodes => _nodes.Where(static node => node.Stage == NodeStage.Parse).ToList();
+
+    private FlowNode? FindFetch(string? fetchId) => FindGraphNode(NodeStage.Fetch, fetchId);
+
+    private FlowNode? FindParse(string? parseId) => FindGraphNode(NodeStage.Parse, parseId);
+
+    private FlowNode? FindGraphNode(NodeStage stage, string? graphId)
+        => string.IsNullOrWhiteSpace(graphId)
+            ? null
+            : _nodes.FirstOrDefault(node => node.Stage == stage && string.Equals(node.GraphId, graphId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Fetch and parse node ids share one namespace (the backend rejects a fetch and a parse with the same id).</summary>
+    private bool IsGraphIdTaken(string graphId, FlowNode? except = null)
+        => _nodes.Any(node => node.Stage is NodeStage.Fetch or NodeStage.Parse
+            && !ReferenceEquals(node, except)
+            && string.Equals(node.GraphId, graphId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The fetch nodes whose raw output <paramref name="parse"/> parses, in its <see cref="FlowNode.FetchNodeIds"/> order.</summary>
+    private List<FlowNode> FetchesForParse(FlowNode parse)
+        => parse.FetchNodeIds.Select(FindFetch).OfType<FlowNode>().Distinct().ToList();
+
+    /// <summary>The parse nodes that list <paramref name="fetch"/> in their <see cref="FlowNode.FetchNodeIds"/>.</summary>
+    private List<FlowNode> ParsesForFetch(FlowNode fetch)
+        => ParseNodes.Where(parse => parse.FetchNodeIds.Contains(fetch.GraphId, StringComparer.OrdinalIgnoreCase)).ToList();
 
     protected override async Task OnInitializedAsync()
     {
@@ -216,6 +239,9 @@ public partial class Designer : IAsyncDisposable
             case "source":
                 AddSourceLaneAt(x, y);
                 break;
+            case "fetch":
+                AddFetchNodeAt(x, y);
+                break;
             case "augment":
                 AddAugmentNodeAt(x, y);
                 break;
@@ -301,7 +327,6 @@ public partial class Designer : IAsyncDisposable
     private void ResetGraph()
     {
         _nodes.Clear();
-        _sources.Clear();
         _joinEditors.Clear();
         _mappingRows.Clear();
         _bizTalkRequirements = [];
@@ -333,7 +358,6 @@ public partial class Designer : IAsyncDisposable
     private void BuildFromFlow(FlowViewModel flow)
     {
         _nodes.Clear();
-        _sources.Clear();
         _joinEditors.Clear();
         _mappingRows.Clear();
         _bizTalkRequirements = [];
@@ -363,29 +387,28 @@ public partial class Designer : IAsyncDisposable
             _retryMaxDelaySeconds = null;
         }
 
-        foreach (var source in flow.Sources)
+        foreach (var fetch in flow.Fetches)
         {
-            CreateSourceLane(
-                source.Id,
-                source.Fetch.Module,
-                source.Fetch.Settings,
-                source.Parse.Module,
-                source.Parse.Settings,
-                source.InputSourceIds);
+            CreateFetchNode(fetch.Id, fetch.Fetch.Module, fetch.Fetch.Settings, fetch.InputParseIds, fetch.Fetch.Name);
+        }
+
+        foreach (var parse in flow.Parses)
+        {
+            CreateParseNode(parse.Id, parse.Parse.Module, parse.Parse.Settings, parse.FetchNodeIds, parse.Parse.Name);
         }
 
         var order = 0;
         foreach (var augment in flow.Augments)
         {
-            CreateNode(NodeStage.Augment, augment.Module, augment.Settings, order: order++);
+            CreateNode(NodeStage.Augment, augment.Module, augment.Settings, order: order++, name: augment.Name);
         }
 
         var routeIndex = 0;
         foreach (var route in flow.Deliveries)
         {
             var routeId = Guid.NewGuid().ToString("n");
-            CreateNode(NodeStage.Render, route.Render.Module, route.Render.Settings, order: routeIndex, routeId: routeId);
-            CreateNode(NodeStage.Deliver, route.Deliver.Module, route.Deliver.Settings, order: routeIndex, routeId: routeId);
+            CreateNode(NodeStage.Render, route.Render.Module, route.Render.Settings, order: routeIndex, routeId: routeId, name: route.Render.Name);
+            CreateNode(NodeStage.Deliver, route.Deliver.Module, route.Deliver.Settings, order: routeIndex, routeId: routeId, name: route.Deliver.Name);
             routeIndex++;
         }
 
@@ -393,15 +416,16 @@ public partial class Designer : IAsyncDisposable
         FitView();
     }
 
-    private FlowNode CreateNode(NodeStage stage, string moduleId, IReadOnlyDictionary<string, string>? settings = null, int order = 0, string? routeId = null, string? sourceId = null)
+    private FlowNode CreateNode(NodeStage stage, string moduleId, IReadOnlyDictionary<string, string>? settings = null, int order = 0, string? routeId = null, string? graphId = null, string? name = null)
     {
         var node = new FlowNode
         {
             Stage = stage,
             ModuleId = moduleId,
+            Name = string.IsNullOrWhiteSpace(name) ? null : name.Trim(),
             Order = order,
             RouteId = routeId ?? string.Empty,
-            SourceId = sourceId ?? string.Empty,
+            GraphId = graphId ?? string.Empty,
             Settings = settings is null
                 ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(settings, StringComparer.OrdinalIgnoreCase)
@@ -411,37 +435,69 @@ public partial class Designer : IAsyncDisposable
         return node;
     }
 
-    private SourceLane CreateSourceLane(
-        string sourceId,
+    private FlowNode CreateFetchNode(
+        string? fetchId,
+        string moduleId,
+        IReadOnlyDictionary<string, string>? settings,
+        IEnumerable<string>? inputParseIds,
+        string? name = null)
+    {
+        var id = string.IsNullOrWhiteSpace(fetchId) ? NextFetchId("fetch") : fetchId.Trim();
+        var node = CreateNode(NodeStage.Fetch, moduleId, settings, graphId: id, name: name);
+        AddDistinctIds(node.InputParseIds, inputParseIds);
+        return node;
+    }
+
+    private FlowNode CreateParseNode(
+        string? parseId,
+        string moduleId,
+        IReadOnlyDictionary<string, string>? settings,
+        IEnumerable<string>? fetchNodeIds,
+        string? name = null)
+    {
+        var id = string.IsNullOrWhiteSpace(parseId) ? NextParseId() : parseId.Trim();
+        var node = CreateNode(NodeStage.Parse, moduleId, settings, graphId: id, name: name);
+        AddDistinctIds(node.FetchNodeIds, fetchNodeIds);
+        return node;
+    }
+
+    /// <summary>
+    /// Creates the common "source" shape: one fetch node plus one parse node that parses it. The parse node
+    /// takes <paramref name="parseId"/> (the id join augments and downstream fetches reference), and the fetch
+    /// node gets a derived "{parseId}-fetch" id, because fetch and parse ids share one namespace.
+    /// </summary>
+    private (FlowNode Fetch, FlowNode Parse) CreateSourcePair(
+        string? parseId,
         string fetchModuleId,
         IReadOnlyDictionary<string, string>? fetchSettings,
         string parseModuleId,
-        IReadOnlyDictionary<string, string>? parseSettings,
-        IEnumerable<string>? inputSourceIds)
+        IReadOnlyDictionary<string, string>? parseSettings)
     {
-        var id = string.IsNullOrWhiteSpace(sourceId) ? NextSourceId() : sourceId.Trim();
-        var lane = new SourceLane
-        {
-            Id = id,
-            Fetch = CreateNode(NodeStage.Fetch, fetchModuleId, fetchSettings, sourceId: id),
-            Parse = CreateNode(NodeStage.Parse, parseModuleId, parseSettings, sourceId: id)
-        };
-
-        if (inputSourceIds is not null)
-        {
-            foreach (var inputSourceId in inputSourceIds.Where(static value => !string.IsNullOrWhiteSpace(value)))
-            {
-                lane.InputSourceIds.Add(inputSourceId.Trim());
-            }
-        }
-
-        _sources.Add(lane);
-        return lane;
+        var id = string.IsNullOrWhiteSpace(parseId) ? NextParseId() : parseId.Trim();
+        var fetch = CreateFetchNode(NextFetchId($"{id}-fetch"), fetchModuleId, fetchSettings, null);
+        var parse = CreateParseNode(id, parseModuleId, parseSettings, [fetch.GraphId]);
+        return (fetch, parse);
     }
 
-    private string NextSourceId()
+    private static void AddDistinctIds(List<string> target, IEnumerable<string>? ids)
     {
-        if (FindSource("primary") is null)
+        if (ids is null)
+        {
+            return;
+        }
+
+        foreach (var id in ids.Where(static value => !string.IsNullOrWhiteSpace(value)).Select(static value => value.Trim()))
+        {
+            if (!target.Contains(id, StringComparer.OrdinalIgnoreCase))
+            {
+                target.Add(id);
+            }
+        }
+    }
+
+    private string NextParseId()
+    {
+        if (!IsGraphIdTaken("primary") && !IsGraphIdTaken("primary-fetch"))
         {
             return "primary";
         }
@@ -449,7 +505,24 @@ public partial class Designer : IAsyncDisposable
         for (var index = 2; ; index++)
         {
             var candidate = $"source-{index}";
-            if (FindSource(candidate) is null)
+            if (!IsGraphIdTaken(candidate) && !IsGraphIdTaken($"{candidate}-fetch"))
+            {
+                return candidate;
+            }
+        }
+    }
+
+    private string NextFetchId(string baseId)
+    {
+        if (!IsGraphIdTaken(baseId))
+        {
+            return baseId;
+        }
+
+        for (var index = 2; ; index++)
+        {
+            var candidate = $"{baseId}-{index}";
+            if (!IsGraphIdTaken(candidate))
             {
                 return candidate;
             }
@@ -470,9 +543,11 @@ public partial class Designer : IAsyncDisposable
                 throw new InvalidOperationException("Enter a flow id.");
             }
 
-            if (_sources.Count == 0)
+            var fetchNodes = FetchNodes;
+            var parseNodes = ParseNodes;
+            if (fetchNodes.Count == 0 || parseNodes.Count == 0)
             {
-                throw new InvalidOperationException("Add at least one source (a fetch and parse pair) to the canvas.");
+                throw new InvalidOperationException("Add at least one source (a fetch node parsed by a parse node) to the canvas.");
             }
 
             if (DescribeSourceGraphError() is { } graphError)
@@ -480,12 +555,14 @@ public partial class Designer : IAsyncDisposable
                 throw new InvalidOperationException(graphError);
             }
 
-            foreach (var source in _sources)
+            if (fetchNodes.FirstOrDefault(static node => string.IsNullOrWhiteSpace(node.ModuleId)) is { } fetchWithoutModule)
             {
-                if (string.IsNullOrWhiteSpace(source.Fetch.ModuleId) || string.IsNullOrWhiteSpace(source.Parse.ModuleId))
-                {
-                    throw new InvalidOperationException($"Select a fetch module and a parse module for source '{source.Id}'.");
-                }
+                throw new InvalidOperationException($"Select a fetch module for fetch node '{fetchWithoutModule.GraphId}'.");
+            }
+
+            if (parseNodes.FirstOrDefault(static node => string.IsNullOrWhiteSpace(node.ModuleId)) is { } parseWithoutModule)
+            {
+                throw new InvalidOperationException($"Select a parse module for parse node '{parseWithoutModule.GraphId}'.");
             }
 
             var routes = Routes;
@@ -530,12 +607,17 @@ public partial class Designer : IAsyncDisposable
             var retry = _hasDefaultRetry
                 ? new RetryPolicyRequestViewModel(_retryMaxAttempts, _retryDelaySeconds, _retryBackoff, _retryMaxDelaySeconds)
                 : null;
-            var sourceSteps = _sources
-                .Select(static source => new FlowSourceRequestViewModel(
-                    source.Id.Trim(),
-                    ToStepRequest(source.Fetch),
-                    ToStepRequest(source.Parse),
-                    source.InputSourceIds.ToArray()))
+            var fetchSteps = fetchNodes
+                .Select(static node => new FlowFetchNodeRequestViewModel(
+                    node.GraphId.Trim(),
+                    ToStepRequest(node),
+                    node.InputParseIds.ToArray()))
+                .ToArray();
+            var parseSteps = parseNodes
+                .Select(static node => new FlowParseNodeRequestViewModel(
+                    node.GraphId.Trim(),
+                    ToStepRequest(node),
+                    node.FetchNodeIds.ToArray()))
                 .ToArray();
             var augmentSteps = augments.Select(ToStepRequest).ToArray();
             var deliverySteps = routes
@@ -546,9 +628,9 @@ public partial class Designer : IAsyncDisposable
             if (IsExistingFlow)
             {
                 saved = await ApiClient.UpdateFlowAsync(
-                    new UpdateFlowRequestViewModel(flowId, _enabled, trigger, sourceSteps, augmentSteps, deliverySteps, retry),
+                    new UpdateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry),
                     CancellationToken.None);
-                _statusMessage = $"Saved flow '{saved.Id}' with {sourceSteps.Length} source(s).";
+                _statusMessage = $"Saved flow '{saved.Id}' with {parseSteps.Length} parse node(s) fed by {fetchSteps.Length} fetch node(s).";
             }
             else
             {
@@ -561,24 +643,24 @@ public partial class Designer : IAsyncDisposable
                 if (mappings.Length > 0 && hasJoinAugment)
                 {
                     saved = await ApiClient.CreateDesignedFlowAsync(
-                        new CreateDesignedFlowRequestViewModel(flowId, _enabled, trigger, sourceSteps, augmentSteps, deliverySteps, mappings),
+                        new CreateDesignedFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, mappings),
                         CancellationToken.None);
 
                     if (retry is not null)
                     {
                         saved = await ApiClient.UpdateFlowAsync(
-                            new UpdateFlowRequestViewModel(saved.Id, _enabled, trigger, sourceSteps, augmentSteps, deliverySteps, retry),
+                            new UpdateFlowRequestViewModel(saved.Id, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry),
                             CancellationToken.None);
                     }
                 }
                 else
                 {
                     saved = await ApiClient.CreateFlowAsync(
-                        new CreateFlowRequestViewModel(flowId, _enabled, trigger, sourceSteps, augmentSteps, deliverySteps, retry),
+                        new CreateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry),
                         CancellationToken.None);
                 }
 
-                _statusMessage = $"Created flow '{saved.Id}' with {sourceSteps.Length} source(s), {augmentSteps.Length} augment(s), and {deliverySteps.Length} delivery route(s).";
+                _statusMessage = $"Created flow '{saved.Id}' with {parseSteps.Length} parse node(s), {fetchSteps.Length} fetch node(s), {augmentSteps.Length} augment(s), and {deliverySteps.Length} delivery route(s).";
                 _loadedFlowId = saved.Id;
                 FlowId = saved.Id;
                 _flowId = saved.Id;
@@ -628,6 +710,10 @@ public partial class Designer : IAsyncDisposable
         return _modules.Where(module => string.Equals(module.Kind, kind, StringComparison.OrdinalIgnoreCase)).ToArray();
     }
 
+    /// <summary>Transform modules aren't tied to a <see cref="NodeStage"/>; they're picked per field mapping row.</summary>
+    private IReadOnlyList<ModuleViewModel> TransformModules
+        => _modules.Where(static module => string.Equals(module.Kind, "Transform", StringComparison.OrdinalIgnoreCase)).ToArray();
+
     private ModuleViewModel? FindCatalogModule(string? moduleId)
     {
         if (string.IsNullOrWhiteSpace(moduleId))
@@ -649,17 +735,20 @@ public partial class Designer : IAsyncDisposable
 
     private static string StageDescription(NodeStage stage) => stage switch
     {
-        NodeStage.Fetch => "Acquires this source's raw content. It can consume other sources' parsed output as its input.",
-        NodeStage.Parse => "Converts this source's raw content into the working payload shape.",
+        NodeStage.Fetch => "Acquires raw content. One or more parse nodes parse its output, and it can consume other parse nodes' finished output as its input.",
+        NodeStage.Parse => "Parses the raw output of every linked fetch node with the same module and settings, then merges the results into one working batch.",
         NodeStage.Augment => "Join, decision, and mapping steps executed once every source has been fetched and parsed.",
         NodeStage.Render => "Prepares outbound content for one delivery route.",
         _ => "Dispatches the rendered payload for one delivery route."
     };
 
-    private string NodeHeading(FlowNode node) => node.Stage switch
+    private string NodeHeading(FlowNode node)
+        => string.IsNullOrWhiteSpace(node.Name) ? DefaultNodeHeading(node) : node.Name;
+
+    private string DefaultNodeHeading(FlowNode node) => node.Stage switch
     {
-        NodeStage.Fetch => string.IsNullOrWhiteSpace(node.SourceId) ? "Fetch" : $"Fetch - {node.SourceId}",
-        NodeStage.Parse => string.IsNullOrWhiteSpace(node.SourceId) ? "Parse" : $"Parse - {node.SourceId}",
+        NodeStage.Fetch => string.IsNullOrWhiteSpace(node.GraphId) ? "Fetch" : $"Fetch - {node.GraphId}",
+        NodeStage.Parse => string.IsNullOrWhiteSpace(node.GraphId) ? "Parse" : $"Parse - {node.GraphId}",
         NodeStage.Augment => $"Augment {AugmentNodes.IndexOf(node) + 1}",
         NodeStage.Render => $"Render {RouteNumber(node)}",
         _ => $"Deliver {RouteNumber(node)}"
@@ -702,7 +791,7 @@ public partial class Designer : IAsyncDisposable
     private static string F(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
 
     private static FlowStepRequestViewModel ToStepRequest(FlowNode node)
-        => new(node.ModuleId, CreateSettingsCopy(node.Settings));
+        => new(node.ModuleId, CreateSettingsCopy(node.Settings), Name: string.IsNullOrWhiteSpace(node.Name) ? null : node.Name.Trim());
 
     private static Dictionary<string, string> CreateSettingsCopy(Dictionary<string, string> settings)
     {
@@ -786,28 +875,27 @@ public partial class Designer : IAsyncDisposable
 
         public string ModuleId { get; set; } = string.Empty;
 
+        /// <summary>Optional user-defined display name for this node instance. Purely cosmetic.</summary>
+        public string? Name { get; set; }
+
         public Dictionary<string, string> Settings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
         public int Order { get; set; }
 
         public string RouteId { get; init; } = string.Empty;
 
-        public string SourceId { get; set; } = string.Empty;
+        /// <summary>The fetch or parse node id in the flow's source graph (unused for other stages).</summary>
+        public string GraphId { get; set; } = string.Empty;
+
+        /// <summary>Fetch nodes only: ids of the parse nodes whose finished output is merged and fed into this fetch.</summary>
+        public List<string> InputParseIds { get; } = [];
+
+        /// <summary>Parse nodes only: ids of the fetch nodes whose raw output this parse node parses.</summary>
+        public List<string> FetchNodeIds { get; } = [];
 
         public double X { get; set; }
 
         public double Y { get; set; }
-    }
-
-    private sealed class SourceLane
-    {
-        public required string Id { get; set; }
-
-        public required FlowNode Fetch { get; init; }
-
-        public required FlowNode Parse { get; init; }
-
-        public List<string> InputSourceIds { get; } = [];
     }
 
     private sealed record FlowEdge(FlowNode From, FlowNode To, bool IsDependency);
@@ -820,7 +908,8 @@ public partial class Designer : IAsyncDisposable
         SourcePath,
         TargetField,
         Condition,
-        LiteralValue
+        LiteralValue,
+        TransformModule
     }
 
     private sealed class JoinEditorState
@@ -844,6 +933,8 @@ public partial class Designer : IAsyncDisposable
         public string? RightPath { get; init; }
     }
 
+    // Property names mirror Mulse.Modules' WorkflowFieldMappingDefinition / WorkflowTransformInputDefinition so the
+    // join/map augment can deserialize exactly what the Designer writes into the 'mappingJson' setting.
     private sealed record JoinMappingDto
     {
         public string? SourceKind { get; init; }
@@ -853,6 +944,21 @@ public partial class Designer : IAsyncDisposable
         public string? TargetField { get; init; }
 
         public string? Condition { get; init; }
+
+        public string? LiteralValue { get; init; }
+
+        public string? TransformModule { get; init; }
+
+        public TransformInputDto[]? TransformInputs { get; init; }
+
+        public Dictionary<string, string>? TransformSettings { get; init; }
+    }
+
+    private sealed record TransformInputDto
+    {
+        public string? SourceKind { get; init; }
+
+        public string? SourcePath { get; init; }
 
         public string? LiteralValue { get; init; }
     }
@@ -866,6 +972,24 @@ public partial class Designer : IAsyncDisposable
         public string Condition { get; set; } = "Always";
 
         public string TargetField { get; set; } = string.Empty;
+
+        public string LiteralValue { get; set; } = string.Empty;
+
+        /// <summary>Transform rows only: the transform module id to invoke.</summary>
+        public string? TransformModule { get; set; }
+
+        /// <summary>Transform rows only: the ordered inputs handed to the transform module.</summary>
+        public List<TransformInputRow> TransformInputs { get; } = [];
+
+        /// <summary>Transform rows only: settings passed to the transform module.</summary>
+        public Dictionary<string, string> TransformSettings { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed class TransformInputRow
+    {
+        public string SourceKind { get; set; } = "Left";
+
+        public string SourcePath { get; set; } = string.Empty;
 
         public string LiteralValue { get; set; } = string.Empty;
     }

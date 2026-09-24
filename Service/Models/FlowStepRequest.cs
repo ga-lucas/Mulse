@@ -9,6 +9,9 @@ public sealed record FlowStepRequest
     [Required]
     public required string Module { get; init; }
 
+    /// <summary>Optional user-defined display name for this node instance. Purely cosmetic.</summary>
+    public string? Name { get; init; }
+
     /// <summary>The configuration settings passed to the module step.</summary>
     public Dictionary<string, string> Settings { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 

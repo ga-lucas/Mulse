@@ -13,6 +13,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRuntimeStatePayloadProtector>(CreateRuntimeStatePayloadProtector);
         services.AddSingleton<IRuntimeConfigurationStore, RuntimeConfigurationStore>();
         services.AddSingleton<IModuleCatalog, ModuleCatalog>();
+        services.AddSingleton<IModuleInvoker, ModuleInvoker>();
         services.AddSingleton<IFlowDefinitionService, FlowDefinitionService>();
         services.AddSingleton<IFlowDesignService, FlowDesignService>();
         services.AddSingleton<IBizTalkImportService, BizTalkImportService>();

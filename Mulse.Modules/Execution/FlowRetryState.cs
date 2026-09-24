@@ -14,7 +14,7 @@ public sealed class FlowRetryState
     public string ExecutionId { get; init; } = string.Empty;
 
     /// <summary>
-    /// Identifies which stage of the flow is stalled: "source:{sourceId}:fetch", "source:{sourceId}:parse",
+    /// Identifies which stage of the flow is stalled: "fetch:{fetchNodeId}", "parse:{parseNodeId}",
     /// "augment:{index}", "delivery:{routeIndex}:render", or "delivery:{routeIndex}:deliver".
     /// </summary>
     public string StageId { get; init; } = string.Empty;
@@ -33,11 +33,17 @@ public sealed class FlowRetryState
     public List<FlowOrchestrationPayloadSnapshot> InputPayloads { get; init; } = [];
 
     /// <summary>
-    /// For a stalled source-graph stage only: the PARSED batches of every source that had already been resolved
-    /// before the stalled stage ran, keyed by source id. Lets a resume pick up mid-graph without re-fetching or
-    /// re-parsing upstream sources (which may have side effects, such as deleting the files they consumed).
+    /// For a stalled source-graph stage only: the RAW batches of every fetch node that had already been resolved
+    /// before the stalled stage ran, keyed by fetch node id. Lets a resume pick up mid-graph without re-fetching
+    /// upstream fetch nodes (which may have side effects, such as deleting the files they consumed).
     /// </summary>
-    public Dictionary<string, List<FlowOrchestrationPayloadSnapshot>> ResolvedSourcePayloads { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, List<FlowOrchestrationPayloadSnapshot>> ResolvedFetchPayloads { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// For a stalled source-graph stage only: the PARSED (and <c>sourceId</c>-tagged) batches of every parse node
+    /// that had already been resolved before the stalled stage ran, keyed by parse node id.
+    /// </summary>
+    public Dictionary<string, List<FlowOrchestrationPayloadSnapshot>> ResolvedParsePayloads { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// For a stalled delivery route stage (render or deliver) only: the batch produced by the last augment (or

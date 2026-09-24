@@ -10,7 +10,13 @@ namespace Mulse.Ui.Components.Pages;
 // join/map augment editor (join keys + field mappings, persisted as JSON node settings).
 public partial class Designer
 {
-    private RenderFragment RenderSettingsEditor(IReadOnlyList<ModuleSettingViewModel>? settingDescriptors, Dictionary<string, string> settings) => builder =>
+    // onSettingChanged, when supplied, replaces the default "write straight into the dictionary" behavior, so a
+    // caller whose settings dictionary is persisted elsewhere (e.g. a join mapping row's transform settings, which
+    // are serialized into the node's mappingJson setting) can persist each change itself.
+    private RenderFragment RenderSettingsEditor(
+        IReadOnlyList<ModuleSettingViewModel>? settingDescriptors,
+        Dictionary<string, string> settings,
+        Action<string, string?>? onSettingChanged = null) => builder =>
     {
         if (settingDescriptors is null || settingDescriptors.Count == 0)
         {
@@ -45,7 +51,7 @@ public partial class Designer
                     builder.OpenElement(8, "textarea");
                     builder.AddAttribute(9, "class", "sample-textarea");
                     builder.AddAttribute(10, "value", GetSettingValue(settings, setting));
-                    builder.AddAttribute(11, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString())));
+                    builder.AddAttribute(11, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString(), onSettingChanged)));
                     builder.CloseElement();
                     break;
                 case "Boolean":
@@ -54,7 +60,7 @@ public partial class Designer
                     builder.OpenElement(10, "input");
                     builder.AddAttribute(11, "type", "checkbox");
                     builder.AddAttribute(12, "checked", string.Equals(GetSettingValue(settings, setting), "true", StringComparison.OrdinalIgnoreCase));
-                    builder.AddAttribute(13, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetBooleanSettingValue(settings, setting.Key, GetBooleanValue(args))));
+                    builder.AddAttribute(13, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetBooleanSettingValue(settings, setting.Key, GetBooleanValue(args), onSettingChanged)));
                     builder.CloseElement();
                     builder.OpenElement(14, "span");
                     builder.AddContent(15, setting.Description);
@@ -65,7 +71,7 @@ public partial class Designer
                     builder.OpenElement(8, "select");
                     builder.AddAttribute(9, "class", "selector");
                     builder.AddAttribute(10, "value", GetSettingValue(settings, setting));
-                    builder.AddAttribute(11, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString())));
+                    builder.AddAttribute(11, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString(), onSettingChanged)));
                     foreach (var option in setting.Options)
                     {
                         builder.OpenElement(12, "option");
@@ -80,7 +86,7 @@ public partial class Designer
                     builder.AddAttribute(9, "class", "mapping-input");
                     builder.AddAttribute(10, "type", setting.InputKind == "Password" ? "password" : setting.InputKind == "Number" ? "number" : "text");
                     builder.AddAttribute(11, "value", GetSettingValue(settings, setting));
-                    builder.AddAttribute(12, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString())));
+                    builder.AddAttribute(12, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString(), onSettingChanged)));
                     builder.CloseElement();
                     break;
             }
@@ -102,13 +108,21 @@ public partial class Designer
     private static string GetSettingValue(Dictionary<string, string> settings, ModuleSettingViewModel setting)
         => settings.TryGetValue(setting.Key, out var value) ? value : setting.DefaultValue ?? string.Empty;
 
-    private void SetSettingValue(Dictionary<string, string> settings, string key, string? value)
-        => settings[key] = value ?? string.Empty;
+    private void SetSettingValue(Dictionary<string, string> settings, string key, string? value, Action<string, string?>? onSettingChanged = null)
+    {
+        if (onSettingChanged is not null)
+        {
+            onSettingChanged(key, value);
+            return;
+        }
+
+        settings[key] = value ?? string.Empty;
+    }
 
     private static bool GetBooleanValue(ChangeEventArgs args) => args.Value is bool booleanValue && booleanValue;
 
-    private void SetBooleanSettingValue(Dictionary<string, string> settings, string key, bool value)
-        => settings[key] = value.ToString().ToLowerInvariant();
+    private void SetBooleanSettingValue(Dictionary<string, string> settings, string key, bool value, Action<string, string?>? onSettingChanged = null)
+        => SetSettingValue(settings, key, value.ToString().ToLowerInvariant(), onSettingChanged);
 
     private bool IsJoinNode(FlowNode node)
         => node.Stage == NodeStage.Augment && string.Equals(node.ModuleId, JoinModuleId, StringComparison.OrdinalIgnoreCase);
@@ -135,9 +149,26 @@ public partial class Designer
     }
 
     private string JoinSideLabel(FlowNode node, string sourceKind)
-        => string.Equals(sourceKind, "Literal", StringComparison.OrdinalIgnoreCase)
-            ? "Literal"
-            : $"{sourceKind} ({JoinSideName(node, sourceKind)})";
+        => sourceKind switch
+        {
+            _ when string.Equals(sourceKind, "Literal", StringComparison.OrdinalIgnoreCase) => "Literal",
+            _ when string.Equals(sourceKind, "Transform", StringComparison.OrdinalIgnoreCase) => "Transform",
+            _ => $"{sourceKind} ({JoinSideName(node, sourceKind)})"
+        };
+
+    // Row-aware variant for the mapping table's "Reads from" dropdown, so a Transform row shows which module it uses.
+    private string JoinSideLabel(FlowNode node, FieldMappingRow row, string sourceKind)
+    {
+        if (!string.Equals(sourceKind, "Transform", StringComparison.OrdinalIgnoreCase))
+        {
+            return JoinSideLabel(node, sourceKind);
+        }
+
+        var moduleName = string.IsNullOrWhiteSpace(row.TransformModule)
+            ? "choose module"
+            : FindCatalogModule(row.TransformModule)?.DisplayName ?? row.TransformModule;
+        return $"Transform ({moduleName})";
+    }
 
     private JoinEditorState EnsureJoinEditor(FlowNode node)
     {
@@ -207,6 +238,10 @@ public partial class Designer
         {
             case JoinMappingField.SourceKind:
                 row.SourceKind = string.IsNullOrWhiteSpace(text) ? "Left" : text;
+                if (string.Equals(row.SourceKind, "Transform", StringComparison.OrdinalIgnoreCase) && row.TransformInputs.Count == 0)
+                {
+                    row.TransformInputs.Add(new TransformInputRow { SourceKind = "Left" });
+                }
                 break;
             case JoinMappingField.SourcePath:
                 row.SourcePath = text;
@@ -217,11 +252,64 @@ public partial class Designer
             case JoinMappingField.Condition:
                 row.Condition = string.IsNullOrWhiteSpace(text) ? "Always" : text;
                 break;
+            case JoinMappingField.TransformModule:
+                var transformModule = string.IsNullOrWhiteSpace(text) ? null : text;
+                if (!string.Equals(row.TransformModule, transformModule, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Settings are module-specific: start from the newly chosen module's defaults.
+                    row.TransformModule = transformModule;
+                    row.TransformSettings.Clear();
+                    foreach (var setting in FindCatalogModule(transformModule)?.Settings ?? [])
+                    {
+                        if (setting.DefaultValue is not null)
+                        {
+                            row.TransformSettings[setting.Key] = setting.DefaultValue;
+                        }
+                    }
+                }
+                break;
             default:
                 row.LiteralValue = text;
                 break;
         }
 
+        WriteJoinMappings(node, EnsureJoinEditor(node));
+    }
+
+    private void AddTransformInput(FlowNode node, FieldMappingRow row)
+    {
+        row.TransformInputs.Add(new TransformInputRow { SourceKind = "Left" });
+        WriteJoinMappings(node, EnsureJoinEditor(node));
+    }
+
+    private void RemoveTransformInput(FlowNode node, FieldMappingRow row, TransformInputRow input)
+    {
+        row.TransformInputs.Remove(input);
+        WriteJoinMappings(node, EnsureJoinEditor(node));
+    }
+
+    private void SetTransformInputField(FlowNode node, FieldMappingRow row, TransformInputRow input, JoinMappingField field, string? value)
+    {
+        var text = value ?? string.Empty;
+        switch (field)
+        {
+            case JoinMappingField.SourceKind:
+                input.SourceKind = string.IsNullOrWhiteSpace(text) ? "Left" : text;
+                break;
+            case JoinMappingField.SourcePath:
+                input.SourcePath = text;
+                break;
+            case JoinMappingField.LiteralValue:
+                input.LiteralValue = text;
+                break;
+        }
+
+        WriteJoinMappings(node, EnsureJoinEditor(node));
+    }
+
+    private void SetTransformSetting(FlowNode node, FieldMappingRow row, string settingKey, string? value)
+    {
+        row.TransformSettings[settingKey] = value ?? string.Empty;
         WriteJoinMappings(node, EnsureJoinEditor(node));
     }
 
@@ -236,13 +324,33 @@ public partial class Designer
     private static void WriteJoinMappings(FlowNode node, JoinEditorState state)
     {
         var mappings = state.Mappings
-            .Select(static row => new JoinMappingDto
+            .Select(static row =>
             {
-                SourceKind = row.SourceKind,
-                SourcePath = row.SourcePath,
-                TargetField = row.TargetField,
-                Condition = row.Condition,
-                LiteralValue = string.IsNullOrWhiteSpace(row.LiteralValue) ? null : row.LiteralValue
+                // Transform details are kept on the row while editing (so toggling the kind back restores them) but
+                // are only persisted for Transform rows.
+                var isTransform = string.Equals(row.SourceKind, "Transform", StringComparison.OrdinalIgnoreCase);
+                return new JoinMappingDto
+                {
+                    SourceKind = row.SourceKind,
+                    SourcePath = row.SourcePath,
+                    TargetField = row.TargetField,
+                    Condition = row.Condition,
+                    LiteralValue = string.IsNullOrWhiteSpace(row.LiteralValue) ? null : row.LiteralValue,
+                    TransformModule = isTransform && !string.IsNullOrWhiteSpace(row.TransformModule) ? row.TransformModule : null,
+                    TransformInputs = isTransform
+                        ? row.TransformInputs
+                            .Select(static input => new TransformInputDto
+                            {
+                                SourceKind = input.SourceKind,
+                                SourcePath = input.SourcePath,
+                                LiteralValue = string.IsNullOrWhiteSpace(input.LiteralValue) ? null : input.LiteralValue
+                            })
+                            .ToArray()
+                        : null,
+                    TransformSettings = isTransform && row.TransformSettings.Count > 0
+                        ? new Dictionary<string, string>(row.TransformSettings, StringComparer.OrdinalIgnoreCase)
+                        : null
+                };
             })
             .ToArray();
         node.Settings[MappingsKey] = JsonSerializer.Serialize(mappings, JsonOptions);
@@ -277,13 +385,36 @@ public partial class Designer
         try
         {
             return (JsonSerializer.Deserialize<List<JoinMappingDto>>(json, JsonOptions) ?? [])
-                .Select(static mapping => new FieldMappingRow
+                .Select(static mapping =>
                 {
-                    SourceKind = string.IsNullOrWhiteSpace(mapping.SourceKind) ? "Left" : mapping.SourceKind,
-                    SourcePath = mapping.SourcePath ?? string.Empty,
-                    TargetField = mapping.TargetField ?? string.Empty,
-                    Condition = string.IsNullOrWhiteSpace(mapping.Condition) ? "Always" : mapping.Condition,
-                    LiteralValue = mapping.LiteralValue ?? string.Empty
+                    var row = new FieldMappingRow
+                    {
+                        SourceKind = string.IsNullOrWhiteSpace(mapping.SourceKind) ? "Left" : mapping.SourceKind,
+                        SourcePath = mapping.SourcePath ?? string.Empty,
+                        TargetField = mapping.TargetField ?? string.Empty,
+                        Condition = string.IsNullOrWhiteSpace(mapping.Condition) ? "Always" : mapping.Condition,
+                        LiteralValue = mapping.LiteralValue ?? string.Empty,
+                        TransformModule = string.IsNullOrWhiteSpace(mapping.TransformModule) ? null : mapping.TransformModule
+                    };
+
+                    row.TransformInputs.AddRange((mapping.TransformInputs ?? [])
+                        .Where(static input => input is not null)
+                        .Select(static input => new TransformInputRow
+                        {
+                            SourceKind = string.IsNullOrWhiteSpace(input.SourceKind) ? "Left" : input.SourceKind,
+                            SourcePath = input.SourcePath ?? string.Empty,
+                            LiteralValue = input.LiteralValue ?? string.Empty
+                        }));
+
+                    if (mapping.TransformSettings is not null)
+                    {
+                        foreach (var setting in mapping.TransformSettings)
+                        {
+                            row.TransformSettings[setting.Key] = setting.Value ?? string.Empty;
+                        }
+                    }
+
+                    return row;
                 })
                 .ToList();
         }

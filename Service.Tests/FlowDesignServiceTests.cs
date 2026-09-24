@@ -101,13 +101,21 @@ public sealed class FlowDesignServiceTests
         Id = flowId,
         Enabled = true,
         Trigger = new FlowTriggerRequest { Mode = PipelineTriggerMode.OnDemand },
-        Sources =
+        Fetches =
         [
-            new FlowSourceRequest
+            new FlowFetchNodeRequest
+            {
+                Id = "primary-fetch",
+                Fetch = new FlowStepRequest { Module = "fake-fetch" }
+            }
+        ],
+        Parses =
+        [
+            new FlowParseNodeRequest
             {
                 Id = "primary",
-                Fetch = new FlowStepRequest { Module = "fake-fetch" },
-                Parse = new FlowStepRequest { Module = "fake-parse" }
+                Parse = new FlowStepRequest { Module = "fake-parse" },
+                FetchNodeIds = ["primary-fetch"]
             }
         ],
         Deliveries =
@@ -129,17 +137,29 @@ public sealed class FlowDesignServiceTests
         var pipeline = await service.CreateFlowAsync(CreateValidRequest(), CancellationToken.None);
 
         Assert.Equal("flow-1", pipeline.Id);
-        Assert.Single(pipeline.Sources);
+        Assert.Equal("primary-fetch", Assert.Single(pipeline.Fetches).Id);
+        var parse = Assert.Single(pipeline.Parses);
+        Assert.Equal("primary", parse.Id);
+        Assert.Equal(["primary-fetch"], parse.FetchNodeIds);
         Assert.Single(pipeline.Deliveries);
         Assert.NotNull(flowDefinitionService.CreatedPipeline);
         Assert.Equal("flow-1", flowDefinitionService.CreatedPipeline!.Id);
     }
 
     [Fact]
-    public async Task CreateFlowAsync_NoSources_ThrowsArgumentException()
+    public async Task CreateFlowAsync_NoFetches_ThrowsArgumentException()
     {
         var service = CreateService();
-        var request = CreateValidRequest() with { Sources = [] };
+        var request = CreateValidRequest() with { Fetches = [] };
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CreateFlowAsync(request, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CreateFlowAsync_NoParses_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var request = CreateValidRequest() with { Parses = [] };
 
         await Assert.ThrowsAsync<ArgumentException>(() => service.CreateFlowAsync(request, CancellationToken.None));
     }

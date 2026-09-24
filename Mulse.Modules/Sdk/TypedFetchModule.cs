@@ -19,10 +19,12 @@ namespace Mulse.Modules.Sdk;
 /// module already follows for structured sources.
 /// </para>
 /// <para>
-/// <paramref name="input"/> in <see cref="FetchAsync"/> is still the raw, weakly-typed merged batch from this
-/// source's <see cref="SourceDefinition.InputSourceIds"/> (as for any <see cref="IFetchModule"/>) - a typed
-/// fetch module that consumes another source's output should inspect it with <see cref="JsonPayloadNavigator"/>
-/// or deserialize individual payloads itself, since the upstream source's shape isn't known to this base class.
+/// <paramref name="input"/> in <see cref="FetchAsync"/> is still the raw, weakly-typed merged batch of the
+/// already-parsed output of every parse node listed in the owning fetch node's
+/// <see cref="FetchNodeDefinition.InputParseIds"/> (as for any <see cref="IFetchModule"/>; each payload's
+/// <c>sourceId</c> metadata names the parse node that produced it) - a typed fetch module that consumes upstream
+/// parsed output should inspect it with <see cref="JsonPayloadNavigator"/> or deserialize individual payloads
+/// itself, since the upstream parse nodes' shape isn't known to this base class.
 /// </para>
 /// <para>
 /// See also <see cref="TypedParseModule{TOut}"/>, <see cref="TypedAugmentModule{TIn,TOut}"/>,

@@ -14,12 +14,20 @@ public class FlowDefinitionServiceTests
         ("json-render", ModuleKind.Render),
         ("http-deliver", ModuleKind.Deliver));
 
-    private static PipelineDefinition ValidPipeline(string id = "flow-1") => new()
-    {
-        Id = id,
-        Sources = [new SourceDefinition { Id = "primary", Fetch = new ModuleStepDefinition { Module = "file-system-fetch" }, Parse = new ModuleStepDefinition { Module = "json-parse" } }],
-        Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Deliver = new ModuleStepDefinition { Module = "http-deliver" } }]
-    };
+    private static readonly List<DeliveryRouteDefinition> Deliveries =
+        [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Deliver = new ModuleStepDefinition { Module = "http-deliver" } }];
+
+    private static FetchNodeDefinition Fetch(string id, string module = "file-system-fetch", params string[] inputParseIds)
+        => new() { Id = id, Fetch = new ModuleStepDefinition { Module = module }, InputParseIds = [.. inputParseIds] };
+
+    private static ParseNodeDefinition Parse(string id, params string[] fetchNodeIds)
+        => new() { Id = id, Parse = new ModuleStepDefinition { Module = "json-parse" }, FetchNodeIds = [.. fetchNodeIds] };
+
+    private static PipelineDefinition Pipeline(string id, List<FetchNodeDefinition> fetches, List<ParseNodeDefinition> parses)
+        => new() { Id = id, Fetches = fetches, Parses = parses, Deliveries = Deliveries };
+
+    private static PipelineDefinition ValidPipeline(string id = "flow-1")
+        => Pipeline(id, [Fetch("primary-fetch")], [Parse("primary", "primary-fetch")]);
 
     private static FlowDefinitionService CreateService(RuntimeMulseState? state = null)
         => new(new FakeRuntimeConfigurationStore(state ?? new RuntimeMulseState()), ModuleCatalog);
@@ -44,87 +52,115 @@ public class FlowDefinitionServiceTests
     }
 
     [Fact]
-    public async Task CreateAsync_WithNoSources_Throws()
+    public async Task CreateAsync_WithEmptySourceGraph_Throws()
     {
         var service = CreateService();
-        var pipeline = ValidPipeline();
-        pipeline = new PipelineDefinition { Id = pipeline.Id, Sources = [], Deliveries = pipeline.Deliveries };
 
-        await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(Pipeline("flow-empty", [], []), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithFetchesButNoParses_Throws()
+    {
+        var service = CreateService();
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(Pipeline("flow-no-parse", [Fetch("primary-fetch")], []), CancellationToken.None));
     }
 
     [Fact]
     public async Task CreateAsync_WithUnknownFetchModule_ThrowsInvalidOperationException()
     {
         var service = CreateService();
-        var pipeline = ValidPipeline();
-        pipeline.Sources[0].Fetch.GetType(); // no-op to keep record-like usage explicit
-        var invalidPipeline = new PipelineDefinition
-        {
-            Id = pipeline.Id,
-            Sources = [new SourceDefinition { Id = "primary", Fetch = new ModuleStepDefinition { Module = "does-not-exist" }, Parse = new ModuleStepDefinition { Module = "json-parse" } }],
-            Deliveries = pipeline.Deliveries
-        };
+        var invalidPipeline = Pipeline("flow-1", [Fetch("primary-fetch", "does-not-exist")], [Parse("primary", "primary-fetch")]);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateAsync(invalidPipeline, CancellationToken.None));
     }
 
     [Fact]
-    public async Task CreateAsync_WithDuplicateSourceIds_ThrowsArgumentException()
+    public async Task CreateAsync_WithMissingParseModule_ThrowsArgumentException()
     {
         var service = CreateService();
-        var pipeline = new PipelineDefinition
-        {
-            Id = "flow-dup",
-            Sources =
-            [
-                new SourceDefinition { Id = "primary", Fetch = new ModuleStepDefinition { Module = "file-system-fetch" }, Parse = new ModuleStepDefinition { Module = "json-parse" } },
-                new SourceDefinition { Id = "primary", Fetch = new ModuleStepDefinition { Module = "file-system-fetch" }, Parse = new ModuleStepDefinition { Module = "json-parse" } }
-            ],
-            Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Deliver = new ModuleStepDefinition { Module = "http-deliver" } }]
-        };
+        var pipeline = Pipeline(
+            "flow-missing-module",
+            [Fetch("primary-fetch")],
+            [new ParseNodeDefinition { Id = "primary", Parse = new ModuleStepDefinition { Module = "" }, FetchNodeIds = ["primary-fetch"] }]);
 
         var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
-        Assert.Contains("more than one source with id 'primary'", exception.Message);
+        Assert.Contains("parse node 'primary' must define a parse module", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithMissingFetchModule_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var pipeline = Pipeline("flow-missing-module", [Fetch("primary-fetch", " ")], [Parse("primary", "primary-fetch")]);
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
+        Assert.Contains("fetch node 'primary-fetch' must define a fetch module", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithDuplicateFetchIds_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var pipeline = Pipeline("flow-dup", [Fetch("primary-fetch"), Fetch("primary-fetch")], [Parse("primary", "primary-fetch")]);
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
+        Assert.Contains("more than one fetch node with id 'primary-fetch'", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithDuplicateParseIds_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var pipeline = Pipeline("flow-dup", [Fetch("primary-fetch")], [Parse("primary", "primary-fetch"), Parse("primary", "primary-fetch")]);
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
+        Assert.Contains("more than one parse node with id 'primary'", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithFetchAndParseSharingAnId_ThrowsArgumentException()
+    {
+        // Fetch and parse ids share one namespace, so the combined graph can reference either unambiguously.
+        var service = CreateService();
+        var pipeline = Pipeline("flow-shared-id", [Fetch("primary")], [Parse("primary", "primary")]);
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
+        Assert.Contains("uses id 'primary' for both a fetch node and a parse node", exception.Message);
     }
 
     [Fact]
     public async Task CreateAsync_WithCyclicSourceGraph_ThrowsArgumentException()
     {
+        // a-fetch -> a -> b-fetch -> b -> a-fetch (each fetch consumes the other pair's parsed output).
         var service = CreateService();
-        var pipeline = new PipelineDefinition
-        {
-            Id = "flow-cycle",
-            Sources =
-            [
-                new SourceDefinition { Id = "a", Fetch = new ModuleStepDefinition { Module = "file-system-fetch" }, Parse = new ModuleStepDefinition { Module = "json-parse" }, InputSourceIds = ["b"] },
-                new SourceDefinition { Id = "b", Fetch = new ModuleStepDefinition { Module = "sql-lookup-fetch" }, Parse = new ModuleStepDefinition { Module = "json-parse" }, InputSourceIds = ["a"] }
-            ],
-            Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Deliver = new ModuleStepDefinition { Module = "http-deliver" } }]
-        };
+        var pipeline = Pipeline(
+            "flow-cycle",
+            [Fetch("a-fetch", "file-system-fetch", "b"), Fetch("b-fetch", "sql-lookup-fetch", "a")],
+            [Parse("a", "a-fetch"), Parse("b", "b-fetch")]);
 
         var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
         Assert.Contains("cyclic source graph", exception.Message);
+        Assert.Contains("a-fetch", exception.Message);
+        Assert.Contains("b-fetch", exception.Message);
     }
 
     [Fact]
     public async Task CreateAsync_WithValidDiamondSourceGraph_Succeeds()
     {
-        // "primary" feeds both "left" and "right", which both feed "merged" - this is acyclic (a DAG) even
-        // though "merged" has two input sources, so it must not be misclassified as a cycle.
+        // "primary" feeds both "left" and "right" lookups, which both feed "merged" - this is acyclic (a DAG) even
+        // though "merged-fetch" has two input parse nodes, so it must not be misclassified as a cycle.
         var service = CreateService();
-        var pipeline = new PipelineDefinition
-        {
-            Id = "flow-diamond",
-            Sources =
+        var pipeline = Pipeline(
+            "flow-diamond",
             [
-                new SourceDefinition { Id = "primary", Fetch = new ModuleStepDefinition { Module = "file-system-fetch" }, Parse = new ModuleStepDefinition { Module = "json-parse" } },
-                new SourceDefinition { Id = "left", Fetch = new ModuleStepDefinition { Module = "sql-lookup-fetch" }, Parse = new ModuleStepDefinition { Module = "json-parse" }, InputSourceIds = ["primary"] },
-                new SourceDefinition { Id = "right", Fetch = new ModuleStepDefinition { Module = "sql-lookup-fetch" }, Parse = new ModuleStepDefinition { Module = "json-parse" }, InputSourceIds = ["primary"] },
-                new SourceDefinition { Id = "merged", Fetch = new ModuleStepDefinition { Module = "sql-lookup-fetch" }, Parse = new ModuleStepDefinition { Module = "json-parse" }, InputSourceIds = ["left", "right"] }
+                Fetch("primary-fetch"),
+                Fetch("left-fetch", "sql-lookup-fetch", "primary"),
+                Fetch("right-fetch", "sql-lookup-fetch", "primary"),
+                Fetch("merged-fetch", "sql-lookup-fetch", "left", "right")
             ],
-            Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Deliver = new ModuleStepDefinition { Module = "http-deliver" } }]
-        };
+            [Parse("primary", "primary-fetch"), Parse("left", "left-fetch"), Parse("right", "right-fetch"), Parse("merged", "merged-fetch")]);
 
         var result = await service.CreateAsync(pipeline, CancellationToken.None);
 
@@ -132,17 +168,70 @@ public class FlowDefinitionServiceTests
     }
 
     [Fact]
-    public async Task CreateAsync_WithUnknownInputSourceId_ThrowsArgumentException()
+    public async Task CreateAsync_WithSeveralFetchesFeedingOneParse_Succeeds()
     {
         var service = CreateService();
-        var pipeline = new PipelineDefinition
-        {
-            Id = "flow-bad-input",
-            Sources = [new SourceDefinition { Id = "primary", Fetch = new ModuleStepDefinition { Module = "file-system-fetch" }, Parse = new ModuleStepDefinition { Module = "json-parse" }, InputSourceIds = ["does-not-exist"] }],
-            Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "json-render" }, Deliver = new ModuleStepDefinition { Module = "http-deliver" } }]
-        };
+        var pipeline = Pipeline(
+            "flow-many-to-one",
+            [Fetch("inbox-a"), Fetch("inbox-b"), Fetch("inbox-c")],
+            [Parse("orders", "inbox-a", "inbox-b", "inbox-c")]);
+
+        var result = await service.CreateAsync(pipeline, CancellationToken.None);
+
+        Assert.Equal(["inbox-a", "inbox-b", "inbox-c"], Assert.Single(result.Parses).FetchNodeIds);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithUnknownInputParseId_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var pipeline = Pipeline("flow-bad-input", [Fetch("primary-fetch", "file-system-fetch", "does-not-exist")], [Parse("primary", "primary-fetch")]);
 
         var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
-        Assert.Contains("unknown input source", exception.Message);
+        Assert.Contains("references unknown input parse node 'does-not-exist'", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithInputParseIdNamingAFetchNode_ThrowsArgumentException()
+    {
+        // InputParseIds must name parse nodes: a fetch consumes finished (parsed) batches, never raw ones.
+        var service = CreateService();
+        var pipeline = Pipeline(
+            "flow-bad-input-kind",
+            [Fetch("primary-fetch"), Fetch("lookup-fetch", "sql-lookup-fetch", "primary-fetch")],
+            [Parse("primary", "primary-fetch"), Parse("lookup", "lookup-fetch")]);
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
+        Assert.Contains("references unknown input parse node 'primary-fetch'", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithUnknownFetchNodeId_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var pipeline = Pipeline("flow-bad-fetch-ref", [Fetch("primary-fetch")], [Parse("primary", "primary-fetch", "missing-fetch")]);
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
+        Assert.Contains("parse node 'primary' references unknown fetch node 'missing-fetch'", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithParseNodeWithoutFetchNodes_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var pipeline = Pipeline("flow-empty-parse", [Fetch("primary-fetch")], [Parse("primary", "primary-fetch"), Parse("orphan")]);
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
+        Assert.Contains("parse node 'orphan' must reference at least one fetch node", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithFetchNodeNotParsedByAnyParseNode_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var pipeline = Pipeline("flow-orphan-fetch", [Fetch("primary-fetch"), Fetch("unused-fetch")], [Parse("primary", "primary-fetch")]);
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(pipeline, CancellationToken.None));
+        Assert.Contains("fetch node 'unused-fetch' is not parsed by any parse node", exception.Message);
     }
 }

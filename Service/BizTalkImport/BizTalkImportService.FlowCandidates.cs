@@ -287,7 +287,8 @@ public sealed partial class BizTalkImportService
             flowId,
             false,
             new BizTalkDraftTriggerResponse(isPushTriggeredFetch ? PipelineTriggerMode.Push : PipelineTriggerMode.OnDemand, null, false),
-            [new BizTalkDraftSourceResponse(PrimarySourceId, fetchStep, parseStep, [])],
+            [new BizTalkDraftFetchResponse(PrimaryFetchId, fetchStep, [])],
+            [new BizTalkDraftParseResponse(PrimaryParseId, parseStep, [PrimaryFetchId])],
             augments,
             deliveries,
             requirements,
@@ -320,11 +321,16 @@ public sealed partial class BizTalkImportService
     }
 
     /// <summary>
-    /// The single generated source id used by BizTalk-derived drafts. A BizTalk receive port maps to exactly
-    /// one inbound transport, so the generated source graph has one root source; additional sources (lookups,
-    /// joins) are something a reviewer adds deliberately in the designer after import.
+    /// The single generated parse node id used by BizTalk-derived drafts (and therefore the <c>sourceId</c> its
+    /// payloads are tagged with). A BizTalk receive port maps to exactly one inbound transport, so the generated
+    /// source graph has one root fetch node (<see cref="PrimaryFetchId"/>) parsed by this one parse node;
+    /// additional fetch/parse nodes (lookups, joins, extra same-format inbound locations) are something a reviewer
+    /// adds deliberately in the designer after import.
     /// </summary>
-    private const string PrimarySourceId = "primary";
+    private const string PrimaryParseId = "primary";
+
+    /// <summary>The single generated root fetch node id; distinct from <see cref="PrimaryParseId"/> because fetch and parse ids share one namespace.</summary>
+    private const string PrimaryFetchId = "primary-fetch";
 
     /// <summary>
     /// Narrows a project response to a single orchestration's view of itself (orchestration count, control-flow

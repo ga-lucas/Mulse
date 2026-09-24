@@ -12,6 +12,7 @@ internal sealed class FakeExecutableModuleCatalog : IModuleCatalog
     private readonly Dictionary<string, IOrchestrationAugmentModule> _augmentModules = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IRenderModule> _renderModules = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IDeliverModule> _deliverModules = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ITransformModule> _transformModules = new(StringComparer.OrdinalIgnoreCase);
 
     public FakeExecutableModuleCatalog AddFetch(IFetchModule module)
     {
@@ -43,6 +44,12 @@ internal sealed class FakeExecutableModuleCatalog : IModuleCatalog
         return this;
     }
 
+    public FakeExecutableModuleCatalog AddTransform(ITransformModule module)
+    {
+        _transformModules[module.Descriptor.Id] = module;
+        return this;
+    }
+
     public IReadOnlyList<ModuleCatalogEntry> GetAll() => throw new NotSupportedException();
 
     public IReadOnlyList<ModulePackageInfo> GetPackages() => throw new NotSupportedException();
@@ -61,6 +68,9 @@ internal sealed class FakeExecutableModuleCatalog : IModuleCatalog
 
     public ValueTask<ModuleLease<IDeliverModule>> LeaseDeliverAsync(string moduleId, CancellationToken cancellationToken)
         => Lease(_deliverModules, moduleId);
+
+    public ValueTask<ModuleLease<ITransformModule>> LeaseTransformAsync(string moduleId, CancellationToken cancellationToken)
+        => Lease(_transformModules, moduleId);
 
     public Task SynchronizeAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
 

@@ -13,13 +13,15 @@ internal static class FlowMappings
             flow.Trigger.Mode,
             flow.Trigger.Interval,
             flow.Trigger.RunOnStartup,
-            flow.Sources.Select(static source => source.Id).ToArray(),
-            flow.Sources.Select(static source => source.Fetch.Module).ToArray(),
-            flow.Sources.Select(static source => source.Parse.Module).ToArray(),
+            flow.Fetches.Select(static fetch => fetch.Id).ToArray(),
+            flow.Parses.Select(static parse => parse.Id).ToArray(),
+            flow.Fetches.Select(static fetch => fetch.Fetch.Module).ToArray(),
+            flow.Parses.Select(static parse => parse.Parse.Module).ToArray(),
             flow.Augments.Select(static step => step.Module).ToArray(),
             flow.Deliveries.Select(static route => route.Render.Module).ToArray(),
             flow.Deliveries.Select(static route => route.Deliver.Module).ToArray(),
-            flow.Sources.Select(MapSource).ToArray(),
+            flow.Fetches.Select(MapFetchNode).ToArray(),
+            flow.Parses.Select(MapParseNode).ToArray(),
             flow.Augments.Select(MapStep).ToArray(),
             flow.Deliveries.Select(MapDelivery).ToArray(),
             MapRetry(flow.Retry),
@@ -43,7 +45,8 @@ internal static class FlowMappings
                 Interval = request.Trigger.Interval,
                 RunOnStartup = request.Trigger.RunOnStartup
             },
-            Sources = request.Sources.Select(MapSource).ToList(),
+            Fetches = request.Fetches.Select(MapFetchNode).ToList(),
+            Parses = request.Parses.Select(MapParseNode).ToList(),
             Augments = request.Augments.Select(MapStep).ToList(),
             Deliveries = request.Deliveries.Select(MapDelivery).ToList(),
             Retry = MapRetry(request.Retry)
@@ -62,7 +65,8 @@ internal static class FlowMappings
             Id = pipeline.Id,
             Enabled = enabled,
             Trigger = pipeline.Trigger,
-            Sources = pipeline.Sources,
+            Fetches = pipeline.Fetches,
+            Parses = pipeline.Parses,
             Augments = pipeline.Augments,
             Deliveries = pipeline.Deliveries,
             Retry = pipeline.Retry
@@ -81,34 +85,58 @@ internal static class FlowMappings
                 Interval = draft.Trigger.Interval,
                 RunOnStartup = draft.Trigger.RunOnStartup
             },
-            Sources = draft.Sources.Select(MapSource).ToList(),
+            Fetches = draft.Fetches.Select(MapFetchNode).ToList(),
+            Parses = draft.Parses.Select(MapParseNode).ToList(),
             Augments = draft.Augments.Select(MapStep).ToList(),
             Deliveries = draft.Deliveries.Select(MapDelivery).ToList()
         };
     }
 
-    private static FlowSourceResponse MapSource(SourceDefinition source)
-        => new(source.Id, MapStep(source.Fetch), MapStep(source.Parse), source.InputSourceIds.ToArray());
+    private static FlowFetchNodeResponse MapFetchNode(FetchNodeDefinition fetch)
+        => new(fetch.Id, MapStep(fetch.Fetch), fetch.InputParseIds.ToArray());
 
-    private static SourceDefinition MapSource(FlowSourceRequest source)
+    private static FlowParseNodeResponse MapParseNode(ParseNodeDefinition parse)
+        => new(parse.Id, MapStep(parse.Parse), parse.FetchNodeIds.ToArray());
+
+    /// <summary>Maps an API fetch node request to its runtime definition. Shared with <see cref="FlowDesignService"/>.</summary>
+    public static FetchNodeDefinition MapFetchNode(FlowFetchNodeRequest fetch)
     {
-        return new SourceDefinition
+        return new FetchNodeDefinition
         {
-            Id = source.Id,
-            Fetch = MapStep(source.Fetch),
-            Parse = MapStep(source.Parse),
-            InputSourceIds = source.InputSourceIds.ToList()
+            Id = fetch.Id,
+            Fetch = MapStep(fetch.Fetch),
+            InputParseIds = (fetch.InputParseIds ?? []).ToList()
         };
     }
 
-    private static SourceDefinition MapSource(BizTalkDraftSourceResponse source)
+    /// <summary>Maps an API parse node request to its runtime definition. Shared with <see cref="FlowDesignService"/>.</summary>
+    public static ParseNodeDefinition MapParseNode(FlowParseNodeRequest parse)
     {
-        return new SourceDefinition
+        return new ParseNodeDefinition
         {
-            Id = source.Id,
-            Fetch = MapStep(source.Fetch),
-            Parse = MapStep(source.Parse),
-            InputSourceIds = source.InputSourceIds.ToList()
+            Id = parse.Id,
+            Parse = MapStep(parse.Parse),
+            FetchNodeIds = (parse.FetchNodeIds ?? []).ToList()
+        };
+    }
+
+    private static FetchNodeDefinition MapFetchNode(BizTalkDraftFetchResponse fetch)
+    {
+        return new FetchNodeDefinition
+        {
+            Id = fetch.Id,
+            Fetch = MapStep(fetch.Fetch),
+            InputParseIds = fetch.InputParseIds.ToList()
+        };
+    }
+
+    private static ParseNodeDefinition MapParseNode(BizTalkDraftParseResponse parse)
+    {
+        return new ParseNodeDefinition
+        {
+            Id = parse.Id,
+            Parse = MapStep(parse.Parse),
+            FetchNodeIds = parse.FetchNodeIds.ToList()
         };
     }
 
@@ -138,13 +166,14 @@ internal static class FlowMappings
     }
 
     private static ModuleStepResponse MapStep(ModuleStepDefinition step)
-        => new(step.Module, new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase), MapRetry(step.Retry));
+        => new(step.Module, new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase), MapRetry(step.Retry), step.Name);
 
     private static ModuleStepDefinition MapStep(FlowStepRequest step)
     {
         return new ModuleStepDefinition
         {
             Module = step.Module,
+            Name = step.Name,
             Settings = new Dictionary<string, string>(step.Settings, StringComparer.OrdinalIgnoreCase),
             Retry = MapRetry(step.Retry)
         };

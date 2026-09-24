@@ -32,4 +32,9 @@ internal sealed class ModuleRegistryBuilder : IModuleRegistryBuilder
     {
         _registrations.Add((ModuleKind.Deliver, typeof(TModule)));
     }
+
+    public void AddTransform<TModule>() where TModule : class, ITransformModule
+    {
+        _registrations.Add((ModuleKind.Transform, typeof(TModule)));
+    }
 }

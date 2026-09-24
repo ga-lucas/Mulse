@@ -17,12 +17,20 @@ public sealed record UpdateFlowRequest : IFlowPipelineRequest
     public required FlowTriggerRequest Trigger { get; init; }
 
     /// <summary>
-    /// The flow's source graph: each entry is a fetch/parse pair, optionally consuming other sources' parsed
-    /// output. Ids must be unique and non-empty, input source ids must reference sources in this same list, and
-    /// the resulting graph must be acyclic.
+    /// The fetch nodes of the flow's source graph, each optionally consuming the parsed output of parse nodes via
+    /// <see cref="FlowFetchNodeRequest.InputParseIds"/>. Ids must be non-empty and unique across both fetch and
+    /// parse nodes, and every fetch node must be parsed by at least one parse node.
     /// </summary>
     [Required]
-    public required IReadOnlyList<FlowSourceRequest> Sources { get; init; }
+    public required IReadOnlyList<FlowFetchNodeRequest> Fetches { get; init; }
+
+    /// <summary>
+    /// The parse nodes of the flow's source graph, each parsing the raw output of one or more fetch nodes listed in
+    /// <see cref="FlowParseNodeRequest.FetchNodeIds"/>. Referenced ids must exist, and the combined fetch/parse graph
+    /// must be acyclic.
+    /// </summary>
+    [Required]
+    public required IReadOnlyList<FlowParseNodeRequest> Parses { get; init; }
 
     /// <summary>The orchestration augment steps executed after parsing.</summary>
     public IReadOnlyList<FlowStepRequest> Augments { get; init; } = [];

@@ -25,6 +25,9 @@ internal sealed class FakeModuleCatalog(IReadOnlyList<ModuleCatalogEntry> entrie
     public ValueTask<ModuleLease<IDeliverModule>> LeaseDeliverAsync(string moduleId, CancellationToken cancellationToken)
         => throw new NotSupportedException();
 
+    public ValueTask<ModuleLease<ITransformModule>> LeaseTransformAsync(string moduleId, CancellationToken cancellationToken)
+        => throw new NotSupportedException();
+
     public Task SynchronizeAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<ModulePackageInfo> UpsertManagedPackageAsync(ManagedModulePackageDefinition package, CancellationToken cancellationToken)

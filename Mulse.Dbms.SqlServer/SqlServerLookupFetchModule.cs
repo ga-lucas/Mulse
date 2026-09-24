@@ -7,12 +7,13 @@ using Mulse.Modules;
 namespace Mulse.Dbms.SqlServer;
 
 /// <summary>
-/// Source-fetch module that queries SQL Server for reference data keyed off another source's parsed payloads.
+/// Source-fetch module that queries SQL Server for reference data keyed off an upstream parse node's parsed payloads.
 /// <para>
-/// Declare it as a non-root <see cref="SourceDefinition"/> whose <see cref="SourceDefinition.InputSourceIds"/>
-/// name the upstream source(s) to key off: the merged parsed batch of those sources arrives as
+/// Declare it as a non-root <see cref="FetchNodeDefinition"/> whose <see cref="FetchNodeDefinition.InputParseIds"/>
+/// name the upstream parse node(s) to key off: the merged parsed batch of those parse nodes arrives as
 /// <c>input</c>, and the configured <c>idPaths</c> are evaluated against every input payload to build the
-/// distinct id list passed to the query.
+/// distinct id list passed to the query. Pair it with its own parse node (typically a JSON parse) so the lookup
+/// rows become a named row-set for the join engine.
 /// </para>
 /// <para>
 /// Output convention: exactly ONE payload named <c>sql-lookup-rows.json</c> whose content is a top-level JSON
@@ -33,7 +34,7 @@ public sealed class SqlServerLookupFetchModule : IFetchModule
     private static readonly IReadOnlyList<ModuleSettingDescriptor> SettingDescriptors =
     [
         new("connectionString", "Connection string", "The SQL Server connection string used for lookup queries.", true, ModuleSettingInputKind.TextArea),
-        new("idPaths", "ID paths", "A comma-separated list of JSON paths evaluated against this source's input payloads (the parsed output of its input sources) to extract lookup IDs.", true),
+        new("idPaths", "ID paths", "A comma-separated list of JSON paths evaluated against this fetch node's input payloads (the parsed output of its input parse nodes) to extract lookup IDs.", true),
         new("queryText", "Query text", "The SQL query to execute. Use an @ids parameter and SQL Server STRING_SPLIT for the extracted IDs.", true, ModuleSettingInputKind.TextArea),
         new("idsParameterName", "IDs parameter name", "The SQL parameter that receives the comma-separated ID list.", false, ModuleSettingInputKind.Text, "@ids")
     ];
@@ -42,7 +43,7 @@ public sealed class SqlServerLookupFetchModule : IFetchModule
         "sql-server-lookup-fetch",
         "SQL Server lookup fetch",
         ModuleKind.Fetch,
-        "Fetches SQL Server reference rows using IDs extracted from an upstream source's parsed payloads, emitting one JSON array payload of rows for a downstream join.",
+        "Fetches SQL Server reference rows using IDs extracted from an upstream parse node's parsed payloads, emitting one JSON array payload of rows for a downstream join.",
         SettingDescriptors,
         Recommendation);
 

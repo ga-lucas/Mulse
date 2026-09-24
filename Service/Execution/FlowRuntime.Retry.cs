@@ -35,13 +35,13 @@ public sealed partial class FlowRuntime
 
             try
             {
-                if (retryState.StageId.StartsWith(SourceStagePrefix, StringComparison.Ordinal))
+                if (IsSourceGraphStageId(retryState.StageId))
                 {
-                    var (sourceId, sourceStage) = ParseSourceStageId(retryState.StageId);
-                    var resolvedSources = RestoreResolvedSources(retryState.ResolvedSourcePayloads);
                     return await RunSourceGraphOnwardAsync(
-                        pipeline, context, retryState.ExecutionStartedAt, resolvedSources,
-                        sourceId, sourceStage, inputBatch, retryState.AttemptsMade,
+                        pipeline, context, retryState.ExecutionStartedAt,
+                        RestoreResolvedBatches(retryState.ResolvedFetchPayloads),
+                        RestoreResolvedBatches(retryState.ResolvedParsePayloads),
+                        retryState.StageId, inputBatch, retryState.AttemptsMade,
                         cancellationToken).ConfigureAwait(false);
                 }
 

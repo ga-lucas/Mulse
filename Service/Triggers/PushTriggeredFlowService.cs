@@ -115,15 +115,15 @@ public sealed class PushTriggeredFlowService(
     }
 
     /// <summary>
-    /// Registers the flow's push trigger. A flow can declare several sources, so the first source whose fetch
-    /// module implements <see cref="IPushTriggeredFetchModule"/> becomes the trigger; the other sources are
+    /// Registers the flow's push trigger. A flow can declare several fetch nodes, so the first fetch node whose
+    /// module implements <see cref="IPushTriggeredFetchModule"/> becomes the trigger; the other fetch nodes are
     /// resolved normally by the runtime once the trigger fires.
     /// </summary>
     private async Task RegisterFlowAsync(PipelineDefinition flow, string signature, CancellationToken cancellationToken)
     {
-        foreach (var source in flow.Sources)
+        foreach (var fetchNode in flow.Fetches)
         {
-            var fetchLease = await moduleCatalog.LeaseFetchAsync(source.Fetch.Module, cancellationToken).ConfigureAwait(false);
+            var fetchLease = await moduleCatalog.LeaseFetchAsync(fetchNode.Fetch.Module, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (fetchLease.Module is not IPushTriggeredFetchModule pushFetchModule)
@@ -132,15 +132,15 @@ public sealed class PushTriggeredFlowService(
                     continue;
                 }
 
-                var triggerContext = new PushFlowTriggerContext(flow.Id, source.Fetch.Module, SignalFlow);
-                var subscription = await pushFetchModule.RegisterTriggerAsync(triggerContext, source.Fetch, cancellationToken).ConfigureAwait(false);
+                var triggerContext = new PushFlowTriggerContext(flow.Id, fetchNode.Fetch.Module, SignalFlow);
+                var subscription = await pushFetchModule.RegisterTriggerAsync(triggerContext, fetchNode.Fetch, cancellationToken).ConfigureAwait(false);
                 _activeRegistrations[flow.Id] = new ActivePushRegistration(flow.Id, signature, fetchLease, subscription);
 
                 logger.LogInformation(
-                    "Registered push-triggered flow {FlowId} using source {SourceId} fetch module {ModuleId}.",
+                    "Registered push-triggered flow {FlowId} using fetch node {FetchNodeId} module {ModuleId}.",
                     flow.Id,
-                    source.Id,
-                    source.Fetch.Module);
+                    fetchNode.Id,
+                    fetchNode.Fetch.Module);
                 return;
             }
             catch
@@ -151,9 +151,9 @@ public sealed class PushTriggeredFlowService(
         }
 
         logger.LogWarning(
-            "Flow {FlowId} uses trigger mode Push but none of its source fetch modules ({ModuleIds}) implement IPushTriggeredFetchModule.",
+            "Flow {FlowId} uses trigger mode Push but none of its fetch node modules ({ModuleIds}) implement IPushTriggeredFetchModule.",
             flow.Id,
-            string.Join(", ", flow.Sources.Select(static source => source.Fetch.Module)));
+            string.Join(", ", flow.Fetches.Select(static fetchNode => fetchNode.Fetch.Module)));
     }
 
     private void SignalFlow(PushFlowTriggerSignal signal)
@@ -198,11 +198,11 @@ public sealed class PushTriggeredFlowService(
         {
             flow.Enabled,
             TriggerMode = flow.Trigger.Mode,
-            Sources = flow.Sources.Select(static source => new
+            Fetches = flow.Fetches.Select(static fetchNode => new
             {
-                source.Id,
-                FetchModule = source.Fetch.Module,
-                FetchSettings = source.Fetch.Settings.OrderBy(static entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+                fetchNode.Id,
+                FetchModule = fetchNode.Fetch.Module,
+                FetchSettings = fetchNode.Fetch.Settings.OrderBy(static entry => entry.Key, StringComparer.OrdinalIgnoreCase)
             })
         };
 

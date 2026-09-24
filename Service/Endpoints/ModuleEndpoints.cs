@@ -31,7 +31,7 @@ public static class ModuleEndpoints
             })
             .WithName("GetModules")
             .WithSummary("List available modules")
-            .WithDescription("Returns every registered input, orchestration augment, and output module available to configured flows, including the package that currently supplies each module and the settings needed to configure it.")
+            .WithDescription("Returns every registered input, orchestration augment, output, and transform module available to configured flows, including the package that currently supplies each module and the settings needed to configure it.")
             .WithTags("Modules")
             .Produces<ModuleResponse[]>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status500InternalServerError);

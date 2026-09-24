@@ -66,7 +66,6 @@ public partial class Designer
         }
 
         _nodes.Clear();
-        _sources.Clear();
         _joinEditors.Clear();
         _mappingRows.Clear();
         _bizTalkRequirements = [];
@@ -75,9 +74,9 @@ public partial class Designer
 
         var fetchModuleId = ChooseModule(_analysis.FetchModules, requiredProtocol: "Sftp");
         var parseModuleId = ChooseModule(_analysis.ParseModules, requiredCapability: "Parsing", requiredFormat: _analysis.DetectedFormat);
-        var lane = CreateSourceLane("primary", fetchModuleId ?? string.Empty, null, parseModuleId ?? string.Empty, null, null);
-        ApplyModuleDefaults(lane.Fetch, FindCatalogModule(fetchModuleId));
-        ApplyModuleDefaults(lane.Parse, FindCatalogModule(parseModuleId));
+        var (fetch, parse) = CreateSourcePair("primary", fetchModuleId ?? string.Empty, null, parseModuleId ?? string.Empty, null);
+        ApplyModuleDefaults(fetch, FindCatalogModule(fetchModuleId));
+        ApplyModuleDefaults(parse, FindCatalogModule(parseModuleId));
 
         var mappingAugment = _analysis.OrchestrationAugmentModules
             .FirstOrDefault(static module => string.Equals(module.Id, JoinModuleId, StringComparison.OrdinalIgnoreCase))?.Id;
@@ -85,7 +84,7 @@ public partial class Designer
         {
             var joinNode = CreateNode(NodeStage.Augment, mappingAugment);
             ApplyModuleDefaults(joinNode, FindCatalogModule(mappingAugment));
-            joinNode.Settings[LeftSourceKey] = lane.Id;
+            joinNode.Settings[LeftSourceKey] = parse.GraphId;
         }
 
         var jsonRender = ChooseModule(_analysis.RenderModules, requiredCapability: "Serialization", requiredFormat: "Json");

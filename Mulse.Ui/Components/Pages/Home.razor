@@ -40,15 +40,24 @@
                                 <div class="flow-card-header">
                                     <div>
                                         <h3>@flow.Id</h3>
-                                        <p><strong>Sources:</strong> @flow.Sources.Count</p>
+                                        <p><strong>Sources:</strong> @flow.Parses.Count parse node(s) fed by @flow.Fetches.Count fetch node(s)</p>
                                         <ul class="source-list">
-                                            @foreach (var source in flow.Sources)
+                                            @foreach (var parse in flow.Parses)
                                             {
+                                                var parseFetches = parse.FetchNodeIds
+                                                    .Select(fetchId => flow.Fetches.FirstOrDefault(fetch => string.Equals(fetch.Id, fetchId, StringComparison.OrdinalIgnoreCase)))
+                                                    .OfType<FlowFetchNodeViewModel>()
+                                                    .ToArray();
+                                                var parseInputs = parseFetches.SelectMany(static fetch => fetch.InputParseIds).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                                                 <li>
-                                                    <strong>@source.Id</strong>: @source.Fetch.Module &rarr; @source.Parse.Module
-                                                    @if (source.InputSourceIds.Count > 0)
+                                                    <strong>@parse.Id</strong>: @string.Join(" + ", parseFetches.Select(static fetch => $"{fetch.Fetch.Module} ({fetch.Id})")) &rarr; @parse.Parse.Module
+                                                    @if (parseFetches.Length > 1)
                                                     {
-                                                        <span class="source-inputs">(input from @string.Join(", ", source.InputSourceIds))</span>
+                                                        <span class="source-inputs">(combines @parseFetches.Length fetches)</span>
+                                                    }
+                                                    @if (parseInputs.Length > 0)
+                                                    {
+                                                        <span class="source-inputs">(input from @string.Join(", ", parseInputs))</span>
                                                     }
                                                 </li>
                                             }

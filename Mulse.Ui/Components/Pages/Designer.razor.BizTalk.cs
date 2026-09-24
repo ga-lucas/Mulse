@@ -78,7 +78,6 @@ public partial class Designer
         var draft = candidate.DraftFlow;
 
         _nodes.Clear();
-        _sources.Clear();
         _joinEditors.Clear();
         _mappingRows.Clear();
         _selectedNodeId = null;
@@ -93,15 +92,14 @@ public partial class Designer
         _intervalText = draft.Trigger.Interval?.ToString() ?? "00:05:00";
         _runOnStartup = draft.Trigger.RunOnStartup;
 
-        foreach (var source in draft.Sources)
+        foreach (var fetch in draft.Fetches)
         {
-            CreateSourceLane(
-                source.Id,
-                source.Fetch.Module,
-                source.Fetch.Settings,
-                source.Parse.Module,
-                source.Parse.Settings,
-                source.InputSourceIds);
+            CreateFetchNode(fetch.Id, fetch.Fetch.Module, fetch.Fetch.Settings, fetch.InputParseIds);
+        }
+
+        foreach (var parse in draft.Parses)
+        {
+            CreateParseNode(parse.Id, parse.Parse.Module, parse.Parse.Settings, parse.FetchNodeIds);
         }
 
         var order = 0;
@@ -124,7 +122,7 @@ public partial class Designer
         _seedSource = SeedSource.BizTalk;
         _showBizTalkPanel = false;
         AutoLayout();
-        _statusMessage = $"Loaded BizTalk draft flow '{candidate.SuggestedFlowId}' onto the canvas with {_sources.Count} source lane(s). It stays disabled until you review its settings and enable it.";
+        _statusMessage = $"Loaded BizTalk draft flow '{candidate.SuggestedFlowId}' onto the canvas with {ParseNodes.Count} source lane(s) ({FetchNodes.Count} fetch node(s)). It stays disabled until you review its settings and enable it.";
     }
 
     private void ClearBizTalk()

@@ -18,6 +18,8 @@ public interface IModuleCatalog
 
     ValueTask<ModuleLease<IDeliverModule>> LeaseDeliverAsync(string moduleId, CancellationToken cancellationToken);
 
+    ValueTask<ModuleLease<ITransformModule>> LeaseTransformAsync(string moduleId, CancellationToken cancellationToken);
+
     Task SynchronizeAsync(CancellationToken cancellationToken);
 
     Task<ModulePackageInfo> UpsertManagedPackageAsync(ManagedModulePackageDefinition package, CancellationToken cancellationToken);

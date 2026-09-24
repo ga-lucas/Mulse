@@ -10,17 +10,29 @@ public class ConfigValueResolverTests
         return new PipelineDefinition
         {
             Id = "flow-1",
-            Sources =
+            Fetches =
             [
-                new SourceDefinition
+                new FetchNodeDefinition
                 {
-                    Id = "primary",
+                    Id = "primary-fetch",
                     Fetch = new ModuleStepDefinition
                     {
                         Module = "sftp-fetch",
                         Settings = new Dictionary<string, string> { ["host"] = settingValue }
+                    }
+                }
+            ],
+            Parses =
+            [
+                new ParseNodeDefinition
+                {
+                    Id = "primary",
+                    Parse = new ModuleStepDefinition
+                    {
+                        Module = "xml-xsd-parse",
+                        Settings = new Dictionary<string, string> { ["schemaPath"] = settingValue }
                     },
-                    Parse = new ModuleStepDefinition { Module = "json-parse" }
+                    FetchNodeIds = ["primary-fetch"]
                 }
             ],
             Deliveries =
@@ -43,7 +55,9 @@ public class ConfigValueResolverTests
 
         var resolved = resolver.Resolve(pipeline);
 
-        Assert.Equal("sftp.example.com", resolved.Sources[0].Fetch.Settings["host"]);
+        Assert.Equal("sftp.example.com", resolved.Fetches[0].Fetch.Settings["host"]);
+        Assert.Equal("sftp.example.com", resolved.Parses[0].Parse.Settings["schemaPath"]);
+        Assert.Equal(["primary-fetch"], resolved.Parses[0].FetchNodeIds);
     }
 
     [Fact]
@@ -55,7 +69,7 @@ public class ConfigValueResolverTests
 
         var resolved = resolver.Resolve(pipeline);
 
-        Assert.Equal("hunter2", resolved.Sources[0].Fetch.Settings["host"]);
+        Assert.Equal("hunter2", resolved.Fetches[0].Fetch.Settings["host"]);
     }
 
     [Fact]
@@ -67,7 +81,7 @@ public class ConfigValueResolverTests
 
         var resolved = resolver.Resolve(pipeline);
 
-        Assert.Equal("sftp.literal-host.com", resolved.Sources[0].Fetch.Settings["host"]);
+        Assert.Equal("sftp.literal-host.com", resolved.Fetches[0].Fetch.Settings["host"]);
     }
 
     [Fact]
@@ -91,20 +105,22 @@ public class ConfigValueResolverTests
         unresolvedPipeline = new PipelineDefinition
         {
             Id = "flow-2",
-            Sources = unresolvedPipeline.Sources,
+            Fetches = unresolvedPipeline.Fetches,
+            Parses = unresolvedPipeline.Parses,
             Deliveries = unresolvedPipeline.Deliveries
         };
 
         var usages = resolver.FindReferenceUsages([resolvedPipeline, unresolvedPipeline]);
 
-        Assert.Equal(2, usages.Count);
-        var resolvedUsage = Assert.Single(usages, usage => usage.FlowId == "flow-1");
-        Assert.True(resolvedUsage.IsResolved);
-        Assert.Equal("ftp-host", resolvedUsage.Reference);
-        Assert.Equal("sources[0].fetch.settings.host", resolvedUsage.SettingPath);
+        Assert.Equal(4, usages.Count);
+        var resolvedUsages = usages.Where(usage => usage.FlowId == "flow-1").ToArray();
+        Assert.All(resolvedUsages, usage => Assert.True(usage.IsResolved));
+        Assert.All(resolvedUsages, usage => Assert.Equal("ftp-host", usage.Reference));
+        Assert.Equal(["fetches[0].fetch.settings.host", "parses[0].parse.settings.schemaPath"], resolvedUsages.Select(static usage => usage.SettingPath));
 
-        var unresolvedUsage = Assert.Single(usages, usage => usage.FlowId == "flow-2");
-        Assert.False(unresolvedUsage.IsResolved);
-        Assert.Equal("missing-ref", unresolvedUsage.Reference);
+        var unresolvedUsages = usages.Where(usage => usage.FlowId == "flow-2").ToArray();
+        Assert.Equal(2, unresolvedUsages.Length);
+        Assert.All(unresolvedUsages, usage => Assert.False(usage.IsResolved));
+        Assert.All(unresolvedUsages, usage => Assert.Equal("missing-ref", usage.Reference));
     }
 }

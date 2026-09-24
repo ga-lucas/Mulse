@@ -4,13 +4,13 @@ namespace Service.Execution;
 
 public sealed partial class FlowRuntime
 {
-    private static Dictionary<string, IntegrationBatch> RestoreResolvedSources(
+    private static Dictionary<string, IntegrationBatch> RestoreResolvedBatches(
         IReadOnlyDictionary<string, List<FlowOrchestrationPayloadSnapshot>> snapshots)
     {
         var resolved = new Dictionary<string, IntegrationBatch>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (sourceId, payloads) in snapshots)
+        foreach (var (nodeId, payloads) in snapshots)
         {
-            resolved[sourceId] = RestoreBatch(payloads);
+            resolved[nodeId] = RestoreBatch(payloads);
         }
 
         return resolved;
@@ -25,18 +25,18 @@ public sealed partial class FlowRuntime
             Metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.OrdinalIgnoreCase)
         }).ToList();
 
-    private static Dictionary<string, List<FlowOrchestrationPayloadSnapshot>> SnapshotResolvedSources(
-        IReadOnlyDictionary<string, IntegrationBatch>? resolvedSources)
+    private static Dictionary<string, List<FlowOrchestrationPayloadSnapshot>> SnapshotResolvedBatches(
+        IReadOnlyDictionary<string, IntegrationBatch>? resolvedBatches)
     {
         var snapshots = new Dictionary<string, List<FlowOrchestrationPayloadSnapshot>>(StringComparer.OrdinalIgnoreCase);
-        if (resolvedSources is null)
+        if (resolvedBatches is null)
         {
             return snapshots;
         }
 
-        foreach (var (sourceId, batch) in resolvedSources)
+        foreach (var (nodeId, batch) in resolvedBatches)
         {
-            snapshots[sourceId] = SnapshotBatch(batch);
+            snapshots[nodeId] = SnapshotBatch(batch);
         }
 
         return snapshots;

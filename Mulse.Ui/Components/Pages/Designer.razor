@@ -236,13 +236,16 @@
     <FloatingPanel Title="Toolbox" Icon="🧰" X="24" Y="24" Width="200">
         <p class="toolbox-hint">Click or drag onto the canvas.</p>
         <div class="toolbox-list" @ref="_toolboxElement">
-            <button class="toolbox-item" data-node-type="source" data-node-label="Source" @onclick="AddSourceLane" title="Adds a new source lane: its own fetch node plus parse node, with a source id other sources and join augments can reference.">
+            <button class="toolbox-item" data-node-type="source" data-node-label="Source" @onclick="AddSourceLane" title="Adds a new source: a fetch node plus a parse node that parses it, pre-linked. Join augments and other fetch nodes reference the parse node's id.">
                 <span class="toolbox-icon">⭘→</span> Source
+            </button>
+            <button class="toolbox-item" data-node-type="fetch" data-node-label="Extra fetch" @onclick="AddFetchNode" title="Adds a standalone fetch node. Drop it onto an existing source lane (or click it while a parse node is selected) to have that parse node also parse this fetch's raw output.">
+                <span class="toolbox-icon">⭘+</span> Extra fetch
             </button>
             <button class="toolbox-item" data-node-type="augment" data-node-label="Augment" @onclick="AddAugmentNode">
                 <span class="toolbox-icon">◇</span> Augment
             </button>
-            <button class="toolbox-item" data-node-type="join" data-node-label="Join sources" @onclick="AddJoinAugmentNode" disabled="@(_sources.Count < 2)" title="Adds a multi-source join and map augment, pre-wired to the first two source lanes on the canvas.">
+            <button class="toolbox-item" data-node-type="join" data-node-label="Join sources" @onclick="AddJoinAugmentNode" disabled="@(ParseNodes.Count < 2)" title="Adds a multi-source join and map augment, pre-wired to the first two parse nodes on the canvas.">
                 <span class="toolbox-icon">⋈</span> Join sources
             </button>
             <button class="toolbox-item" data-node-type="route" data-node-label="Delivery route" @onclick="AddDeliveryRoute">
@@ -315,8 +318,12 @@
 
         <dl class="summary-grid summary-metadata compact-metadata">
             <div>
-                <dt>Sources</dt>
-                <dd>@(_sources.Count == 0 ? "None" : $"{_sources.Count} ({string.Join(", ", _sources.Select(source => source.Id))})")</dd>
+                <dt>Parse nodes</dt>
+                <dd>@(ParseNodes.Count == 0 ? "None" : $"{ParseNodes.Count} ({string.Join(", ", ParseNodes.Select(parse => parse.GraphId))})")</dd>
+            </div>
+            <div>
+                <dt>Fetch nodes</dt>
+                <dd>@(FetchNodes.Count == 0 ? "None" : $"{FetchNodes.Count} ({string.Join(", ", FetchNodes.Select(fetch => fetch.GraphId))})")</dd>
             </div>
             <div>
                 <dt>Augments</dt>
@@ -367,12 +374,12 @@
 
             <rect class="canvas-background" x="0" y="0" width="@F(CanvasWidth)" height="@F(CanvasHeight)" @onclick="() => _selectedNodeId = null" />
 
-            @foreach (var source in _sources)
+            @foreach (var parse in ParseNodes)
             {
-                var bounds = LaneBounds(source);
-                <g class="source-lane" @key="source">
+                var bounds = LaneBounds(parse);
+                <g class="source-lane" @key="parse">
                     <rect class="source-lane-body" x="@F(bounds.X)" y="@F(bounds.Y)" width="@F(bounds.Width)" height="@F(bounds.Height)" rx="18" ry="18" />
-                    <text class="source-lane-label" x="@F(bounds.X + 18)" y="@F(bounds.Y + 24)">@LaneLabel(source)</text>
+                    <text class="source-lane-label" x="@F(bounds.X + 18)" y="@F(bounds.Y + 24)">@LaneLabel(parse)</text>
                 </g>
             }
 
@@ -434,6 +441,10 @@
             <h3>@NodeHeading(node)</h3>
             <p class="panel-hint">@StageDescription(node.Stage)</p>
 
+            <label class="field-label">Name</label>
+            <input class="mapping-input" placeholder="@DefaultNodeHeading(node)" value="@node.Name"
+                   @onchange="@(args => { node.Name = args.Value?.ToString(); })" />
+
             <label class="field-label">Module</label>
             <select class="selector" value="@node.ModuleId" @onchange="e => HandleNodeModuleChanged(node, e)">
                 <option value="">(select a module)</option>
@@ -452,35 +463,79 @@
                 <p class="module-description">@catalogModule.Description</p>
             }
 
-            @if (SourceForNode(node) is { } lane)
+            @if (node.Stage == NodeStage.Fetch)
             {
-                <h3>Source lane</h3>
-                <label class="field-label">Source id</label>
-                <input class="mapping-input" value="@lane.Id" @onchange="@(args => RenameSource(lane, args.Value?.ToString()))" />
-                <p class="field-hint">Join augments reference this id as their left/right source, and other sources reference it when they depend on this source's parsed output.</p>
+                var parsedBy = ParsesForFetch(node);
+                <h3>Fetch node</h3>
+                <label class="field-label">Fetch node id</label>
+                <input class="mapping-input" value="@node.GraphId" @onchange="@(args => RenameGraphNode(node, args.Value?.ToString()))" />
+                <p class="field-hint">Parse nodes reference this id to parse this fetch's raw output. Fetch and parse node ids share one namespace.</p>
 
-                @if (node.Stage == NodeStage.Fetch)
+                <label class="field-label">Parsed by (parse nodes)</label>
+                @if (ParseNodes.Count == 0)
                 {
-                    <label class="field-label">Depends on (input sources)</label>
-                    @if (_sources.Count < 2)
-                    {
-                        <p class="field-hint">Add a second source lane to feed its parsed output into this source's fetch step.</p>
-                    }
-                    else
-                    {
-                        @foreach (var other in _sources.Where(candidate => !ReferenceEquals(candidate, lane)))
-                            {
-                                <label class="field-label checkbox-row" @key="other">
-                                    <input type="checkbox"
-                                           checked="@lane.InputSourceIds.Contains(other.Id, StringComparer.OrdinalIgnoreCase)"
-                                           @onchange="@(args => ToggleSourceDependency(lane, other.Id, (bool)(args.Value ?? false)))" />
-                                    <span>@other.Id</span>
-                                </label>
-                            }
-                            <p class="field-hint">The selected sources' parsed batches are merged and handed to this fetch module as its input. The dependency graph must stay acyclic.</p>
-                        }
-                    }
+                    <p class="field-hint">Add a parse node (e.g. with the Source toolbox item) to parse this fetch's raw output.</p>
                 }
+                else
+                {
+                    @foreach (var parse in ParseNodes)
+                    {
+                        <label class="field-label checkbox-row" @key="(ParsedByKey: parse.Id, 0)">
+                            <input type="checkbox"
+                                   checked="@parsedBy.Contains(parse)"
+                                   @onchange="@(args => ToggleParseFetchLink(parse, node.GraphId, (bool)(args.Value ?? false)))" />
+                            <span>@parse.GraphId</span>
+                        </label>
+                    }
+                    <p class="field-hint">Every selected parse node parses this fetch's raw batch with its own module and settings. A fetch must be parsed by at least one parse node.</p>
+                }
+
+                <label class="field-label">Input from (parsed output of)</label>
+                @if (ParseNodes.Count == 0)
+                {
+                    <p class="field-hint">Add a parse node to feed its finished output into this fetch step.</p>
+                }
+                else
+                {
+                    @foreach (var parse in ParseNodes)
+                    {
+                        <label class="field-label checkbox-row" @key="(InputFromKey: parse.Id, 1)">
+                            <input type="checkbox"
+                                   checked="@node.InputParseIds.Contains(parse.GraphId, StringComparer.OrdinalIgnoreCase)"
+                                   @onchange="@(args => ToggleFetchInputParse(node, parse.GraphId, (bool)(args.Value ?? false)))" />
+                            <span>@parse.GraphId</span>
+                        </label>
+                    }
+                    <p class="field-hint">The selected parse nodes' finished batches are merged and handed to this fetch module as its input (e.g. for lookups). The source graph must stay acyclic.</p>
+                }
+            }
+
+            @if (node.Stage == NodeStage.Parse)
+            {
+                <h3>Parse node</h3>
+                <label class="field-label">Parse node id</label>
+                <input class="mapping-input" value="@node.GraphId" @onchange="@(args => RenameGraphNode(node, args.Value?.ToString()))" />
+                <p class="field-hint">Payloads this node produces are tagged with this id as their source id: join augments reference it as their left/right source, and fetch nodes reference it when they take this node's output as input.</p>
+
+                <label class="field-label">Parses raw output of (fetch nodes)</label>
+                @if (FetchNodes.Count == 0)
+                {
+                    <p class="field-hint">Add a fetch node (the Extra fetch toolbox item) for this parse node to parse.</p>
+                }
+                else
+                {
+                    @foreach (var fetch in FetchNodes)
+                    {
+                        <label class="field-label checkbox-row" @key="fetch">
+                            <input type="checkbox"
+                                   checked="@node.FetchNodeIds.Contains(fetch.GraphId, StringComparer.OrdinalIgnoreCase)"
+                                   @onchange="@(args => ToggleParseFetchLink(node, fetch.GraphId, (bool)(args.Value ?? false)))" />
+                            <span>@fetch.GraphId</span>
+                        </label>
+                    }
+                    <p class="field-hint">Each selected fetch's raw batch is parsed separately with this module and settings, and the parsed results are merged into this node's single output. Select at least one.</p>
+                }
+            }
 
                 @if (IsJoinNode(node))
                 {
@@ -494,27 +549,27 @@
                     <label class="field-label">Left source</label>
                     <select class="selector" value="@leftValue" @onchange="@(args => SetJoinSetting(node, LeftSourceKey, args.Value?.ToString()))">
                         <option value="@WorkingDocumentSelector">* (working document so far)</option>
-                        @foreach (var source in _sources)
+                        @foreach (var parse in ParseNodes)
                         {
-                            <option value="@source.Id">@source.Id</option>
+                            <option value="@parse.GraphId">@parse.GraphId</option>
                         }
-                        @if (!string.Equals(leftValue, WorkingDocumentSelector, StringComparison.Ordinal) && FindSource(leftValue) is null)
+                        @if (!string.Equals(leftValue, WorkingDocumentSelector, StringComparison.Ordinal) && FindParse(leftValue) is null)
                         {
-                            <option value="@leftValue">@leftValue (unknown source)</option>
+                            <option value="@leftValue">@leftValue (unknown parse node)</option>
                         }
                     </select>
-                    <p class="field-hint">Choose "*" to join against everything accumulated so far, which is how several joins are chained together.</p>
+                    <p class="field-hint">Sources are parse node ids (each parse node tags its output with its id). Choose "*" to join against everything accumulated so far, which is how several joins are chained together.</p>
 
                     <label class="field-label">Right source *</label>
                     <select class="selector" value="@rightValue" @onchange="@(args => SetJoinSetting(node, RightSourceKey, args.Value?.ToString()))">
-                        <option value="">(select a source)</option>
-                        @foreach (var source in _sources)
+                        <option value="">(select a parse node)</option>
+                        @foreach (var parse in ParseNodes)
                         {
-                            <option value="@source.Id">@source.Id</option>
+                            <option value="@parse.GraphId">@parse.GraphId</option>
                         }
-                        @if (!string.IsNullOrWhiteSpace(rightValue) && FindSource(rightValue) is null)
+                        @if (!string.IsNullOrWhiteSpace(rightValue) && FindParse(rightValue) is null)
                         {
-                            <option value="@rightValue">@rightValue (unknown source)</option>
+                            <option value="@rightValue">@rightValue (unknown parse node)</option>
                         }
                     </select>
 
@@ -565,7 +620,7 @@
                     </div>
 
                     <h3>Join field mappings</h3>
-                    <p class="panel-hint">Each row writes one target field from the left row, the right row, or a literal JSON value.</p>
+                    <p class="panel-hint">Each row writes one target field from the left row, the right row, a literal JSON value, or a transform (e.g. concatenate, add, format date) of several such inputs.</p>
                     <table class="mapping-table">
                         <thead>
                             <tr>
@@ -580,16 +635,26 @@
                         <tbody>
                             @foreach (var row in joinEditor.Mappings)
                             {
+                                var isTransformRow = string.Equals(row.SourceKind, "Transform", StringComparison.OrdinalIgnoreCase);
                                 <tr @key="row">
                                     <td>
                                         <select class="selector compact" value="@row.SourceKind" @onchange="@(args => SetJoinMappingField(node, row, JoinMappingField.SourceKind, args.Value?.ToString()))">
                                             @foreach (var kind in SourceKindOptions)
                                             {
-                                                <option value="@kind">@JoinSideLabel(node, kind)</option>
+                                                <option value="@kind">@JoinSideLabel(node, row, kind)</option>
                                             }
                                         </select>
                                     </td>
-                                    <td><input class="mapping-input" value="@row.SourcePath" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.SourcePath, args.Value?.ToString()))" /></td>
+                                    <td>
+                                        @if (isTransformRow)
+                                        {
+                                            <span class="muted">(transform below)</span>
+                                        }
+                                        else
+                                        {
+                                            <input class="mapping-input" value="@row.SourcePath" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.SourcePath, args.Value?.ToString()))" />
+                                        }
+                                    </td>
                                     <td><input class="mapping-input" value="@row.TargetField" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.TargetField, args.Value?.ToString()))" /></td>
                                     <td>
                                         <select class="selector compact" value="@row.Condition" @onchange="@(args => SetJoinMappingField(node, row, JoinMappingField.Condition, args.Value?.ToString()))">
@@ -599,9 +664,72 @@
                                             }
                                         </select>
                                     </td>
-                                    <td><input class="mapping-input" value="@row.LiteralValue" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.LiteralValue, args.Value?.ToString()))" /></td>
+                                    <td>
+                                        @if (!isTransformRow)
+                                        {
+                                            <input class="mapping-input" value="@row.LiteralValue" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.LiteralValue, args.Value?.ToString()))" />
+                                        }
+                                    </td>
                                     <td><button class="secondary-button" @onclick="@(() => RemoveJoinMapping(node, row))">Remove</button></td>
                                 </tr>
+                                @if (isTransformRow)
+                                {
+                                    var transformModule = FindCatalogModule(row.TransformModule);
+                                    <tr @key="(TransformEditor: row, 1)">
+                                        <td colspan="6">
+                                            <label class="field-label">Transform module *</label>
+                                            <select class="selector" value="@(row.TransformModule ?? string.Empty)" @onchange="@(args => SetJoinMappingField(node, row, JoinMappingField.TransformModule, args.Value?.ToString()))">
+                                                <option value="">(select a transform)</option>
+                                                @foreach (var module in TransformModules)
+                                                {
+                                                    <option value="@module.Id">@module.DisplayName (@module.Id)</option>
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(row.TransformModule) && transformModule is null)
+                                                {
+                                                    <option value="@row.TransformModule">@row.TransformModule (not in catalog)</option>
+                                                }
+                                            </select>
+                                            @if (transformModule is not null)
+                                            {
+                                                <p class="module-description">@transformModule.Description</p>
+                                            }
+
+                                            <label class="field-label">Transform inputs (in order)</label>
+                                            @if (row.TransformInputs.Count == 0)
+                                            {
+                                                <p class="field-hint">No inputs yet. Add the values this transform should combine.</p>
+                                            }
+                                            @foreach (var input in row.TransformInputs)
+                                            {
+                                                var isLiteralInput = string.Equals(input.SourceKind, "Literal", StringComparison.OrdinalIgnoreCase);
+                                                <div class="inline-row" @key="input">
+                                                    <select class="selector compact" value="@input.SourceKind" @onchange="@(args => SetTransformInputField(node, row, input, JoinMappingField.SourceKind, args.Value?.ToString()))">
+                                                        @foreach (var kind in ScalarSourceKindOptions)
+                                                        {
+                                                            <option value="@kind">@JoinSideLabel(node, kind)</option>
+                                                        }
+                                                    </select>
+                                                    @if (isLiteralInput)
+                                                    {
+                                                        <input class="mapping-input" placeholder="Literal JSON value" value="@input.LiteralValue"
+                                                               @oninput="@(args => SetTransformInputField(node, row, input, JoinMappingField.LiteralValue, args.Value?.ToString()))" />
+                                                    }
+                                                    else
+                                                    {
+                                                        <input class="mapping-input" placeholder="Source path" value="@input.SourcePath"
+                                                               @oninput="@(args => SetTransformInputField(node, row, input, JoinMappingField.SourcePath, args.Value?.ToString()))" />
+                                                    }
+                                                    <button class="secondary-button" @onclick="@(() => RemoveTransformInput(node, row, input))">Remove</button>
+                                                </div>
+                                            }
+                                            <div class="action-row">
+                                                <button class="secondary-button" @onclick="@(() => AddTransformInput(node, row))">Add input</button>
+                                            </div>
+
+                                            @(RenderSettingsEditor(transformModule?.Settings, row.TransformSettings, (key, value) => SetTransformSetting(node, row, key, value)))
+                                        </td>
+                                    </tr>
+                                }
                             }
                         </tbody>
                     </table>
@@ -661,9 +789,14 @@
                     {
                         <button class="secondary-button" @onclick="() => RemoveRoute(node.RouteId)">Remove route</button>
                     }
-                    else if (SourceForNode(node) is { } selectedLane)
+                    else if (node.Stage == NodeStage.Fetch)
                     {
-                        <button class="secondary-button" @onclick="() => RemoveSourceLane(selectedLane)">Remove source</button>
+                        <button class="secondary-button" @onclick="() => RemoveFetchNode(node)">Remove fetch node</button>
+                    }
+                    else if (node.Stage == NodeStage.Parse)
+                    {
+                        <button class="secondary-button" @onclick="() => RemoveParseNode(node, includeExclusiveFetches: false)" title="Removes only this parse node; its fetch nodes stay on the canvas, unlinked, so they can be re-linked.">Remove parse node</button>
+                        <button class="secondary-button" @onclick="() => RemoveParseNode(node, includeExclusiveFetches: true)" title="Also removes the fetch nodes that no other parse node parses.">Remove source (with its fetches)</button>
                     }
                     else
                     {
@@ -699,7 +832,7 @@
                         <tr @key="row">
                             <td>
                                 <select class="selector compact" value="@row.SourceKind" @onchange="e => row.SourceKind = e.Value?.ToString() ?? row.SourceKind">
-                                    @foreach (var kind in SourceKindOptions)
+                                    @foreach (var kind in ScalarSourceKindOptions)
                                     {
                                         <option value="@kind">@kind</option>
                                     }

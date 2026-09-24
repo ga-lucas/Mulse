@@ -58,9 +58,9 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
             throw new InvalidOperationException($"Flow '{pipeline.Id}' already exists.");
         }
 
-        if (pipeline.Sources.Count == 0)
+        if (pipeline.Fetches.Count == 0 || pipeline.Parses.Count == 0)
         {
-            throw new ArgumentException($"Flow '{pipeline.Id}' must define at least one source.", nameof(pipeline));
+            throw new ArgumentException($"Flow '{pipeline.Id}' must define at least one fetch node and one parse node.", nameof(pipeline));
         }
 
         if (pipeline.Deliveries.Count == 0)
@@ -72,11 +72,15 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
 
         ValidateSourceGraph(pipeline);
 
-        foreach (var source in pipeline.Sources)
+        foreach (var fetch in pipeline.Fetches)
         {
-            ValidateModuleReference(source.Fetch.Module, ModuleKind.Fetch, availableModules, pipeline.Id);
-            ValidateModuleReference(source.Parse.Module, ModuleKind.Parse, availableModules, pipeline.Id);
-            ValidateConditions(source.Parse, pipeline.Id);
+            ValidateModuleReference(fetch.Fetch.Module, ModuleKind.Fetch, availableModules, pipeline.Id);
+        }
+
+        foreach (var parse in pipeline.Parses)
+        {
+            ValidateModuleReference(parse.Parse.Module, ModuleKind.Parse, availableModules, pipeline.Id);
+            ValidateConditions(parse.Parse, pipeline.Id);
         }
 
         foreach (var augment in pipeline.Augments)
@@ -95,116 +99,32 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
     }
 
     /// <summary>
-    /// Verifies that a flow's source graph is usable: ids are present and unique, every fetch/parse step names a
-    /// module, every declared input source exists, and the dependency graph is acyclic. Failures are raised as
-    /// <see cref="ArgumentException"/> so the API surfaces them as 400 Bad Request (see ApiExceptionHandler).
+    /// Verifies that a flow's source graph is usable: every fetch/parse node names a module, and the combined
+    /// fetch/parse graph passes the same structural rules the runtime enforces (see
+    /// <see cref="FlowRuntime.OrderSourceGraph"/>): ids present and unique across both node lists, parse nodes list
+    /// at least one fetch node, every fetch node is parsed, references resolve, and the graph is acyclic. Failures
+    /// are raised as <see cref="ArgumentException"/> so the API surfaces them as 400 Bad Request (see
+    /// ApiExceptionHandler).
     /// </summary>
     private static void ValidateSourceGraph(PipelineDefinition pipeline)
     {
-        var sourceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var source in pipeline.Sources)
+        foreach (var fetch in pipeline.Fetches)
         {
-            if (string.IsNullOrWhiteSpace(source.Id))
+            if (string.IsNullOrWhiteSpace(fetch.Fetch.Module))
             {
-                throw new ArgumentException($"Flow '{pipeline.Id}' has a source with an empty id.", nameof(pipeline));
-            }
-
-            if (!sourceIds.Add(source.Id))
-            {
-                throw new ArgumentException($"Flow '{pipeline.Id}' declares more than one source with id '{source.Id}'.", nameof(pipeline));
-            }
-
-            if (string.IsNullOrWhiteSpace(source.Fetch.Module))
-            {
-                throw new ArgumentException($"Flow '{pipeline.Id}' source '{source.Id}' must define a fetch module.", nameof(pipeline));
-            }
-
-            if (string.IsNullOrWhiteSpace(source.Parse.Module))
-            {
-                throw new ArgumentException($"Flow '{pipeline.Id}' source '{source.Id}' must define a parse module.", nameof(pipeline));
+                throw new ArgumentException($"Flow '{pipeline.Id}' fetch node '{fetch.Id}' must define a fetch module.", nameof(pipeline));
             }
         }
 
-        foreach (var source in pipeline.Sources)
+        foreach (var parse in pipeline.Parses)
         {
-            foreach (var inputSourceId in source.InputSourceIds)
+            if (string.IsNullOrWhiteSpace(parse.Parse.Module))
             {
-                if (string.IsNullOrWhiteSpace(inputSourceId) || !sourceIds.Contains(inputSourceId))
-                {
-                    throw new ArgumentException(
-                        $"Flow '{pipeline.Id}' source '{source.Id}' references unknown input source '{inputSourceId}'.",
-                        nameof(pipeline));
-                }
-
-                if (string.Equals(inputSourceId, source.Id, StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new ArgumentException(
-                        $"Flow '{pipeline.Id}' source '{source.Id}' cannot use itself as an input source.",
-                        nameof(pipeline));
-                }
+                throw new ArgumentException($"Flow '{pipeline.Id}' parse node '{parse.Id}' must define a parse module.", nameof(pipeline));
             }
         }
 
-        ValidateAcyclicSourceGraph(pipeline);
-    }
-
-    /// <summary>Kahn's algorithm: if any source never reaches zero remaining dependencies, the graph has a cycle.</summary>
-    private static void ValidateAcyclicSourceGraph(PipelineDefinition pipeline)
-    {
-        var remainingDependencies = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var source in pipeline.Sources)
-        {
-            var distinctInputs = source.InputSourceIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            remainingDependencies[source.Id] = distinctInputs.Length;
-
-            foreach (var inputSourceId in distinctInputs)
-            {
-                if (!dependents.TryGetValue(inputSourceId, out var list))
-                {
-                    list = [];
-                    dependents[inputSourceId] = list;
-                }
-
-                list.Add(source.Id);
-            }
-        }
-
-        var ready = new Queue<string>(remainingDependencies.Where(static entry => entry.Value == 0).Select(static entry => entry.Key));
-        var resolvedCount = 0;
-
-        while (ready.Count > 0)
-        {
-            var sourceId = ready.Dequeue();
-            resolvedCount++;
-
-            if (!dependents.TryGetValue(sourceId, out var sourceDependents))
-            {
-                continue;
-            }
-
-            foreach (var dependentId in sourceDependents)
-            {
-                if (--remainingDependencies[dependentId] == 0)
-                {
-                    ready.Enqueue(dependentId);
-                }
-            }
-        }
-
-        if (resolvedCount != pipeline.Sources.Count)
-        {
-            var cyclicIds = remainingDependencies
-                .Where(static entry => entry.Value > 0)
-                .Select(static entry => entry.Key)
-                .OrderBy(static id => id, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            throw new ArgumentException(
-                $"Flow '{pipeline.Id}' has a cyclic source graph involving: {string.Join(", ", cyclicIds)}.",
-                nameof(pipeline));
-        }
+        _ = FlowRuntime.OrderSourceGraph(pipeline, message => new ArgumentException(message, nameof(pipeline)));
     }
 
     private static void ValidateModuleReference(string moduleId, ModuleKind kind, IReadOnlyCollection<ModuleDescriptor> descriptors, string flowId)

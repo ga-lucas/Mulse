@@ -134,6 +134,11 @@ public sealed class ModuleCatalog : IModuleCatalog
         return LeaseAsync<IDeliverModule>(moduleId, ModuleKind.Deliver, cancellationToken);
     }
 
+    public ValueTask<ModuleLease<ITransformModule>> LeaseTransformAsync(string moduleId, CancellationToken cancellationToken)
+    {
+        return LeaseAsync<ITransformModule>(moduleId, ModuleKind.Transform, cancellationToken);
+    }
+
     public async Task SynchronizeAsync(CancellationToken cancellationToken)
     {
         await _synchronizationGate.WaitAsync(cancellationToken).ConfigureAwait(false);

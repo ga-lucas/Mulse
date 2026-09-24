@@ -25,6 +25,13 @@ namespace Mulse.Modules.Workflow;
 /// JSON array written at <c>nestedTargetPath</c> (which may itself be a nested/array path such as
 /// <c>order.lineItems</c> or <c>orders[].lineItems</c>).
 /// </para>
+/// <para>
+/// <b>Transforms.</b> A mapping whose <c>SourceKind</c> is <c>Transform</c> resolves each of its
+/// <c>TransformInputs</c> (Left/Right/Literal, exactly like a plain mapping) and passes them, in order, to the
+/// <see cref="ITransformModule"/> named by <c>TransformModule</c> via <see cref="IModuleInvoker"/>; the transform's
+/// result is written to the target field. Under Nested cardinality, a transform with any Right input is mapped
+/// into each nested item; otherwise it builds the parent record.
+/// </para>
 /// </summary>
 public sealed class MultiSourceJoinMapAugmentModule : IOrchestrationAugmentModule
 {
@@ -55,8 +62,15 @@ public sealed class MultiSourceJoinMapAugmentModule : IOrchestrationAugmentModul
             new ModuleSettingOption(nameof(WorkflowJoinCardinality.Nested), "Nested (one record per left row)")
         ]),
         new("nestedTargetPath", "Nested target path", "Where the array of mapped right rows is written when result cardinality is Nested, e.g. 'order.lineItems'.", false),
-        new("mappingJson", "Field mappings", "A JSON array of visual field mappings that builds the output document. Each mapping reads from the Left row, the Right row, or a Literal value.", true, ModuleSettingInputKind.TextArea, "[]")
+        new("mappingJson", "Field mappings", "A JSON array of visual field mappings that builds the output document. Each mapping reads from the Left row, the Right row, or a Literal value, or (SourceKind 'Transform') passes an ordered list of such inputs through a transform module (transformModule/transformInputs/transformSettings), e.g. to concatenate or add fields.", true, ModuleSettingInputKind.TextArea, "[]")
     ];
+
+    private readonly IModuleInvoker _moduleInvoker;
+
+    public MultiSourceJoinMapAugmentModule(IModuleInvoker moduleInvoker)
+    {
+        _moduleInvoker = moduleInvoker;
+    }
 
     public ModuleDescriptor Descriptor { get; } = new(
         "multi-source-join-map-augment",
@@ -66,7 +80,7 @@ public sealed class MultiSourceJoinMapAugmentModule : IOrchestrationAugmentModul
         SettingDescriptors,
         Recommendation);
 
-    public Task<IntegrationBatch> AugmentAsync(
+    public async Task<IntegrationBatch> AugmentAsync(
         FlowExecutionContext context,
         IntegrationBatch batch,
         ModuleStepDefinition step,
@@ -130,19 +144,19 @@ public sealed class MultiSourceJoinMapAugmentModule : IOrchestrationAugmentModul
 
             if (cardinality == WorkflowJoinCardinality.Nested)
             {
-                outputs.Add(BuildNestedRecord(leftRow, matches, mappings, nestedTargetPath!));
+                outputs.Add(await BuildNestedRecordAsync(context, leftRow, matches, mappings, nestedTargetPath!, cancellationToken).ConfigureAwait(false));
                 continue;
             }
 
             if (matches.Count == 0)
             {
-                outputs.Add(BuildFlatRecord(leftRow, rightRow: null, mappings, isMatched: false));
+                outputs.Add(await BuildFlatRecordAsync(context, leftRow, rightRow: null, mappings, isMatched: false, cancellationToken).ConfigureAwait(false));
                 continue;
             }
 
             foreach (var match in matches)
             {
-                outputs.Add(BuildFlatRecord(leftRow, match, mappings, isMatched: true));
+                outputs.Add(await BuildFlatRecordAsync(context, leftRow, match, mappings, isMatched: true, cancellationToken).ConfigureAwait(false));
             }
         }
 
@@ -164,55 +178,64 @@ public sealed class MultiSourceJoinMapAugmentModule : IOrchestrationAugmentModul
 
             var rightRow = rightRows[rightIndex];
             outputs.Add(cardinality == WorkflowJoinCardinality.Nested
-                ? BuildNestedRecord(leftRow: null, [rightRow], mappings, nestedTargetPath!)
-                : BuildFlatRecord(leftRow: null, rightRow, mappings, isMatched: false));
+                ? await BuildNestedRecordAsync(context, leftRow: null, [rightRow], mappings, nestedTargetPath!, cancellationToken).ConfigureAwait(false)
+                : await BuildFlatRecordAsync(context, leftRow: null, rightRow, mappings, isMatched: false, cancellationToken).ConfigureAwait(false));
         }
 
         var payloads = MaterializePayloads(
             outputs, leftSourceId, rightSourceId, joinKind, cardinality, matchedPairCount, unmatchedLeftCount, unmatchedRightCount);
 
-        return Task.FromResult(new IntegrationBatch(payloads));
+        return new IntegrationBatch(payloads);
     }
 
-    private static JoinOutput BuildFlatRecord(
+    private async Task<JoinOutput> BuildFlatRecordAsync(
+        FlowExecutionContext context,
         JoinRow? leftRow,
         JoinRow? rightRow,
         IReadOnlyList<WorkflowFieldMappingDefinition> mappings,
-        bool isMatched)
+        bool isMatched,
+        CancellationToken cancellationToken)
     {
         var document = new JsonObject();
-        ApplyMappings(document, mappings, leftRow?.Node, rightRow?.Node, isMatched);
+        await ApplyMappingsAsync(context, document, mappings, leftRow?.Node, rightRow?.Node, isMatched, cancellationToken).ConfigureAwait(false);
         return new JoinOutput(document, leftRow ?? rightRow, isMatched, isMatched ? 1 : 0);
     }
 
-    private static JoinOutput BuildNestedRecord(
+    private async Task<JoinOutput> BuildNestedRecordAsync(
+        FlowExecutionContext context,
         JoinRow? leftRow,
         IReadOnlyList<JoinRow> rightRows,
         IReadOnlyList<WorkflowFieldMappingDefinition> mappings,
-        string nestedTargetPath)
+        string nestedTargetPath,
+        CancellationToken cancellationToken)
     {
         var isMatched = rightRows.Count > 0 && leftRow is not null;
         var document = new JsonObject();
 
         // Left- and literal-scoped mappings build the parent record once...
-        ApplyMappings(
+        await ApplyMappingsAsync(
+            context,
             document,
-            mappings.Where(static mapping => mapping.SourceKind != WorkflowFieldSourceKind.Right).ToArray(),
+            mappings.Where(static mapping => !IsRightScoped(mapping)).ToArray(),
             leftRow?.Node,
             rightNode: null,
-            isMatched);
+            isMatched,
+            cancellationToken).ConfigureAwait(false);
 
         // ...and right-scoped mappings build one nested object per matched right row.
+        var rightScopedMappings = mappings.Where(IsRightScoped).ToArray();
         var nestedItems = new JsonArray();
         foreach (var rightRow in rightRows)
         {
             var item = new JsonObject();
-            ApplyMappings(
+            await ApplyMappingsAsync(
+                context,
                 item,
-                mappings.Where(static mapping => mapping.SourceKind == WorkflowFieldSourceKind.Right).ToArray(),
+                rightScopedMappings,
                 leftRow?.Node,
                 rightRow.Node,
-                isMatched);
+                isMatched,
+                cancellationToken).ConfigureAwait(false);
             nestedItems.Add(item);
         }
 
@@ -220,12 +243,23 @@ public sealed class MultiSourceJoinMapAugmentModule : IOrchestrationAugmentModul
         return new JoinOutput(document, leftRow ?? rightRows.FirstOrDefault(), isMatched, rightRows.Count);
     }
 
-    private static void ApplyMappings(
+    /// <summary>
+    /// Whether a mapping belongs to the nested (per right row) part of a Nested-cardinality record: a Right
+    /// mapping, or a Transform mapping that reads at least one input from the right row.
+    /// </summary>
+    private static bool IsRightScoped(WorkflowFieldMappingDefinition mapping)
+        => mapping.SourceKind == WorkflowFieldSourceKind.Right
+            || (mapping.SourceKind == WorkflowFieldSourceKind.Transform
+                && (mapping.TransformInputs ?? []).Any(static input => input.SourceKind == WorkflowFieldSourceKind.Right));
+
+    private async Task ApplyMappingsAsync(
+        FlowExecutionContext context,
         JsonObject document,
         IReadOnlyList<WorkflowFieldMappingDefinition> mappings,
         JsonNode? leftNode,
         JsonNode? rightNode,
-        bool isMatched)
+        bool isMatched,
+        CancellationToken cancellationToken)
     {
         foreach (var mapping in mappings)
         {
@@ -234,7 +268,7 @@ public sealed class MultiSourceJoinMapAugmentModule : IOrchestrationAugmentModul
                 continue;
             }
 
-            var value = ResolveValue(mapping, leftNode, rightNode);
+            var value = await ResolveValueAsync(context, mapping, leftNode, rightNode, cancellationToken).ConfigureAwait(false);
             if (value is null)
             {
                 continue;
@@ -386,12 +420,62 @@ public sealed class MultiSourceJoinMapAugmentModule : IOrchestrationAugmentModul
             _ => true
         };
 
-    private static JsonNode? ResolveValue(WorkflowFieldMappingDefinition mapping, JsonNode? leftNode, JsonNode? rightNode)
-        => mapping.SourceKind switch
+    private async Task<JsonNode?> ResolveValueAsync(
+        FlowExecutionContext context,
+        WorkflowFieldMappingDefinition mapping,
+        JsonNode? leftNode,
+        JsonNode? rightNode,
+        CancellationToken cancellationToken)
+    {
+        if (mapping.SourceKind != WorkflowFieldSourceKind.Transform)
         {
-            WorkflowFieldSourceKind.Left => JsonPayloadNavigator.ReadFirstNode(leftNode, mapping.SourcePath),
-            WorkflowFieldSourceKind.Right => JsonPayloadNavigator.ReadFirstNode(rightNode, mapping.SourcePath),
-            WorkflowFieldSourceKind.Literal => CreateLiteralNode(mapping.LiteralValue),
+            return ResolveScalarInput(mapping.SourceKind, mapping.SourcePath, mapping.LiteralValue, leftNode, rightNode);
+        }
+
+        var transformModule = string.IsNullOrWhiteSpace(mapping.TransformModule)
+            ? throw new ArgumentException(
+                $"Module '{Descriptor.Id}' requires 'transformModule' to be set for a Transform-kind mapping targeting '{mapping.TargetField}'.",
+                "mappingJson")
+            : mapping.TransformModule;
+
+        var transformInputs = mapping.TransformInputs ?? [];
+        var inputs = new List<JsonNode?>(transformInputs.Count);
+        foreach (var input in transformInputs)
+        {
+            if (input.SourceKind == WorkflowFieldSourceKind.Transform)
+            {
+                throw new ArgumentException(
+                    $"Module '{Descriptor.Id}' does not support nested transforms: every input of the Transform-kind mapping targeting '{mapping.TargetField}' must read from Left, Right, or Literal.",
+                    "mappingJson");
+            }
+
+            inputs.Add(ResolveScalarInput(input.SourceKind, input.SourcePath, input.LiteralValue, leftNode, rightNode));
+        }
+
+        var result = await _moduleInvoker.InvokeTransformAsync(
+            transformModule,
+            context,
+            inputs,
+            (IReadOnlyDictionary<string, string>?)mapping.TransformSettings ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            cancellationToken).ConfigureAwait(false);
+
+        // A (third-party) transform may hand back a node that still belongs to another tree; detach it by cloning
+        // so writing it into the output document can't fail with "the node already has a parent".
+        return result?.Parent is null ? result : result.DeepClone();
+    }
+
+    /// <summary>Resolves a single Left/Right/Literal value, as used by plain mapping rows and by each transform input.</summary>
+    private static JsonNode? ResolveScalarInput(
+        WorkflowFieldSourceKind sourceKind,
+        string sourcePath,
+        string? literalValue,
+        JsonNode? leftNode,
+        JsonNode? rightNode)
+        => sourceKind switch
+        {
+            WorkflowFieldSourceKind.Left => JsonPayloadNavigator.ReadFirstNode(leftNode, sourcePath),
+            WorkflowFieldSourceKind.Right => JsonPayloadNavigator.ReadFirstNode(rightNode, sourcePath),
+            WorkflowFieldSourceKind.Literal => CreateLiteralNode(literalValue),
             _ => null
         };
 

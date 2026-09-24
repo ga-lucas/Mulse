@@ -9,11 +9,20 @@ public sealed class PipelineDefinition
     public PipelineTriggerOptions Trigger { get; init; } = new();
 
     /// <summary>
-    /// The flow's source graph. Every source runs its own fetch then parse stage; sources are executed in
-    /// topological order of <see cref="SourceDefinition.InputSourceIds"/> and every source's parsed payloads are
-    /// tagged with a <c>sourceId</c> metadata entry before being merged into the augment stage input.
+    /// The fetch nodes of the flow's source graph. Fetch and parse nodes are independent: each fetch node acquires
+    /// raw content (optionally keyed off the parsed output of the parse nodes in
+    /// <see cref="FetchNodeDefinition.InputParseIds"/>), and each parse node in <see cref="Parses"/> parses the raw
+    /// output of one or more fetch nodes. Fetch and parse nodes are executed together in one topological order.
     /// </summary>
-    public List<SourceDefinition> Sources { get; init; } = [];
+    public List<FetchNodeDefinition> Fetches { get; init; } = [];
+
+    /// <summary>
+    /// The parse nodes of the flow's source graph. Every parse node parses each of its
+    /// <see cref="ParseNodeDefinition.FetchNodeIds"/> fetch nodes' raw batches with the same parse module and merges
+    /// the results (many fetches to one parse); its payloads are tagged with a <c>sourceId</c> metadata entry equal
+    /// to the parse node's id. Every parse node's output is merged into the augment stage input.
+    /// </summary>
+    public List<ParseNodeDefinition> Parses { get; init; } = [];
 
     public List<ModuleStepDefinition> Augments { get; init; } = [];
 

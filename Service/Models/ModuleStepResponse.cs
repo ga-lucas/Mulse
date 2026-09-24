@@ -4,4 +4,5 @@ namespace Service.Models;
 public sealed record ModuleStepResponse(
     string Module,
     IReadOnlyDictionary<string, string> Settings,
-    RetryPolicyResponse? Retry = null);
+    RetryPolicyResponse? Retry = null,
+    string? Name = null);

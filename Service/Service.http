@@ -57,9 +57,9 @@ Content-Type: application/json
     "mode": "Push",
     "runOnStartup": false
   },
-  "sources": [
+  "fetches": [
     {
-      "id": "primary",
+      "id": "primary-fetch",
       "fetch": {
         "module": "file-system-watcher-fetch",
         "settings": {
@@ -71,11 +71,19 @@ Content-Type: application/json
           "settleSeconds": "2"
         }
       },
+      "inputParseIds": []
+    }
+  ],
+  "parses": [
+    {
+      "id": "primary",
       "parse": {
         "module": "json-parse",
         "settings": {}
       },
-      "inputSourceIds": []
+      "fetchNodeIds": [
+        "primary-fetch"
+      ]
     }
   ],
   "augments": [],
@@ -108,9 +116,9 @@ Content-Type: application/json
     "mode": "Push",
     "runOnStartup": false
   },
-  "sources": [
+  "fetches": [
     {
-      "id": "primary",
+      "id": "primary-fetch",
       "fetch": {
         "module": "file-system-watcher-fetch",
         "settings": {
@@ -122,11 +130,19 @@ Content-Type: application/json
           "settleSeconds": "1"
         }
       },
+      "inputParseIds": []
+    }
+  ],
+  "parses": [
+    {
+      "id": "primary",
       "parse": {
         "module": "json-parse",
         "settings": {}
       },
-      "inputSourceIds": []
+      "fetchNodeIds": [
+        "primary-fetch"
+      ]
     }
   ],
   "augments": [
@@ -180,9 +196,9 @@ Content-Type: application/json
     "mode": "OnDemand",
     "runOnStartup": false
   },
-  "sources": [
+  "fetches": [
     {
-      "id": "primary",
+      "id": "primary-fetch",
       "fetch": {
         "module": "file-system-fetch",
         "settings": {
@@ -190,11 +206,19 @@ Content-Type: application/json
           "searchPattern": "*.json"
         }
       },
+      "inputParseIds": []
+    }
+  ],
+  "parses": [
+    {
+      "id": "primary",
       "parse": {
         "module": "json-parse",
         "settings": {}
       },
-      "inputSourceIds": []
+      "fetchNodeIds": [
+        "primary-fetch"
+      ]
     }
   ],
   "augments": [
@@ -251,9 +275,9 @@ Content-Type: application/json
     "interval": "00:05:00",
     "runOnStartup": false
   },
-  "sources": [
+  "fetches": [
     {
-      "id": "primary",
+      "id": "primary-fetch",
       "fetch": {
         "module": "sftp-fetch",
         "settings": {
@@ -265,14 +289,10 @@ Content-Type: application/json
           "searchPattern": "*.json"
         }
       },
-      "parse": {
-        "module": "json-parse",
-        "settings": {}
-      },
-      "inputSourceIds": []
+      "inputParseIds": []
     },
     {
-      "id": "sqlCustomers",
+      "id": "sqlCustomers-fetch",
       "fetch": {
         "module": "sql-server-lookup-fetch",
         "settings": {
@@ -281,11 +301,31 @@ Content-Type: application/json
           "queryText": "select value as CustomerId from string_split(@ids, ',')"
         }
       },
+      "inputParseIds": [
+        "primary"
+      ]
+    }
+  ],
+  "parses": [
+    {
+      "id": "primary",
       "parse": {
         "module": "json-parse",
         "settings": {}
       },
-      "inputSourceIds": ["primary"]
+      "fetchNodeIds": [
+        "primary-fetch"
+      ]
+    },
+    {
+      "id": "sqlCustomers",
+      "parse": {
+        "module": "json-parse",
+        "settings": {}
+      },
+      "fetchNodeIds": [
+        "sqlCustomers-fetch"
+      ]
     }
   ],
   "augments": [
@@ -368,9 +408,9 @@ Content-Type: application/json
     "mode": "OnDemand",
     "runOnStartup": false
   },
-  "sources": [
+  "fetches": [
     {
-      "id": "primary",
+      "id": "primary-fetch",
       "fetch": {
         "module": "file-system-fetch",
         "settings": {
@@ -379,11 +419,19 @@ Content-Type: application/json
           "recursive": "false"
         }
       },
+      "inputParseIds": []
+    }
+  ],
+  "parses": [
+    {
+      "id": "primary",
       "parse": {
         "module": "json-parse",
         "settings": {}
       },
-      "inputSourceIds": []
+      "fetchNodeIds": [
+        "primary-fetch"
+      ]
     }
   ],
   "augments": [
@@ -437,9 +485,9 @@ Content-Type: application/json
     "interval": "00:10:00",
     "runOnStartup": true
   },
-  "sources": [
+  "fetches": [
     {
-      "id": "primary",
+      "id": "primary-fetch",
       "fetch": {
         "module": "file-system-fetch",
         "settings": {
@@ -448,11 +496,19 @@ Content-Type: application/json
           "recursive": "false"
         }
       },
+      "inputParseIds": []
+    }
+  ],
+  "parses": [
+    {
+      "id": "primary",
       "parse": {
         "module": "json-parse",
         "settings": {}
       },
-      "inputSourceIds": []
+      "fetchNodeIds": [
+        "primary-fetch"
+      ]
     }
   ],
   "augments": [

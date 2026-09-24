@@ -61,9 +61,9 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
             throw new ArgumentException("At least one delivery route is required.", nameof(request));
         }
 
-        if (request.Sources.Count == 0)
+        if (request.Fetches.Count == 0 || request.Parses.Count == 0)
         {
-            throw new ArgumentException("At least one source is required.", nameof(request));
+            throw new ArgumentException("At least one fetch node and one parse node are required.", nameof(request));
         }
 
         var pipeline = new PipelineDefinition
@@ -76,7 +76,8 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
                 Interval = request.Trigger.Interval,
                 RunOnStartup = request.Trigger.RunOnStartup
             },
-            Sources = request.Sources.Select(MapSource).ToList(),
+            Fetches = request.Fetches.Select(FlowMappings.MapFetchNode).ToList(),
+            Parses = request.Parses.Select(FlowMappings.MapParseNode).ToList(),
             Augments = request.Augments.Select(MapStep).ToList(),
             Deliveries = request.Deliveries.Select(MapDelivery).ToList()
         };
@@ -408,16 +409,6 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
         return normalized[..MaxSampleLength];
     }
 
-    private static SourceDefinition MapSource(FlowSourceRequest source)
-    {
-        return new SourceDefinition
-        {
-            Id = source.Id,
-            Fetch = MapStep(source.Fetch),
-            Parse = MapStep(source.Parse),
-            InputSourceIds = source.InputSourceIds.ToList()
-        };
-    }
 
     private static ModuleStepDefinition MapStep(FlowStepRequest step)
     {
