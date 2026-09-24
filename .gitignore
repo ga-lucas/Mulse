@@ -361,6 +361,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
-/Service/plugins/Mulse.SamplePlugin/Mulse.Modules.dll
-/Service/plugins/Mulse.SamplePlugin/Mulse.SamplePlugin.dll
+/Service/plugins/*.dll
 /Service/Runtime/
