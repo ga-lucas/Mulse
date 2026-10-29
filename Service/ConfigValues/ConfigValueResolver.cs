@@ -37,7 +37,7 @@ public sealed record ConfigReferenceUsage(string Reference, string FlowId, strin
 public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runtimeConfigurationStore) : IConfigValueResolver
 {
     [GeneratedRegex(@"^\{\{(?:config|secret):(?<reference>.+)\}\}$")]
-    private static partial Regex TokenPattern();
+    internal static partial Regex TokenPattern();
 
     public PipelineDefinition Resolve(PipelineDefinition pipeline)
     {
@@ -47,6 +47,8 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
         var resolved = new PipelineDefinition
         {
             Id = pipeline.Id,
+            Name = pipeline.Name,
+            Category = pipeline.Category,
             Enabled = pipeline.Enabled,
             Trigger = pipeline.Trigger,
             Fetches = pipeline.Fetches.Select(fetch => ResolveFetchNode(fetch, configValues, missingReferences)).ToList(),

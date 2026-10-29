@@ -50,9 +50,14 @@ internal sealed class FakeExecutableModuleCatalog : IModuleCatalog
         return this;
     }
 
-    public IReadOnlyList<ModuleCatalogEntry> GetAll() => throw new NotSupportedException();
+    public IReadOnlyList<ModuleCatalogEntry> GetAll()
+        => _fetchModules.Values.Cast<IModule>().Concat(_parseModules.Values).Concat(_augmentModules.Values)
+            .Concat(_renderModules.Values).Concat(_deliverModules.Values).Concat(_transformModules.Values)
+            .Select(module => new ModuleCatalogEntry("test-package", RuntimePackageSourceKind.BuiltIn, "test.dll", module.Descriptor)).ToArray();
 
     public IReadOnlyList<ModulePackageInfo> GetPackages() => throw new NotSupportedException();
+
+    public IDisposable PinFlowModules(PipelineDefinition flow) => new ModuleUsageLease(static () => { });
 
     public ValueTask<ModuleLease<IFetchModule>> LeaseFetchAsync(string moduleId, CancellationToken cancellationToken)
         => Lease(_fetchModules, moduleId);

@@ -12,7 +12,7 @@ namespace Mulse.Ui.Components.Pages;
 // This page's logic is split across several partial-class files by concern:
 //   Designer.razor.cs         - state, lifecycle, load/save, and shared helpers/nested types (this file)
 //   Designer.razor.Graph.cs   - canvas graph editing (fetch/parse nodes, augments, routes, layout, edges)
-//   Designer.razor.Sample.cs  - "seed from sample data" panel
+//   Designer.razor.Sample.cs  - sample-data analysis and source-lane drafting
 //   Designer.razor.BizTalk.cs - "import from BizTalk" panel
 //   Designer.razor.Join.cs    - multi-source join/map augment editor + generic settings editor
 public partial class Designer : IAsyncDisposable
@@ -67,6 +67,7 @@ public partial class Designer : IAsyncDisposable
 
     private ElementReference _canvasElement;
     private ElementReference _toolboxElement;
+    private Microsoft.AspNetCore.Components.Forms.InputFile? _canvasFileInput;
     private IJSObjectReference? _canvasModule;
     private DotNetObjectReference<Designer>? _selfReference;
     private bool _canvasInitialized;
@@ -91,6 +92,7 @@ public partial class Designer : IAsyncDisposable
     private SeedSource _seedSource = SeedSource.Manual;
 
     private string _flowId = string.Empty;
+    private string _flowName = string.Empty;
     private bool _enabled = true;
     private string _triggerMode = "OnDemand";
     private string _intervalText = "00:05:00";
@@ -185,6 +187,7 @@ public partial class Designer : IAsyncDisposable
         _canvasModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/flow-canvas.js");
         await _canvasModule.InvokeVoidAsync("initialize", _canvasElement, _selfReference);
         await _canvasModule.InvokeVoidAsync("initializeToolbox", _toolboxElement, _canvasElement, _selfReference);
+        await _canvasModule.InvokeVoidAsync("initializeFileDrop", _canvasElement, _canvasFileInput!.Element, _selfReference);
     }
 
     public async ValueTask DisposeAsync()
@@ -194,6 +197,7 @@ public partial class Designer : IAsyncDisposable
             try
             {
                 await _canvasModule.InvokeVoidAsync("disposeToolbox", _toolboxElement);
+                await _canvasModule.InvokeVoidAsync("disposeFileDrop", _canvasElement);
                 await _canvasModule.InvokeVoidAsync("dispose", _canvasElement);
                 await _canvasModule.DisposeAsync();
             }
@@ -290,6 +294,12 @@ public partial class Designer : IAsyncDisposable
         }
     }
 
+    private async Task RefreshCatalogAsync()
+    {
+        _errorMessage = null;
+        await LoadCatalogAsync();
+    }
+
     private async Task LoadCatalogAsync()
     {
         try
@@ -337,6 +347,7 @@ public partial class Designer : IAsyncDisposable
         _selectedNodeId = null;
         _seedSource = SeedSource.Manual;
         _flowId = string.Empty;
+        _flowName = string.Empty;
         _enabled = true;
         _triggerMode = "OnDemand";
         _intervalText = "00:05:00";
@@ -352,8 +363,10 @@ public partial class Designer : IAsyncDisposable
     private void ClearCanvas()
     {
         var flowId = _flowId;
+        var flowName = _flowName;
         ResetGraph();
         _flowId = flowId;
+        _flowName = flowName;
         _seedSource = IsExistingFlow ? SeedSource.ExistingFlow : SeedSource.Manual;
         _statusMessage = "Canvas cleared.";
     }
@@ -368,6 +381,7 @@ public partial class Designer : IAsyncDisposable
         _selectedNodeId = null;
 
         _flowId = flow.Id;
+        _flowName = flow.Name ?? string.Empty;
         _enabled = flow.Enabled;
         _triggerMode = flow.TriggerMode;
         _intervalText = flow.Interval?.ToString() ?? "00:05:00";
@@ -643,8 +657,9 @@ public partial class Designer : IAsyncDisposable
             FlowViewModel saved;
             if (IsExistingFlow)
             {
+                var existing = await ApiClient.GetFlowAsync(flowId, CancellationToken.None);
                 saved = await ApiClient.UpdateFlowAsync(
-                    new UpdateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry),
+                    new UpdateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, existing.Category, _flowName),
                     CancellationToken.None);
                 _statusMessage = $"Saved flow '{saved.Id}' with {parseSteps.Length} parse node(s) fed by {fetchSteps.Length} fetch node(s).";
             }
@@ -659,20 +674,20 @@ public partial class Designer : IAsyncDisposable
                 if (mappings.Length > 0 && hasJoinAugment)
                 {
                     saved = await ApiClient.CreateDesignedFlowAsync(
-                        new CreateDesignedFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, mappings),
+                        new CreateDesignedFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, mappings, _flowName),
                         CancellationToken.None);
 
                     if (retry is not null)
                     {
                         saved = await ApiClient.UpdateFlowAsync(
-                            new UpdateFlowRequestViewModel(saved.Id, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry),
+                            new UpdateFlowRequestViewModel(saved.Id, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, Name: _flowName),
                             CancellationToken.None);
                     }
                 }
                 else
                 {
                     saved = await ApiClient.CreateFlowAsync(
-                        new CreateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry),
+                        new CreateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, _flowName),
                         CancellationToken.None);
                 }
 
@@ -685,6 +700,7 @@ public partial class Designer : IAsyncDisposable
             }
 
             _enabled = saved.Enabled;
+            _flowName = saved.Name ?? string.Empty;
             await RefreshConfigUsagesAsync();
         }
         catch (Exception exception)
@@ -862,37 +878,9 @@ public partial class Designer : IAsyncDisposable
     private static string FormatList(IReadOnlyList<string> values)
         => values.Count == 0 ? "None" : string.Join(", ", values);
 
-    private static string? ChooseModule(
-        IReadOnlyList<ModuleSuggestionViewModel> modules,
-        string? excludedId = null,
-        string? requiredCapability = null,
-        string? requiredProtocol = null,
-        string? requiredFormat = null)
+    private static string CreateDefaultFlowId(string detectedFormat)
     {
-        static bool Matches(ModuleSuggestionViewModel module, string? excludedId, string? requiredCapability, string? requiredProtocol, string? requiredFormat)
-        {
-            return !string.Equals(module.Id, excludedId, StringComparison.OrdinalIgnoreCase)
-                && (requiredCapability is null || module.Capabilities.Contains(requiredCapability, StringComparer.OrdinalIgnoreCase))
-                && (requiredProtocol is null || module.Protocols.Contains(requiredProtocol, StringComparer.OrdinalIgnoreCase))
-                && (requiredFormat is null || module.SupportedFormats.Contains(requiredFormat, StringComparer.OrdinalIgnoreCase));
-        }
-
-        return modules.FirstOrDefault(module => module.IsRecommended && Matches(module, excludedId, requiredCapability, requiredProtocol, requiredFormat))?.Id
-            ?? modules.FirstOrDefault(module => Matches(module, excludedId, requiredCapability, requiredProtocol, requiredFormat))?.Id
-            ?? modules.FirstOrDefault(module => module.IsRecommended && !string.Equals(module.Id, excludedId, StringComparison.OrdinalIgnoreCase))?.Id
-            ?? modules.FirstOrDefault(module => !string.Equals(module.Id, excludedId, StringComparison.OrdinalIgnoreCase))?.Id
-            ?? modules.FirstOrDefault()?.Id;
-    }
-
-    private static string CreateDefaultFlowId(string? fileName, string detectedFormat)
-    {
-        var seed = Path.GetFileNameWithoutExtension(fileName ?? string.Empty);
-        if (string.IsNullOrWhiteSpace(seed))
-        {
-            seed = detectedFormat;
-        }
-
-        var characters = seed
+        var characters = detectedFormat
             .ToLowerInvariant()
             .Select(static character => char.IsLetterOrDigit(character) ? character : '-')
             .ToArray();

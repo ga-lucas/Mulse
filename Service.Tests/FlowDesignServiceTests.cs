@@ -134,9 +134,10 @@ public sealed class FlowDesignServiceTests
         var flowDefinitionService = new RecordingFlowDefinitionService();
         var service = CreateService(flowDefinitionService: flowDefinitionService);
 
-        var pipeline = await service.CreateFlowAsync(CreateValidRequest(), CancellationToken.None);
+        var pipeline = await service.CreateFlowAsync(CreateValidRequest() with { Name = "  Customer orders  " }, CancellationToken.None);
 
         Assert.Equal("flow-1", pipeline.Id);
+        Assert.Equal("Customer orders", pipeline.Name);
         Assert.Equal("primary-fetch", Assert.Single(pipeline.Fetches).Id);
         var parse = Assert.Single(pipeline.Parses);
         Assert.Equal("primary", parse.Id);
@@ -233,6 +234,9 @@ public sealed class FlowDesignServiceTests
         }
 
         public Task<PipelineDefinition> UpdateAsync(string flowId, PipelineDefinition pipeline, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<PipelineDefinition> DuplicateAsync(string flowId, string newFlowId, CancellationToken cancellationToken)
             => throw new NotSupportedException();
 
         public Task DeleteAsync(string flowId, CancellationToken cancellationToken) => throw new NotSupportedException();

@@ -4,6 +4,10 @@ public interface IRuntimeConfigurationStore
 {
     RuntimeMulseState GetState();
 
+    Task<RuntimeMulseState> RestoreWorkspaceAsync(RuntimeMulseState restored, bool replace, CancellationToken cancellationToken);
+
+    Task<int> DeleteAllFlowsAsync(CancellationToken cancellationToken);
+
     Task<RuntimeMulseState> UpsertFlowAsync(PipelineDefinition pipeline, CancellationToken cancellationToken);
 
     Task<RuntimeMulseState> DeleteFlowAsync(string flowId, CancellationToken cancellationToken);

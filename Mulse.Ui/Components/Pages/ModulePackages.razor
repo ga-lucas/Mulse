@@ -1,0 +1,179 @@
+@page "/module-packages"
+@inject IMulseApiClient ApiClient
+
+<PageTitle>Module Packages | Mulse</PageTitle>
+
+<div class="page-shell">
+    <header class="page-hero">
+        <div>
+            <p class="eyebrow">Configuration</p>
+            <h1>Module Packages</h1>
+            <p class="lede">Compatible packages in the server's configured plugin folders are discovered every five seconds and appear unloaded. Load only packages you trust: loading executes code on the server. <a href="/modules">Browse available modules</a>.</p>
+        </div>
+        <button class="secondary-button" @onclick="LoadAsync" disabled="@(_isLoading || _isReloadingPackage)">Refresh packages</button>
+    </header>
+
+    <StatusBanner Error="@_errorMessage" Success="@_statusMessage" />
+
+    @if (_isLoading)
+    {
+        <p class="loading-state" role="status">Loading module packages...</p>
+    }
+    else
+    {
+        <Panel Title="Runtime module packages" Description="Load, unload, or reload plugin packages without restarting the API. Built-in packages cannot be changed.">
+            @if (_packages.Count == 0)
+            {
+                <p>No module packages were found. Copy a compatible package into a configured plugin folder, then refresh after the next discovery scan.</p>
+            }
+            else
+            {
+                <div class="flow-list">
+                    @foreach (var package in _packages)
+                    {
+                        <section class="flow-card" id="@($"package-{Uri.EscapeDataString(package.Id)}")" @key="package.Id">
+                            <div class="flow-card-header">
+                                <div><h3>@package.Id</h3><p><strong>Package type:</strong> @package.SourceKind</p></div>
+                                <div class="flow-card-actions">
+                                    @if (package.SourceKind != "BuiltIn")
+                                    {
+                                        @if (package.IsLoaded)
+                                        {
+                                            <button class="secondary-button" @onclick="() => _unloadCandidate = package" disabled="@_isReloadingPackage">Unload package</button>
+                                        }
+                                        else
+                                        {
+                                            <button class="run-button" @onclick="() => SetPackageEnabledAsync(package, true)" disabled="@_isReloadingPackage">Load package</button>
+                                        }
+                                    }
+                                    <button class="run-button" @onclick="() => ReloadPackageAsync(package.Id)" disabled="@(_isReloadingPackage || !package.IsLoaded || package.SourceKind == "BuiltIn")">Reload package</button>
+                                </div>
+                            </div>
+                            @if (_unloadCandidate?.Id == package.Id)
+                            {
+                                <section class="flow-action-editor" role="region" aria-label="Confirm package unload">
+                                    <h3>Unload @package.Id?</h3>
+                                    <p>Unloading is blocked while any saved flow references this package, including disabled flows and compensation steps, or while its modules are executing. Remove or replace those references first. The registration is retained and automatic discovery will not reload it.</p>
+                                    <StatusBanner Error="@_errorMessage" Compact="true" />
+                                    <button class="secondary-button danger-button" @onclick="() => SetPackageEnabledAsync(package, false)" disabled="@_isReloadingPackage">Confirm unload</button>
+                                    <button class="secondary-button" @onclick="() => _unloadCandidate = null" disabled="@_isReloadingPackage">Cancel</button>
+                                </section>
+                            }
+                            <dl class="flow-metadata">
+                                <div><dt>Loaded</dt><dd>@(package.IsLoaded ? "Yes" : "No")</dd></div>
+                                <div><dt>Modules</dt><dd>@package.ModuleCount</dd></div>
+                                <div><dt>Last loaded</dt><dd>@(package.LastLoadedAt == DateTimeOffset.MinValue ? "n/a" : package.LastLoadedAt.ToLocalTime().ToString("g"))</dd></div>
+                            </dl>
+                            <p><strong>Assembly:</strong> @package.AssemblyPath</p>
+                            <h4>Modules in this package</h4>
+                            @if (!package.IsLoaded)
+                            {
+                                <p>Module details are unavailable while this package is unloaded. Load the package to inspect its modules.</p>
+                            }
+                            else
+                            {
+                                var packageModules = _modules.Where(module => string.Equals(module.PackageId, package.Id, StringComparison.OrdinalIgnoreCase))
+                                    .OrderBy(module => module.Kind).ThenBy(module => module.Id, StringComparer.OrdinalIgnoreCase).ToArray();
+                                @if (packageModules.Length == 0)
+                                {
+                                    <p>No available modules reported by this package.</p>
+                                }
+                                else
+                                {
+                                    <details>
+                                        <summary>Show/hide modules (@packageModules.Length)</summary>
+                                        <p><a href="@($"/modules?package={Uri.EscapeDataString(package.Id)}")">Browse this package's modules</a></p>
+                                        <ul>
+                                            @foreach (var module in packageModules)
+                                            {
+                                                <li @key="module.Id"><strong>@module.DisplayName</strong> <code>@module.Id</code> (@module.Kind)<div class="module-description">@module.Description</div></li>
+                                            }
+                                        </ul>
+                                    </details>
+                                }
+                            }
+                        </section>
+                    }
+                </div>
+            }
+        </Panel>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<ModulePackageViewModel> _packages = [];
+    private IReadOnlyList<ModuleViewModel> _modules = [];
+    private bool _isLoading = true;
+    private bool _isReloadingPackage;
+    private string? _errorMessage;
+    private string? _statusMessage;
+    private ModulePackageViewModel? _unloadCandidate;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private Task SetPackageEnabledAsync(ModulePackageViewModel package, bool enabled) => RunPackageActionAsync(async () =>
+    {
+        var updated = await ApiClient.SetModulePackageEnabledAsync(package.Id, enabled, CancellationToken.None);
+        _statusMessage = $"Package {updated.Id} is now {(updated.IsLoaded ? "loaded" : "unloaded")}.";
+        _unloadCandidate = null;
+    });
+
+    private async Task RunPackageActionAsync(Func<Task> action)
+    {
+        if (_isReloadingPackage) return;
+        _isReloadingPackage = true;
+        _errorMessage = _statusMessage = null;
+        try
+        {
+            await action();
+            await LoadAsync();
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Package operation failed: {exception.Message}";
+        }
+        finally { _isReloadingPackage = false; }
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            var packagesTask = ApiClient.GetModulePackagesAsync(CancellationToken.None);
+            var modulesTask = ApiClient.GetModulesAsync(CancellationToken.None);
+            await Task.WhenAll(packagesTask, modulesTask);
+            _packages = await packagesTask;
+            _modules = await modulesTask;
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to load module packages: {exception.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task ReloadPackageAsync(string packageId)
+    {
+        _isReloadingPackage = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            var package = await ApiClient.ReloadModulePackageAsync(packageId, CancellationToken.None);
+            _statusMessage = $"Reloaded package {package.Id}.";
+            await LoadAsync();
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to reload package '{packageId}': {exception.Message}";
+        }
+        finally
+        {
+            _isReloadingPackage = false;
+        }
+    }
+}

@@ -29,6 +29,7 @@ public sealed partial class FlowRuntime
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
             var context = new FlowExecutionContext(pipeline.Id, retryState.ExecutionId, retryState.ExecutionStartedAt);
             var committedAtomicDeliveries = new List<FlowRetryCommittedDelivery>(retryState.CommittedAtomicDeliveries);
             var inputBatch = RestoreBatch(retryState.InputPayloads);

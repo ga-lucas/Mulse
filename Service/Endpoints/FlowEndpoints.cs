@@ -9,11 +9,13 @@ public static class FlowEndpoints
 {
     public static WebApplication MapFlowEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/flows", Ok<FlowResponse[]> (IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>
+        app.MapGet("/api/flows", Ok<FlowResponse[]> (IFlowDefinitionService flowDefinitionService, IModuleCatalog moduleCatalog, IRuntimeConfigurationStore store, CancellationToken cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var available = moduleCatalog.GetAll();
+                var configValues = store.GetState().ConfigValues;
                 var response = flowDefinitionService.GetAll()
-                    .Select(FlowMappings.MapFlow)
+                    .Select(flow => FlowMappings.MapFlow(flow) with { MissingModules = FlowModuleDependencies.FindMissing(flow, available, configValues) })
                     .ToArray();
                 return TypedResults.Ok(response);
             })
@@ -24,11 +26,14 @@ public static class FlowEndpoints
             .Produces<FlowResponse[]>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
-        app.MapGet("/api/flows/{flowId}", Results<Ok<FlowResponse>, NotFound> (string flowId, IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>
+        app.MapGet("/api/flows/{flowId}", Results<Ok<FlowResponse>, NotFound> (string flowId, IFlowDefinitionService flowDefinitionService, IModuleCatalog moduleCatalog, IRuntimeConfigurationStore store, CancellationToken cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var flow = flowDefinitionService.GetAll().FirstOrDefault(candidate => string.Equals(candidate.Id, flowId, StringComparison.OrdinalIgnoreCase));
-                return flow is null ? TypedResults.NotFound() : TypedResults.Ok(FlowMappings.MapFlow(flow));
+                return flow is null ? TypedResults.NotFound() : TypedResults.Ok(FlowMappings.MapFlow(flow) with
+                {
+                    MissingModules = FlowModuleDependencies.FindMissing(flow, moduleCatalog.GetAll(), store.GetState().ConfigValues)
+                });
             })
             .WithName("GetFlowById")
             .WithSummary("Get a configured flow")
@@ -79,6 +84,31 @@ public static class FlowEndpoints
             .Produces<FlowResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
+
+        app.MapPost("/api/flows/{flowId}/duplicate", async Task<Created<FlowResponse>> (string flowId, DuplicateFlowRequest request, IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>
+            {
+                var created = await flowDefinitionService.DuplicateAsync(flowId, request.Id, cancellationToken).ConfigureAwait(false);
+                return TypedResults.Created($"/api/flows/{Uri.EscapeDataString(created.Id)}", FlowMappings.MapFlow(created));
+            })
+            .WithName("DuplicateFlow")
+            .WithSummary("Duplicate a flow as a disabled copy")
+            .WithTags("Flows")
+            .Produces<FlowResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        app.MapPatch("/api/flows/{flowId}/category", async Task<Ok<FlowResponse>> (string flowId, SetFlowCategoryRequest request, IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>
+            {
+                var existing = flowDefinitionService.GetById(flowId);
+                var updated = await flowDefinitionService.UpdateAsync(flowId, FlowMappings.CopyPipeline(existing, existing.Id, existing.Enabled, request.Category), cancellationToken).ConfigureAwait(false);
+                return TypedResults.Ok(FlowMappings.MapFlow(updated));
+            })
+            .WithName("SetFlowCategory")
+            .WithSummary("Assign or clear a flow category")
+            .WithTags("Flows")
+            .Produces<FlowResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status404NotFound);
 
         app.MapDelete("/api/flows/{flowId}", async Task<NoContent> (string flowId, IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>
             {

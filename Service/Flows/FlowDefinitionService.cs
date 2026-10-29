@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Mulse.Modules;
 
 namespace Service.Flows;
@@ -22,6 +23,7 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
     public async Task<PipelineDefinition> CreateAsync(PipelineDefinition pipeline, CancellationToken cancellationToken)
     {
         ValidatePipeline(pipeline, allowExisting: false);
+        using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
         await runtimeConfigurationStore.UpsertFlowAsync(pipeline, cancellationToken).ConfigureAwait(false);
         return GetById(pipeline.Id);
     }
@@ -35,8 +37,22 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
 
         _ = GetById(flowId);
         ValidatePipeline(pipeline, allowExisting: true);
+        using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
         await runtimeConfigurationStore.UpsertFlowAsync(pipeline, cancellationToken).ConfigureAwait(false);
         return GetById(flowId);
+    }
+
+    public Task<PipelineDefinition> DuplicateAsync(string flowId, string newFlowId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(newFlowId))
+        {
+            throw new ArgumentException("A new flow ID is required.", nameof(newFlowId));
+        }
+
+        var existing = GetById(flowId);
+        var snapshot = JsonSerializer.SerializeToElement(existing).Deserialize<PipelineDefinition>()
+            ?? throw new InvalidOperationException($"Unable to copy flow '{flowId}'.");
+        return CreateAsync(FlowMappings.CopyPipeline(snapshot, newFlowId.Trim(), false, snapshot.Category), cancellationToken);
     }
 
     public async Task DeleteAsync(string flowId, CancellationToken cancellationToken)
@@ -68,9 +84,11 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
             throw new ArgumentException($"Flow '{pipeline.Id}' must define at least one delivery route.", nameof(pipeline));
         }
 
-        var availableModules = moduleCatalog.GetAll().Select(static entry => entry.Descriptor).ToArray();
+        var available = moduleCatalog.GetAll();
+        var availableModules = available.Select(static entry => entry.Descriptor).ToArray();
 
         ValidateSourceGraph(pipeline);
+        FlowModuleDependencies.EnsureAvailable(pipeline, available, runtimeConfigurationStore.GetState().ConfigValues);
 
         foreach (var fetch in pipeline.Fetches)
         {

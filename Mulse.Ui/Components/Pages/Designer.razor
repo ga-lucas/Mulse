@@ -8,38 +8,41 @@
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
-<PageTitle>@(IsExistingFlow ? $"Edit flow {FlowId}" : "Flow designer")</PageTitle>
+<PageTitle>@(IsExistingFlow ? $"Edit flow {(string.IsNullOrWhiteSpace(_flowName) ? FlowId : _flowName)}" : "Flow designer")</PageTitle>
 
 <div class="designer-shell">
     <header class="designer-topbar">
-        <a class="secondary-button" href="/">&larr; Dashboard</a>
-        <h1>@(IsExistingFlow ? FlowId : "New flow")</h1>
-        <div class="designer-topbar-actions">
-            <button class="secondary-button @(_showSamplePanel ? "active" : null)" @onclick="ToggleSamplePanel">Import sample data</button>
-            <button class="secondary-button @(_showBizTalkPanel ? "active" : null)" @onclick="ToggleBizTalkPanel">Import from BizTalk</button>
+        <div class="designer-heading">
+            <p class="eyebrow">Integration builder</p>
+            <h1>@(string.IsNullOrWhiteSpace(_flowName) ? IsExistingFlow ? FlowId : "New flow" : _flowName)</h1>
+        </div>
+        <div class="designer-topbar-actions" role="group" aria-label="Flow actions">
+            <button class="secondary-button @(_showSamplePanel ? "active" : null)" aria-expanded="@(_showSamplePanel ? "true" : "false")" @onclick="ToggleSamplePanel">Add sample data</button>
+            <button class="secondary-button @(_showBizTalkPanel ? "active" : null)" aria-expanded="@(_showBizTalkPanel ? "true" : "false")" @onclick="ToggleBizTalkPanel">Import from BizTalk</button>
+            <button class="secondary-button" @onclick="RefreshCatalogAsync" disabled="@_isAnalyzingSample">Refresh modules</button>
             <button class="secondary-button" @onclick="AutoLayout">Auto layout</button>
             <button class="secondary-button" @onclick="ClearCanvas">Clear canvas</button>
-            <button class="run-button" @onclick="SaveAsync" disabled="@_isSaving">@(_isSaving ? "Saving..." : IsExistingFlow ? "Save flow" : "Create flow")</button>
         </div>
     </header>
 
     @if (!string.IsNullOrWhiteSpace(_statusMessage))
     {
-        <div class="status-banner success designer-banner">@_statusMessage</div>
+        <div class="status-banner success designer-banner" role="status">@_statusMessage</div>
     }
 
     @if (!string.IsNullOrWhiteSpace(_errorMessage))
     {
-        <div class="status-banner error designer-banner">@_errorMessage</div>
+        <div class="status-banner error designer-banner" role="alert">@_errorMessage</div>
     }
 
     <div class="designer-surface">
         @if (_showSamplePanel)
         {
-            <FloatingPanel Title="Import sample data" Icon="📥" X="80" Y="80" Width="420" ShowClose="true" OnClose="ToggleSamplePanel">
+            <FloatingPanel Title="Add a sample to the canvas" Icon="📥" X="80" Y="80" Width="420" ShowClose="true" OnClose="ToggleSamplePanel">
 
+            <p class="field-hint">A sample helps infer the data shape and parser. It is not the flow's data source and is not saved or processed by the flow. Choose the real source later in the fetch node.</p>
             <label class="drop-zone">
-                <span>Select or drag a file here</span>
+                <span>Select a sample file</span>
                 <InputFile OnChange="HandleFileSelectedAsync" class="drop-zone-input" />
             </label>
 
@@ -48,7 +51,7 @@
                 <span><strong>Detected content type:</strong> @(_contentType ?? "Unknown")</span>
             </div>
 
-            <label class="field-label" for="sample-text">Paste sample payload</label>
+            <label class="field-label" for="sample-text">Or paste sample data</label>
             <textarea id="sample-text" class="sample-textarea" @bind="_sampleText" @bind:event="oninput" placeholder="Paste JSON, XML, CSV, or raw text here."></textarea>
 
             <div class="action-row">
@@ -106,10 +109,10 @@
                     </section>
                 </div>
 
-                <p class="field-hint">@_analysis.Fields.Count field mapping(s) were detected and will be attached to the flow when it is created.</p>
+                <p class="field-hint">@_analysis.Fields.Count field(s) detected. Sample fields are not added as mappings automatically.</p>
 
                 <div class="action-row">
-                    <button class="run-button" @onclick="ApplySampleAnalysis">Populate canvas from sample</button>
+                    <button class="run-button" @onclick="ApplySampleAnalysis">Add source to canvas</button>
                 </div>
             }
         </FloatingPanel>
@@ -233,7 +236,7 @@
         </FloatingPanel>
     }
 
-    <FloatingPanel Title="Toolbox" Icon="🧰" X="24" Y="24" Width="200">
+    <FloatingPanel Title="Toolbox" Icon="🧰" X="24" Y="24" Width="220" Class="toolbox-panel">
         <p class="toolbox-hint">Click or drag onto the canvas.</p>
         <div class="toolbox-list" @ref="_toolboxElement">
             <button class="toolbox-item" data-node-type="source" data-node-label="Source" @onclick="AddSourceLane" title="Adds a new source: a fetch node plus a parse node that parses it, pre-linked. Join augments and other fetch nodes reference the parse node's id.">
@@ -266,8 +269,13 @@
             </p>
         }
 
-        <label class="field-label" for="flow-id">Flow id</label>
+        <label class="field-label" for="flow-name">Flow name</label>
+        <input id="flow-name" class="mapping-input" @bind="_flowName" @bind:event="oninput" placeholder="e.g. Import customer orders" />
+        <p class="field-hint">An editable display name. Leave blank to display the flow ID.</p>
+
+        <label class="field-label" for="flow-id">Flow ID</label>
         <input id="flow-id" class="mapping-input" @bind="_flowId" @bind:event="oninput" disabled="@IsExistingFlow" />
+        <p class="field-hint">Unique technical identifier used in URLs and API calls; fixed after creation.</p>
 
         <label class="field-label checkbox-row">
             <input type="checkbox" checked="@_enabled" @onchange="e => _enabled = (bool)(e.Value ?? false)" />
@@ -344,24 +352,29 @@
     </FloatingPanel>
 
     <div class="canvas-surface">
+        <InputFile @ref="_canvasFileInput" OnChange="HandleCanvasFilesAsync" multiple hidden disabled="@_isAnalyzingSample" />
         @if (_isLoading)
         {
             <p class="canvas-placeholder">Loading flow and module catalog...</p>
         }
         else if (_nodes.Count == 0)
         {
-            <p class="canvas-placeholder">The canvas is empty. Add a node from the toolbox, or seed the graph from sample data or a BizTalk source.</p>
+            <p class="canvas-placeholder">Drop JSON, XML, CSV, text, XLS or XLSX samples here to infer a source shape. Configure the real source later, or add a node from the toolbox.</p>
         }
 
         @if (SourceGraphError is { } graphError)
         {
             <div class="status-banner error compact">@graphError</div>
         }
+        @if (_isAnalyzingSample)
+        {
+            <p class="canvas-placeholder" role="status">Analyzing sample files...</p>
+        }
 
-        <div class="zoom-controls">
-            <button class="secondary-button" @onclick="ZoomOutAsync" title="Zoom out">−</button>
+        <div class="zoom-controls" role="group" aria-label="Canvas zoom">
+            <button class="secondary-button" @onclick="ZoomOutAsync" title="Zoom out" aria-label="Zoom out">−</button>
             <span class="zoom-label">@ZoomPercentLabel</span>
-            <button class="secondary-button" @onclick="ZoomInAsync" title="Zoom in">+</button>
+            <button class="secondary-button" @onclick="ZoomInAsync" title="Zoom in" aria-label="Zoom in">+</button>
             <button class="secondary-button" @onclick="FitView" title="Reset to fit">Fit</button>
         </div>
 
@@ -432,7 +445,7 @@
         </svg>
     </div>
 
-    <FloatingPanel Title="Properties" Icon="⚙" X="1100" Y="24" Width="360">
+    <FloatingPanel Title="Properties" Icon="⚙" AlignRight="true" Y="24" Width="360">
         @if (SelectedNode is null)
         {
             <p class="panel-hint">Select a node on the canvas to choose its module and edit its settings.</p>
@@ -927,5 +940,10 @@
             }
         </FloatingPanel>
     }
+
+    <footer class="designer-save-bar">
+        <p>Canvas changes are not saved automatically.</p>
+        <button class="run-button designer-save-button" @onclick="SaveAsync" disabled="@(_isSaving || _isAnalyzingSample)">@(_isSaving ? "Saving..." : IsExistingFlow ? "Save flow" : "Create flow")</button>
+    </footer>
 </div>
 

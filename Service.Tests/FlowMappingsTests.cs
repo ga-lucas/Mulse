@@ -263,6 +263,52 @@ public class FlowMappingsTests
         Assert.Null(response.Parses[0].Parse.Name);
     }
 
+    [Theory]
+    [InlineData("  Customer orders  ", "Customer orders")]
+    [InlineData(" ", null)]
+    [InlineData(null, null)]
+    public void Name_RoundTripsIndependentlyOfId(string? name, string? expected)
+    {
+        var request = new CreateFlowRequest
+        {
+            Id = "stable-id", Name = name,
+            Trigger = new FlowTriggerRequest { Mode = PipelineTriggerMode.OnDemand },
+            Fetches = [], Parses = []
+        };
+        var pipeline = FlowMappings.MapPipeline(request);
+        var response = FlowMappings.MapFlow(pipeline);
+        Assert.Equal("stable-id", response.Id);
+        Assert.Equal(expected, response.Name);
+        var json = System.Text.Json.JsonSerializer.Serialize(response);
+        var update = System.Text.Json.JsonSerializer.Deserialize<UpdateFlowRequest>(json)!;
+        Assert.Equal(expected, FlowMappings.MapPipeline(update).Name);
+        Assert.Equal(expected, FlowMappings.WithEnabled(pipeline, false).Name);
+        Assert.Equal(expected, FlowMappings.CopyPipeline(pipeline, "copy", false, "Finance").Name);
+        var resolver = new Service.ConfigValues.ConfigValueResolver(new FakeRuntimeConfigurationStore(new RuntimeMulseState()));
+        Assert.Equal(expected, resolver.Resolve(pipeline).Name);
+    }
+
+    [Theory]
+    [InlineData("  Finance  ", "Finance")]
+    [InlineData(" ", null)]
+    [InlineData(null, null)]
+    public void Category_RoundTripsCreateResponseAndUpdate(string? category, string? expected)
+    {
+        var request = new CreateFlowRequest
+        {
+            Id = "categorized",
+            Category = category,
+            Trigger = new FlowTriggerRequest { Mode = PipelineTriggerMode.OnDemand },
+            Fetches = [],
+            Parses = []
+        };
+        var response = FlowMappings.MapFlow(FlowMappings.MapPipeline(request));
+        Assert.Equal(expected, response.Category);
+        var json = System.Text.Json.JsonSerializer.Serialize(response);
+        var update = System.Text.Json.JsonSerializer.Deserialize<UpdateFlowRequest>(json)!;
+        Assert.Equal(expected, FlowMappings.MapPipeline(update).Category);
+    }
+
     [Fact]
     public void MapPipeline_FromBizTalkDraft_MapsSplitFetchAndParseNodes()
     {

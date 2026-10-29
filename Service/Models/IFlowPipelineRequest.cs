@@ -11,6 +11,10 @@ public interface IFlowPipelineRequest
     /// <summary>The unique flow id.</summary>
     string Id { get; }
 
+    string? Name { get; }
+
+    string? Category { get; }
+
     /// <summary>Whether the flow is enabled.</summary>
     bool Enabled { get; }
 

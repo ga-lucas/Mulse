@@ -8,6 +8,12 @@ internal sealed class FakeRuntimeConfigurationStore(RuntimeMulseState state) : I
 {
     public RuntimeMulseState GetState() => state;
 
+    public Task<RuntimeMulseState> RestoreWorkspaceAsync(RuntimeMulseState restored, bool replace, CancellationToken cancellationToken)
+        => throw new NotSupportedException();
+
+    public Task<int> DeleteAllFlowsAsync(CancellationToken cancellationToken)
+        => throw new NotSupportedException();
+
     public Task<RuntimeMulseState> UpsertFlowAsync(PipelineDefinition pipeline, CancellationToken cancellationToken)
     {
         state.Pipelines.RemoveAll(existing => string.Equals(existing.Id, pipeline.Id, StringComparison.OrdinalIgnoreCase));

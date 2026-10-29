@@ -14,6 +14,7 @@ public sealed class ModuleCatalog : IModuleCatalog
     private readonly ILogger<ModuleCatalog> _logger;
     private readonly Dictionary<string, RegisteredPackage> _packagesById = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RegisteredModule> _modulesById = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (ModulePackageInfo Info, DateTime LastWriteTimeUtc)> _discoveredPackages = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _synchronizationGate = new(1, 1);
 
     public ModuleCatalog(
@@ -62,18 +63,19 @@ public sealed class ModuleCatalog : IModuleCatalog
 
         // Mulse.Hl7 and Mulse.Dbms.SqlServer are NOT project-referenced by Service; they build directly into
         // Service/plugins/<AssemblyName>/ (see their csproj <OutDir>) and are picked up by the auto-discovery
-        // pass in SynchronizeAsync -> DiscoverAutoPackages, which loads them into a collectible
-        // AssemblyLoadContext via CreatePackageFromAssembly. That's what allows them to be reloaded/unloaded
-        // (e.g. after redeploying an updated build) without restarting the host, unlike the BuiltIn packages
-        // registered above. The first SynchronizeAsync call (triggered by ModuleSynchronizationService at
-        // startup) loads them; nothing further is required here.
+        // pass in SynchronizeAsync -> DiscoverAutoPackages. New packages are listed unloaded until an
+        // operator loads them. Activation uses a collectible AssemblyLoadContext, allowing later unload
+        // or reload without restarting the host, unlike the built-in packages registered above.
     }
 
     public IReadOnlyList<ModuleCatalogEntry> GetAll()
     {
         lock (_syncRoot)
         {
+            var disabled = _runtimeConfigurationStore.GetState().ManagedPackages.Where(package => !package.Enabled)
+                .Select(package => package.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
             return _modulesById.Values
+                .Where(module => !module.Package.IsUnloading && !disabled.Contains(module.Package.Id))
                 .Select(static module => module.Entry)
                 .OrderBy(static entry => entry.Descriptor.Kind)
                 .ThenBy(static entry => entry.Descriptor.Id, StringComparer.OrdinalIgnoreCase)
@@ -91,7 +93,8 @@ public sealed class ModuleCatalog : IModuleCatalog
             var loadedIds = loadedPackages.Select(static package => package.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            var unloadedManagedPackages = _runtimeConfigurationStore.GetState().ManagedPackages
+            var managedPackages = _runtimeConfigurationStore.GetState().ManagedPackages;
+            var unloadedManagedPackages = managedPackages
                 .Where(package => !loadedIds.Contains(package.Id))
                 .Select(static package => new ModulePackageInfo(
                     package.Id,
@@ -101,8 +104,13 @@ public sealed class ModuleCatalog : IModuleCatalog
                     DateTimeOffset.MinValue,
                     0));
 
+            var registeredIds = managedPackages.Select(package => package.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var discoveredPackages = _discoveredPackages.Values.Select(candidate => candidate.Info)
+                .Where(package => !loadedIds.Contains(package.Id) && !registeredIds.Contains(package.Id));
             return loadedPackages
                 .Concat(unloadedManagedPackages)
+                .Concat(discoveredPackages)
                 .OrderBy(static package => package.SourceKind)
                 .ThenBy(static package => package.Id, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -137,6 +145,23 @@ public sealed class ModuleCatalog : IModuleCatalog
     public ValueTask<ModuleLease<ITransformModule>> LeaseTransformAsync(string moduleId, CancellationToken cancellationToken)
     {
         return LeaseAsync<ITransformModule>(moduleId, ModuleKind.Transform, cancellationToken);
+    }
+
+    public IDisposable PinFlowModules(PipelineDefinition flow)
+    {
+        lock (_syncRoot)
+        {
+            var configValues = _runtimeConfigurationStore.GetState().ConfigValues;
+            if (flow.Enabled) FlowModuleDependencies.EnsureAvailable(flow, GetAll(), configValues);
+            var packages = FlowModuleDependencies.References(flow, configValues)
+                .Select(reference => _modulesById.GetValueOrDefault(reference.Id)?.Package)
+                .OfType<RegisteredPackage>().Where(package => !package.IsUnloading).Distinct().ToArray();
+            foreach (var package in packages) package.ActiveLeaseCount++;
+            return new ModuleUsageLease(() =>
+            {
+                foreach (var package in packages) ReleaseLease(package);
+            });
+        }
     }
 
     public async Task SynchronizeAsync(CancellationToken cancellationToken)
@@ -179,19 +204,29 @@ public sealed class ModuleCatalog : IModuleCatalog
 
                 try
                 {
-                    await LoadOrReloadPackageAsync(autoPackage.Id, autoPackage.AssemblyPath, RuntimePackageSourceKind.AutoDiscovered, cancellationToken).ConfigureAwait(false);
+                    if (TryGetPackage(autoPackage.Id) is not null)
+                    {
+                        await LoadOrReloadPackageAsync(autoPackage.Id, autoPackage.AssemblyPath, RuntimePackageSourceKind.AutoDiscovered, cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        DiscoverUnloadedPackage(autoPackage);
+                    }
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    // An auto-discovered candidate isn't necessarily a real module package (e.g. it failed to
-                    // load, or is a plain library with no IModuleInstaller). Log and continue so one bad
-                    // assembly under a plugin directory can't block every other package from loading.
-                    _logger.LogWarning(exception, "Skipping auto-discovered package {PackageId} at {AssemblyPath}: it could not be loaded.", autoPackage.Id, autoPackage.AssemblyPath);
+                    lock (_syncRoot) _discoveredPackages.Remove(autoPackage.Id);
+                    _logger.LogWarning(exception, "Skipping auto-discovered package {PackageId} at {AssemblyPath}: it is not a compatible module package.", autoPackage.Id, autoPackage.AssemblyPath);
                 }
             }
 
             var discoveredIds = autoDiscoveredPackages.Select(static package => package.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            lock (_syncRoot)
+            {
+                foreach (var staleId in _discoveredPackages.Keys.Where(id => !discoveredIds.Contains(id)).ToArray())
+                    _discoveredPackages.Remove(staleId);
+            }
 
             foreach (var staleAutoPackageId in GetPackages()
                 .Where(static package => package.SourceKind == RuntimePackageSourceKind.AutoDiscovered)
@@ -220,9 +255,26 @@ public sealed class ModuleCatalog : IModuleCatalog
             throw new ArgumentException("Assembly path is required.", nameof(package));
         }
 
-        await _runtimeConfigurationStore.UpsertManagedPackageAsync(package, cancellationToken).ConfigureAwait(false);
-        await SynchronizeAsync(cancellationToken).ConfigureAwait(false);
-        return GetPackages().First(packageInfo => string.Equals(packageInfo.Id, package.Id, StringComparison.OrdinalIgnoreCase));
+        await _synchronizationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (TryGetPackage(package.Id)?.SourceKind == RuntimePackageSourceKind.BuiltIn)
+            {
+                throw new InvalidOperationException("Built-in packages cannot be changed or unloaded.");
+            }
+            if (package.Enabled)
+            {
+                await LoadOrReloadPackageAsync(package.Id, package.AssemblyPath, RuntimePackageSourceKind.Managed, cancellationToken).ConfigureAwait(false);
+                await _runtimeConfigurationStore.UpsertManagedPackageAsync(package, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await ChangeAndUnloadAsync(package.Id,
+                    () => _runtimeConfigurationStore.UpsertManagedPackageAsync(package, cancellationToken), cancellationToken).ConfigureAwait(false);
+            }
+            return GetPackages().First(packageInfo => string.Equals(packageInfo.Id, package.Id, StringComparison.OrdinalIgnoreCase));
+        }
+        finally { _synchronizationGate.Release(); }
     }
 
     public async Task<ModulePackageInfo> ReloadPackageAsync(string packageId, CancellationToken cancellationToken)
@@ -247,8 +299,51 @@ public sealed class ModuleCatalog : IModuleCatalog
 
     public async Task RemoveManagedPackageAsync(string packageId, CancellationToken cancellationToken)
     {
-        await _runtimeConfigurationStore.DeleteManagedPackageAsync(packageId, cancellationToken).ConfigureAwait(false);
-        await UnloadPackageIfExistsAsync(packageId, cancellationToken).ConfigureAwait(false);
+        await _synchronizationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await ChangeAndUnloadAsync(packageId,
+                () => _runtimeConfigurationStore.DeleteManagedPackageAsync(packageId, cancellationToken), cancellationToken).ConfigureAwait(false);
+        }
+        finally { _synchronizationGate.Release(); }
+    }
+
+    private async Task ChangeAndUnloadAsync(string packageId, Func<Task> persist, CancellationToken cancellationToken)
+    {
+        var package = PreparePackageUnload(packageId);
+        try
+        {
+            await persist().ConfigureAwait(false);
+            await UnloadPackageIfExistsAsync(packageId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_syncRoot)
+            {
+                if (package is not null && _packagesById.TryGetValue(packageId, out var current) && ReferenceEquals(package, current))
+                    package.IsUnloading = false;
+            }
+        }
+    }
+
+    private RegisteredPackage? PreparePackageUnload(string packageId)
+    {
+        lock (_syncRoot)
+        {
+            if (!_packagesById.TryGetValue(packageId, out var package)) return null;
+            if (package.SourceKind == RuntimePackageSourceKind.BuiltIn)
+                throw new InvalidOperationException("Built-in packages cannot be changed or unloaded.");
+            var state = _runtimeConfigurationStore.GetState();
+            var dependentFlows = state.Pipelines
+                .Where(flow => FlowModuleDependencies.References(flow, state.ConfigValues).Any(reference => package.Modules.ContainsKey(reference.Id)))
+                .Select(flow => flow.Id).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (dependentFlows.Length > 0)
+                throw new InvalidOperationException($"Package '{packageId}' is used by saved flows: {string.Join(", ", dependentFlows)}. Remove or replace these references (including disabled flows) before unloading or removing the package.");
+            if (package.ActiveLeaseCount > 0)
+                throw new InvalidOperationException($"Package '{packageId}' is in use by active module executions. Wait for them to finish before unloading or removing it.");
+            package.IsUnloading = true;
+            return package;
+        }
     }
 
     private async ValueTask<ModuleLease<TModule>> LeaseAsync<TModule>(string moduleId, ModuleKind kind, CancellationToken cancellationToken) where TModule : class, IModule
@@ -267,6 +362,8 @@ public sealed class ModuleCatalog : IModuleCatalog
             {
                 throw new InvalidOperationException($"Module '{moduleId}' is not a {kind} module.");
             }
+            if (moduleState.Package.IsUnloading)
+                throw new InvalidOperationException($"Package '{moduleState.Package.Id}' is unloading. Its modules are not available.");
 
             moduleState.Package.ActiveLeaseCount++;
         }
@@ -339,7 +436,7 @@ public sealed class ModuleCatalog : IModuleCatalog
                 {
                     Id = packageId,
                     AssemblyPath = mainAssemblyPath,
-                    Enabled = true
+                    Enabled = false
                 });
             }
 
@@ -358,12 +455,40 @@ public sealed class ModuleCatalog : IModuleCatalog
                 {
                     Id = packageId,
                     AssemblyPath = assemblyPath,
-                    Enabled = true
+                    Enabled = false
                 });
             }
         }
 
         return discoveredPackages.Values.ToArray();
+    }
+
+    private void DiscoverUnloadedPackage(ManagedModulePackageDefinition candidate)
+    {
+        var lastWriteTimeUtc = File.GetLastWriteTimeUtc(candidate.AssemblyPath);
+        lock (_syncRoot)
+        {
+            if (_discoveredPackages.TryGetValue(candidate.Id, out var existing)
+                && existing.Info.AssemblyPath == candidate.AssemblyPath && existing.LastWriteTimeUtc == lastWriteTimeUtc)
+                return;
+        }
+
+        var shadowPath = ShadowCopyAssembly(candidate.Id, candidate.AssemblyPath);
+        var context = new PluginLoadContext(shadowPath);
+        try
+        {
+            var assembly = context.LoadFromAssemblyPath(shadowPath);
+            if (!assembly.GetTypes().Any(type => type is { IsAbstract: false, IsInterface: false }
+                && typeof(IModuleInstaller).IsAssignableFrom(type) && type.GetConstructor(Type.EmptyTypes) is not null))
+                throw new InvalidOperationException("The assembly has no compatible public parameterless module installer.");
+        }
+        finally { context.Unload(); }
+
+        lock (_syncRoot)
+        {
+            _discoveredPackages[candidate.Id] = (new ModulePackageInfo(candidate.Id, candidate.AssemblyPath,
+                RuntimePackageSourceKind.AutoDiscovered, false, DateTimeOffset.MinValue, 0), lastWriteTimeUtc);
+        }
     }
 
     private async Task LoadOrReloadPackageAsync(string packageId, string assemblyPath, RuntimePackageSourceKind sourceKind, CancellationToken cancellationToken)
@@ -550,6 +675,8 @@ public sealed class ModuleCatalog : IModuleCatalog
             {
                 throw new InvalidOperationException("Built-in packages cannot be unloaded.");
             }
+            if (package.ActiveLeaseCount > 0)
+                throw new InvalidOperationException($"Package '{packageId}' is in use by active module executions. Unloading must wait until they finish.");
 
             _packagesById.Remove(packageId);
             foreach (var moduleId in package.Modules.Keys)
@@ -571,8 +698,13 @@ public sealed class ModuleCatalog : IModuleCatalog
             waitForLeasesTask = package.ActiveLeaseCount == 0 ? Task.CompletedTask : package.WhenIdle.Task;
         }
 
-        await waitForLeasesTask.WaitAsync(cancellationToken).ConfigureAwait(false);
-        package.LoadContext?.Unload();
+        await CompleteUnloadAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        async Task CompleteUnloadAsync()
+        {
+            await waitForLeasesTask.ConfigureAwait(false);
+            package.LoadContext?.Unload();
+        }
     }
 
     private void ReleaseLease(RegisteredPackage package)

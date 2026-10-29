@@ -30,7 +30,10 @@ public sealed record FlowResponse(
     IReadOnlyList<ModuleStepResponse> Augments,
     IReadOnlyList<DeliveryRouteResponse> Deliveries,
     RetryPolicyResponse? Retry,
-    FlowTriggerResponse Trigger);
+    FlowTriggerResponse Trigger,
+    string? Category = null,
+    IReadOnlyList<string>? MissingModules = null,
+    string? Name = null);
 
 /// <summary>
 /// Round-trippable trigger shape matching <see cref="FlowTriggerRequest"/>. Kept as a distinct type

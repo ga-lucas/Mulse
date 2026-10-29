@@ -4,19 +4,19 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 
-<div @ref="_panelElement" class="floating-panel @(IsCollapsed ? "collapsed" : null) @Class" style="left:@(F(X))px; top:@(F(Y))px; @(Width is { } w ? $"width:{F(w)}px;" : null)">
+<div @ref="_panelElement" class="floating-panel @(IsCollapsed ? "collapsed" : null) @Class" style="--panel-x:@InitialX; --panel-y:@(F(_y))px; @(Width is { } w ? $"--panel-width:{F(w)}px; width:{F(w)}px;" : null)">
     <div @ref="_headerElement" class="floating-panel-header">
         @if (!string.IsNullOrWhiteSpace(Icon))
         {
-            <span class="floating-panel-icon">@Icon</span>
+            <span class="floating-panel-icon" aria-hidden="true">@Icon</span>
         }
         <span class="floating-panel-title">@Title</span>
         <div class="floating-panel-header-actions">
             @HeaderActions
-            <button type="button" class="floating-panel-btn" title="@(IsCollapsed ? "Expand" : "Collapse")" @onclick="ToggleCollapsedAsync">@(IsCollapsed ? "▢" : "—")</button>
+            <button type="button" class="floating-panel-btn" title="@(IsCollapsed ? "Expand" : "Collapse")" aria-label="@($"{(IsCollapsed ? "Expand" : "Collapse")} {Title}")" aria-expanded="@(!IsCollapsed ? "true" : "false")" @onclick="ToggleCollapsedAsync">@(IsCollapsed ? "▢" : "—")</button>
             @if (ShowClose)
             {
-                <button type="button" class="floating-panel-btn" title="Close" @onclick="HandleCloseAsync">×</button>
+                <button type="button" class="floating-panel-btn" title="Close" aria-label="@($"Close {Title}")" @onclick="HandleCloseAsync">×</button>
             }
         </div>
     </div>
@@ -40,6 +40,10 @@
     /// <summary>Initial horizontal position, in pixels, relative to the nearest positioned ancestor.</summary>
     [Parameter]
     public double X { get; set; }
+
+    /// <summary>Initially align to the right edge of the positioned ancestor until dragged.</summary>
+    [Parameter]
+    public bool AlignRight { get; set; }
 
     /// <summary>Initial vertical position, in pixels, relative to the nearest positioned ancestor.</summary>
     [Parameter]
@@ -79,6 +83,19 @@
     private IJSObjectReference? _module;
     private DotNetObjectReference<FloatingPanel>? _selfReference;
     private bool _initialized;
+    private bool _hasMoved;
+    private double _x;
+    private double _y;
+
+    private string InitialX => AlignRight && !_hasMoved
+        ? "calc(100% - var(--panel-width, 360px) - 1rem)"
+        : $"{F(_x)}px";
+
+    protected override void OnInitialized()
+    {
+        _x = X;
+        _y = Y;
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -96,8 +113,9 @@
     [JSInvokable]
     public void OnMoved(double x, double y)
     {
-        X = x;
-        Y = y;
+        _hasMoved = true;
+        _x = x;
+        _y = y;
         StateHasChanged();
     }
 

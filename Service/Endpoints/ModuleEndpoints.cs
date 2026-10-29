@@ -114,6 +114,33 @@ public static class ModuleEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
+        app.MapPatch("/api/module-packages/{packageId}/enabled", async Task<Ok<ModulePackageResponse>> (string packageId, SetModulePackageEnabledRequest request, IModuleCatalog moduleCatalog, CancellationToken cancellationToken) =>
+            {
+                var existing = moduleCatalog.GetPackages().FirstOrDefault(package => string.Equals(package.Id, packageId, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new KeyNotFoundException($"No module package with id '{packageId}' was found.");
+                if (existing.SourceKind == RuntimePackageSourceKind.BuiltIn)
+                {
+                    throw new InvalidOperationException("Built-in packages cannot be loaded or unloaded.");
+                }
+                if (!request.Enabled && request.Confirmation != "UNLOAD PACKAGE")
+                {
+                    throw new ArgumentException("Confirm package unloading with UNLOAD PACKAGE. Dependent flows may stop working.");
+                }
+                var updated = await moduleCatalog.UpsertManagedPackageAsync(new ManagedModulePackageDefinition
+                {
+                    Id = existing.Id,
+                    AssemblyPath = existing.AssemblyPath,
+                    Enabled = request.Enabled
+                }, cancellationToken).ConfigureAwait(false);
+                return TypedResults.Ok(ModulePackageResponse.From(updated));
+            })
+            .WithName("SetModulePackageEnabled")
+            .WithSummary("Load or unload a plugin package while retaining its registration")
+            .WithTags("Modules")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
         app.MapPost("/api/module-packages/{packageId}/reload", async Task<Ok<ModulePackageResponse>> (string packageId, IModuleCatalog moduleCatalog, CancellationToken cancellationToken) =>
             {
                 var package = await moduleCatalog.ReloadPackageAsync(packageId, cancellationToken).ConfigureAwait(false);

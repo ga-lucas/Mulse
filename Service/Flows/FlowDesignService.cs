@@ -17,6 +17,9 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (request.BinaryContent is not null)
+            return Task.FromResult(AnalyzeWorkbook(request));
+
         var text = request.TextContent?.Trim();
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -27,6 +30,8 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
         {
             throw new ArgumentException("Sample content is too large. Keep it under 1 MB.", nameof(request));
         }
+        if (text.Any(character => char.IsControl(character) && character is not ('\r' or '\n' or '\t')))
+            throw new ArgumentException("Unsupported binary sample. Use JSON, XML, CSV, text, XLS or XLSX files.", nameof(request));
 
         var format = DetectFormat(text, request.FileName, request.ContentType);
         var fields = ExtractFields(format, text)
@@ -52,6 +57,47 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
         return Task.FromResult(response);
     }
 
+    private FlowDesignResponse AnalyzeWorkbook(AnalyzeFlowDesignRequest request)
+    {
+        const int maxBytes = 10 * 1024 * 1024;
+        if (request.BinaryContent!.Length > ((maxBytes + 2) / 3) * 4)
+            throw new ArgumentException("Workbook sample exceeds 10 MiB.");
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(request.BinaryContent); }
+        catch (FormatException exception) { throw new ArgumentException("Workbook sample must contain valid base64 data.", exception); }
+        if (bytes.Length == 0 || bytes.Length > maxBytes)
+            throw new ArgumentException("Workbook sample must contain between 1 byte and 10 MiB.");
+        var extension = Path.GetExtension(request.FileName ?? "");
+        if (extension.Equals(".xls", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!bytes.AsSpan().StartsWith(new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }))
+                throw new ArgumentException("The XLS sample is not a supported binary Excel workbook.");
+        }
+        else if (extension.Equals(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                using var input = new MemoryStream(bytes, writable: false);
+                using var archive = new System.IO.Compression.ZipArchive(input, System.IO.Compression.ZipArchiveMode.Read);
+                if (archive.GetEntry("xl/workbook.xml") is null || archive.GetEntry("[Content_Types].xml") is null)
+                    throw new ArgumentException("The XLSX sample does not contain an Excel workbook.");
+            }
+            catch (InvalidDataException exception) { throw new ArgumentException("The XLSX sample is not a valid workbook archive.", exception); }
+        }
+        else throw new ArgumentException("Binary sample analysis supports XLS and XLSX files only.");
+
+        var modules = moduleCatalog.GetAll();
+        const DetectedDataFormat format = DetectedDataFormat.Excel;
+        var available = modules.Any(module => module.Descriptor.Kind == ModuleKind.Parse && module.Descriptor.Id == "excel-parse");
+        return new FlowDesignResponse(format, request.FileName,
+            "Excel workbook detected by file structure. Select sheetName or a 1-based sheetNumber (default 1), and review firstRowIsHeader. "
+            + "Cell values are not inspected during inference. "
+            + (available ? "Excel modules are loaded." : "Load Mulse.Excel in Module Packages before saving or running this source."),
+            CreateSuggestions(modules, ModuleKind.Fetch, format), CreateSuggestions(modules, ModuleKind.Parse, format),
+            CreateSuggestions(modules, ModuleKind.OrchestrationAugment, format), CreateSuggestions(modules, ModuleKind.Render, format),
+            CreateSuggestions(modules, ModuleKind.Deliver, format), []);
+    }
+
     public async Task<PipelineDefinition> CreateFlowAsync(CreateDesignedFlowRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -69,6 +115,7 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
         var pipeline = new PipelineDefinition
         {
             Id = request.Id,
+            Name = string.IsNullOrWhiteSpace(request.Name) ? null : request.Name.Trim(),
             Enabled = request.Enabled,
             Trigger = new PipelineTriggerOptions
             {
@@ -301,6 +348,8 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
 
     private static int GetRecommendationScore(ModuleDescriptor descriptor, ModuleKind kind, DetectedDataFormat format)
     {
+        if (format == DetectedDataFormat.Excel && kind is ModuleKind.Parse or ModuleKind.Render)
+            return descriptor.Id.Equals(kind == ModuleKind.Parse ? "excel-parse" : "excel-render", StringComparison.OrdinalIgnoreCase) ? 100 : 0;
         var recommendation = descriptor.Recommendation;
         if (recommendation is null)
         {

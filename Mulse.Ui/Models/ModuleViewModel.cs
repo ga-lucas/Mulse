@@ -8,4 +8,7 @@ public sealed record ModuleViewModel(
     IReadOnlyList<ModuleSettingViewModel> Settings,
     IReadOnlyList<string> SupportedFormats,
     IReadOnlyList<string> Protocols,
-    IReadOnlyList<string> Capabilities);
+    IReadOnlyList<string> Capabilities,
+    string PackageId = "",
+    string PackageSourceKind = "",
+    string AssemblyPath = "");

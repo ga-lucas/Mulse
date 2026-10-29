@@ -8,4 +8,5 @@ public sealed record CreateFlowRequestViewModel(
     IReadOnlyList<FlowParseNodeRequestViewModel> Parses,
     IReadOnlyList<FlowStepRequestViewModel> Augments,
     IReadOnlyList<DeliveryRouteRequestViewModel> Deliveries,
-    RetryPolicyRequestViewModel? Retry = null);
+    RetryPolicyRequestViewModel? Retry = null,
+    string? Name = null);

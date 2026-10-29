@@ -8,4 +8,6 @@ public sealed record UpdateFlowRequestViewModel(
     IReadOnlyList<FlowParseNodeRequestViewModel> Parses,
     IReadOnlyList<FlowStepRequestViewModel> Augments,
     IReadOnlyList<DeliveryRouteRequestViewModel> Deliveries,
-    RetryPolicyRequestViewModel? Retry = null);
+    RetryPolicyRequestViewModel? Retry = null,
+    string? Category = null,
+    string? Name = null);

@@ -25,7 +25,9 @@ internal static class FlowMappings
             flow.Augments.Select(MapStep).ToArray(),
             flow.Deliveries.Select(MapDelivery).ToArray(),
             MapRetry(flow.Retry),
-            new FlowTriggerResponse(flow.Trigger.Mode, flow.Trigger.Interval, flow.Trigger.RunOnStartup));
+            new FlowTriggerResponse(flow.Trigger.Mode, flow.Trigger.Interval, flow.Trigger.RunOnStartup),
+            flow.Category,
+            Name: flow.Name);
     }
 
     /// <summary>
@@ -38,6 +40,8 @@ internal static class FlowMappings
         return new PipelineDefinition
         {
             Id = request.Id,
+            Name = string.IsNullOrWhiteSpace(request.Name) ? null : request.Name.Trim(),
+            Category = NormalizeCategory(request.Category),
             Enabled = request.Enabled,
             Trigger = new PipelineTriggerOptions
             {
@@ -60,9 +64,16 @@ internal static class FlowMappings
     /// </summary>
     public static PipelineDefinition WithEnabled(PipelineDefinition pipeline, bool enabled)
     {
+        return CopyPipeline(pipeline, pipeline.Id, enabled, pipeline.Category);
+    }
+
+    public static PipelineDefinition CopyPipeline(PipelineDefinition pipeline, string id, bool enabled, string? category)
+    {
         return new PipelineDefinition
         {
-            Id = pipeline.Id,
+            Id = id,
+            Name = pipeline.Name,
+            Category = NormalizeCategory(category),
             Enabled = enabled,
             Trigger = pipeline.Trigger,
             Fetches = pipeline.Fetches,
@@ -72,6 +83,9 @@ internal static class FlowMappings
             Retry = pipeline.Retry
         };
     }
+
+    private static string? NormalizeCategory(string? category)
+        => string.IsNullOrWhiteSpace(category) ? null : category.Trim();
 
     public static PipelineDefinition MapPipeline(BizTalkDraftFlowResponse draft)
     {

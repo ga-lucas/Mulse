@@ -27,6 +27,7 @@ if (app.Environment.IsDevelopment())
 app.MapDefaultEndpoints();
 app.MapModuleEndpoints();
 app.MapFlowEndpoints();
+app.MapWorkspaceEndpoints();
 app.MapDesignerEndpoints();
 app.MapBizTalkMigrationEndpoints();
 app.MapConfigValueEndpoints();

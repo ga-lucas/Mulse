@@ -1,5 +1,5 @@
 // Drag-to-reposition behavior for FloatingPanel.razor: pointerdown on the header starts a drag,
-// pointermove repositions the panel via plain left/top styling, and pointerup reports the final
+// pointermove updates the panel's position variables, and pointerup reports the final
 // position back to the .NET component once (not per-frame) so Blazor's own render stays in sync.
 let zCounter = 100;
 
@@ -18,7 +18,9 @@ export function initialize(panelEl, headerEl, dotNetRef) {
     const onHeaderPointerDown = event => {
         bringToFront(panelEl);
 
-        if (event.button !== 0 || event.target.closest('button, input, select, textarea, a')) {
+        if (getComputedStyle(panelEl).position !== 'absolute'
+            || event.button !== 0
+            || event.target.closest('button, input, select, textarea, a')) {
             return;
         }
 
@@ -48,8 +50,8 @@ export function initialize(panelEl, headerEl, dotNetRef) {
 
         const x = Math.max(0, drag.originLeft + dx);
         const y = Math.max(0, drag.originTop + dy);
-        panelEl.style.left = `${x}px`;
-        panelEl.style.top = `${y}px`;
+        panelEl.style.setProperty('--panel-x', `${x}px`);
+        panelEl.style.setProperty('--panel-y', `${y}px`);
     };
 
     const endDrag = async event => {

@@ -8,4 +8,5 @@ public sealed record CreateDesignedFlowRequestViewModel(
     IReadOnlyList<FlowParseNodeRequestViewModel> Parses,
     IReadOnlyList<FlowStepRequestViewModel> Augments,
     IReadOnlyList<DeliveryRouteRequestViewModel> Deliveries,
-    IReadOnlyList<FlowDesignFieldMappingRequestViewModel> Mappings);
+    IReadOnlyList<FlowDesignFieldMappingRequestViewModel> Mappings,
+    string? Name = null);

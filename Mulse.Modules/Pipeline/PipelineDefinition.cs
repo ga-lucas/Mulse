@@ -4,6 +4,10 @@ public sealed class PipelineDefinition
 {
     public string Id { get; init; } = string.Empty;
 
+    public string? Name { get; init; }
+
+    public string? Category { get; init; }
+
     public bool Enabled { get; init; } = true;
 
     public PipelineTriggerOptions Trigger { get; init; } = new();

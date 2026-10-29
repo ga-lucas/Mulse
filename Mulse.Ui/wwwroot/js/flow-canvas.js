@@ -130,7 +130,7 @@ export function initialize(svg, dotNetRef) {
                 moved: false
             };
             group.classList.add('dragging');
-            svg.setPointerCapture(event.pointerId);
+            group.setPointerCapture(event.pointerId);
             event.preventDefault();
             return;
         }
@@ -195,8 +195,8 @@ export function initialize(svg, dotNetRef) {
 
         if (drag.kind === 'node') {
             drag.group.classList.remove('dragging');
-            if (svg.hasPointerCapture(event.pointerId)) {
-                svg.releasePointerCapture(event.pointerId);
+            if (drag.group.hasPointerCapture(event.pointerId)) {
+                drag.group.releasePointerCapture(event.pointerId);
             }
 
             if (!drag.moved) {
@@ -375,4 +375,49 @@ export function disposeToolbox(toolboxEl) {
     toolboxEl.removeEventListener('pointerup', handlers.endDrag);
     toolboxEl.removeEventListener('pointercancel', handlers.endDrag);
     delete toolboxEl.__toolboxDrag;
+}
+
+export function initializeFileDrop(svg, input, dotNetRef) {
+    if (!svg || !input || svg.__fileDrop) return;
+    const surface = svg.parentElement;
+    const isFileDrag = event => Array.from(event.dataTransfer?.types ?? []).includes('Files');
+    const onDragOver = event => {
+        if (!isFileDrag(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = input.disabled ? 'none' : 'copy';
+        svg.classList.toggle('drop-target', !input.disabled);
+    };
+    const onDragLeave = event => {
+        if (!surface.contains(event.relatedTarget)) svg.classList.remove('drop-target');
+    };
+    const onDrop = event => {
+        if (!isFileDrag(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        svg.classList.remove('drop-target');
+        if (input.disabled) return;
+        const files = event.dataTransfer.files;
+        if (!files?.length) return;
+        if (files.length > 10 || Array.from(files).some(file => file.size > 10 * 1024 * 1024)) {
+            dotNetRef.invokeMethodAsync('OnFileDropError', 'Drop up to 10 files, each no larger than 10 MiB.');
+            return;
+        }
+        // Forward native files to Blazor's streamed InputFile; don't send base64 through SignalR interop.
+        input.files = files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    surface.addEventListener('dragover', onDragOver);
+    surface.addEventListener('dragleave', onDragLeave);
+    surface.addEventListener('drop', onDrop);
+    svg.__fileDrop = { surface, onDragOver, onDragLeave, onDrop };
+}
+
+export function disposeFileDrop(svg) {
+    const handlers = svg?.__fileDrop;
+    if (!handlers) return;
+    handlers.surface.removeEventListener('dragover', handlers.onDragOver);
+    handlers.surface.removeEventListener('dragleave', handlers.onDragLeave);
+    handlers.surface.removeEventListener('drop', handlers.onDrop);
+    svg.classList.remove('drop-target');
+    delete svg.__fileDrop;
 }

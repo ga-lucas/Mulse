@@ -9,6 +9,10 @@ public sealed record CreateFlowRequest : IFlowPipelineRequest
     [Required]
     public required string Id { get; init; }
 
+    public string? Name { get; init; }
+
+    public string? Category { get; init; }
+
     /// <summary>Whether the flow is enabled.</summary>
     public bool Enabled { get; init; } = true;
 

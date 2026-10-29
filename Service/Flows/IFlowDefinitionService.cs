@@ -12,5 +12,7 @@ public interface IFlowDefinitionService
 
     Task<PipelineDefinition> UpdateAsync(string flowId, PipelineDefinition pipeline, CancellationToken cancellationToken);
 
+    Task<PipelineDefinition> DuplicateAsync(string flowId, string newFlowId, CancellationToken cancellationToken);
+
     Task DeleteAsync(string flowId, CancellationToken cancellationToken);
 }

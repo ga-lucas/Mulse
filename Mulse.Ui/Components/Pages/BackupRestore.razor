@@ -1,0 +1,158 @@
+@page "/backup-restore"
+@inject IMulseApiClient ApiClient
+@inject IJSRuntime JS
+
+<PageTitle>Backup &amp; Restore | Mulse</PageTitle>
+
+<div class="page-shell">
+    <header class="page-hero">
+        <div>
+            <p class="eyebrow">Configuration</p>
+            <h1>Backup &amp; Restore</h1>
+            <p class="lede">Back up flows, categories, configuration values (including secrets), and package registrations.</p>
+        </div>
+    </header>
+    <StatusBanner Error="@_error" Success="@_status" />
+
+    <Panel Title="Encrypted backup" Description="Keep your password separately. A lost password cannot be recovered. Backups exclude package DLLs, discovery directories, pending retries, and execution checkpoints.">
+        <form @onsubmit="ExportAsync" @onsubmit:preventDefault>
+            <fieldset disabled="@_busy">
+                <label>Backup password (at least 12 characters)
+                    <input type="password" @bind="_exportPassword" minlength="12" required autocomplete="new-password" />
+                </label>
+                <label>Confirm backup password
+                    <input type="password" @bind="_confirmPassword" minlength="12" required autocomplete="new-password" />
+                </label>
+                <button class="run-button" type="submit">Download encrypted backup</button>
+            </fieldset>
+        </form>
+    </Panel>
+
+    <Panel Title="Restore workspace" Description="Select a .mulsebackup file (maximum 10 MB). Preview is read-only. Restored flows and package registrations start disabled for review.">
+        <fieldset disabled="@_busy">
+            <label>Backup file <InputFile OnChange="ReadFileAsync" accept=".mulsebackup" /></label>
+            <label>Backup password
+                <input type="password" @bind="_restorePassword" @bind:event="oninput" @bind:after="InvalidatePreview" autocomplete="off" />
+            </label>
+            <label>Restore mode
+                <select @bind="_mode" @bind:after="InvalidatePreview">
+                    <option value="merge">Merge (reject conflicting entries)</option>
+                    <option value="replace">Replace current workspace</option>
+                </select>
+            </label>
+            <button type="button" class="secondary-button" @onclick="PreviewAsync" disabled="@(string.IsNullOrEmpty(_content) || _restorePassword.Length < 12)">Preview restore</button>
+            @if (_preview is { } preview)
+            {
+                <section aria-label="Restore preview">
+                    <h3>Backup contents</h3>
+                    <p>@preview.FlowCount flow(s), @preview.PackageCount package registration(s), @preview.ConfigValueCount configuration value(s).</p>
+                    <ul>@foreach (var warning in preview.Warnings) { <li>@warning</li> }</ul>
+                    @if (preview.Conflicts.Count > 0)
+                    {
+                        <StatusBanner Error="Merge conflicts must be resolved before restoring. Nothing has changed." />
+                        <ul>@foreach (var conflict in preview.Conflicts) { <li>@conflict</li> }</ul>
+                    }
+                    else
+                    {
+                        <label>Type RESTORE WORKSPACE to confirm
+                            <input @bind="_restoreConfirmation" @bind:event="oninput" autocomplete="off" />
+                        </label>
+                        <button type="button" class="run-button" @onclick="RestoreAsync" disabled="@(_restoreConfirmation != "RESTORE WORKSPACE")">Restore workspace</button>
+                    }
+                </section>
+            }
+        </fieldset>
+    </Panel>
+
+    <Panel Title="Delete all flows" Description="Permanently remove every flow, pending retry, and orchestration checkpoint. Configuration values and package registrations are retained. Running executions are not cancelled and completed deliveries are not undone.">
+        <fieldset disabled="@_busy">
+            <p>Download a backup first if you may need these definitions again. This applies to every flow, not only filtered results.</p>
+            <label>Type DELETE ALL FLOWS to confirm
+                <input @bind="_deleteConfirmation" @bind:event="oninput" autocomplete="off" />
+            </label>
+            <button type="button" class="secondary-button danger-button" @onclick="DeleteAllAsync" disabled="@(_deleteConfirmation != "DELETE ALL FLOWS")">Delete all flows</button>
+        </fieldset>
+    </Panel>
+    @if (_busy) { <p role="status">Working...</p> }
+</div>
+
+@code {
+    private const long MaximumFileBytes = 10 * 1024 * 1024;
+    private bool _busy;
+    private string? _error;
+    private string? _status;
+    private string _exportPassword = string.Empty;
+    private string _confirmPassword = string.Empty;
+    private string _restorePassword = string.Empty;
+    private string _content = string.Empty;
+    private string _mode = "merge";
+    private string _restoreConfirmation = string.Empty;
+    private string _deleteConfirmation = string.Empty;
+    private WorkspaceRestorePreviewViewModel? _preview;
+
+    private void InvalidatePreview()
+    {
+        _preview = null;
+        _restoreConfirmation = string.Empty;
+    }
+
+    private async Task ReadFileAsync(InputFileChangeEventArgs args)
+    {
+        InvalidatePreview();
+        _content = string.Empty;
+        await PerformAsync(async () =>
+        {
+            await using var stream = args.File.OpenReadStream(MaximumFileBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            _content = Convert.ToBase64String(memory.ToArray());
+        });
+    }
+
+    private async Task ExportAsync()
+    {
+        await PerformAsync(async () =>
+        {
+            if (_exportPassword != _confirmPassword) throw new ArgumentException("Backup passwords do not match.");
+            var file = await ApiClient.BackupWorkspaceAsync(_exportPassword, CancellationToken.None);
+            await using var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/file-download.js");
+            await module.InvokeVoidAsync("downloadFile", file.FileName, file.ContentType, Convert.ToBase64String(file.Content));
+            _exportPassword = _confirmPassword = string.Empty;
+            _status = "Encrypted backup downloaded. Keep its password separately.";
+        });
+    }
+
+    private Task PreviewAsync() => PerformAsync(async () =>
+    {
+        InvalidatePreview();
+        _preview = await ApiClient.PreviewWorkspaceRestoreAsync(new(_content, _restorePassword, _mode), CancellationToken.None);
+    });
+
+    private Task RestoreAsync() => PerformAsync(async () =>
+    {
+        if (_preview is null || _preview.Conflicts.Count > 0 || _restoreConfirmation != "RESTORE WORKSPACE")
+            throw new InvalidOperationException("Preview the backup and confirm restoration first.");
+        await ApiClient.RestoreWorkspaceAsync(new(_content, _restorePassword, _mode, _restoreConfirmation), CancellationToken.None);
+        _restorePassword = _content = string.Empty;
+        InvalidatePreview();
+        _status = "Workspace restored. Flows and imported package registrations are disabled. Load trusted packages, then review and enable flows. Package synchronization may take a few seconds.";
+    });
+
+    private Task DeleteAllAsync() => PerformAsync(async () =>
+    {
+        var count = await ApiClient.DeleteAllFlowsAsync(_deleteConfirmation, CancellationToken.None);
+        _deleteConfirmation = string.Empty;
+        InvalidatePreview();
+        _status = $"Deleted {count} flow(s). Configuration values and package registrations were retained.";
+    });
+
+    private async Task PerformAsync(Func<Task> action)
+    {
+        if (_busy) return;
+        _busy = true;
+        _error = _status = null;
+        try { await action(); }
+        catch (Exception exception) { _error = $"Workspace operation failed: {exception.Message}"; }
+        finally { _busy = false; }
+    }
+}

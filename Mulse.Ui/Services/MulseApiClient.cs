@@ -81,6 +81,28 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<FlowViewModel>(response, cancellationToken, "updated flow response").ConfigureAwait(false);
     }
 
+    public async Task<FlowViewModel> DuplicateFlowAsync(string flowId, string newFlowId, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync($"/api/flows/{Uri.EscapeDataString(flowId)}/duplicate", new { Id = newFlowId }, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<FlowViewModel>(response, cancellationToken, "duplicated flow response").ConfigureAwait(false);
+    }
+
+    public async Task<FlowViewModel> SetFlowCategoryAsync(string flowId, string? category, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PatchAsJsonAsync($"/api/flows/{Uri.EscapeDataString(flowId)}/category", new { Category = category }, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<FlowViewModel>(response, cancellationToken, "updated flow response").ConfigureAwait(false);
+    }
+
+    public async Task DeleteFlowAsync(string flowId, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.DeleteAsync($"/api/flows/{Uri.EscapeDataString(flowId)}", cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>(cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException(problem?.Detail ?? problem?.Title ?? $"The API returned status code {(int)response.StatusCode}.");
+        }
+    }
+
     public Task<IReadOnlyList<ConfigValueViewModel>> GetConfigValuesAsync(CancellationToken cancellationToken)
         => GetListAsync<ConfigValueViewModel>("/api/config-values", cancellationToken);
 
@@ -108,6 +130,45 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         using var response = await httpClient.PostAsync($"/api/module-packages/{Uri.EscapeDataString(packageId)}/reload", content: null, cancellationToken).ConfigureAwait(false);
         return await ReadRequiredAsync<ModulePackageViewModel>(response, cancellationToken, "module package response").ConfigureAwait(false);
     }
+
+    public async Task<ModulePackageViewModel> SetModulePackageEnabledAsync(string packageId, bool enabled, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PatchAsJsonAsync($"/api/module-packages/{Uri.EscapeDataString(packageId)}/enabled", new { Enabled = enabled, Confirmation = enabled ? null : "UNLOAD PACKAGE" }, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<ModulePackageViewModel>(response, cancellationToken, "module package response").ConfigureAwait(false);
+    }
+
+    public async Task<ModulePackageViewModel> RegisterModulePackageAsync(string id, string assemblyPath, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/module-packages", new { Id = id, AssemblyPath = assemblyPath, Enabled = true }, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<ModulePackageViewModel>(response, cancellationToken, "module package response").ConfigureAwait(false);
+    }
+
+    public async Task<DownloadedFileViewModel> BackupWorkspaceAsync(string password, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/workspace/backup", new { Password = password }, cancellationToken).ConfigureAwait(false);
+        return await ReadDownloadedFileAsync(response, cancellationToken, "workspace backup").ConfigureAwait(false);
+    }
+
+    public async Task<WorkspaceRestorePreviewViewModel> PreviewWorkspaceRestoreAsync(RestoreWorkspaceRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/workspace/restore/preview", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<WorkspaceRestorePreviewViewModel>(response, cancellationToken, "restore preview").ConfigureAwait(false);
+    }
+
+    public async Task<WorkspaceRestorePreviewViewModel> RestoreWorkspaceAsync(RestoreWorkspaceRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/workspace/restore", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<WorkspaceRestorePreviewViewModel>(response, cancellationToken, "restore result").ConfigureAwait(false);
+    }
+
+    public async Task<int> DeleteAllFlowsAsync(string confirmation, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/workspace/flows/delete-all", new { Confirmation = confirmation }, cancellationToken).ConfigureAwait(false);
+        var result = await ReadRequiredAsync<DeletedFlowsResult>(response, cancellationToken, "deleted flow count").ConfigureAwait(false);
+        return result.DeletedCount;
+    }
+
+    private sealed record DeletedFlowsResult(int DeletedCount);
 
     private async Task<IReadOnlyList<TModel>> GetListAsync<TModel>(string url, CancellationToken cancellationToken)
     {

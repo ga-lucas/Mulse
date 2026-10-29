@@ -1,46 +1,145 @@
 ﻿@page "/"
 @inject IMulseApiClient ApiClient
 
-<PageTitle>Mulse UI</PageTitle>
+<PageTitle>Dashboard | Mulse</PageTitle>
 
 <div class="page-shell">
     <header class="page-hero">
         <div>
-            <p class="eyebrow">Separate UI project</p>
-            <h1>Mulse orchestration console</h1>
-            <p class="lede">This UI is hosted independently from the API and uses the service layer only as a control-plane orchestration endpoint.</p>
+            <p class="eyebrow">Workspace overview</p>
+            <h1>Dashboard</h1>
+            <p class="lede">Find and organize your integration flows, manage copies, and review configuration gaps. <a href="/modules">Manage runtime modules</a>.</p>
         </div>
+        <a class="run-button" href="/designer">+ Create flow</a>
     </header>
 
     <StatusBanner Error="@_errorMessage" Success="@_lastRunMessage" />
 
     @if (_isLoading)
     {
-        <p>Loading orchestration metadata...</p>
+        <p class="loading-state" role="status">Loading your workspace...</p>
     }
     else
     {
+        <dl class="overview-grid" aria-label="Workspace summary">
+            <div class="overview-stat"><dt>Configured flows</dt><dd>@_flows.Count</dd></div>
+            <div class="overview-stat"><dt>Enabled flows</dt><dd>@_flows.Count(flow => flow.Enabled)</dd></div>
+            <div class="overview-stat"><dt>Available modules</dt><dd>@_modules.Count</dd></div>
+            <div class="overview-stat"><dt>Unresolved usages</dt><dd>@_configUsages.Count(usage => !usage.IsResolved)</dd></div>
+        </dl>
+
         <section class="dashboard-grid">
-            <Panel Title="Configured flows" Description="Flows remain in the API service, while this UI drives orchestration separately.">
+            <Panel Title="Your flows" Description="Configure, enable, and run your integration pipelines.">
                 <HeaderActions>
+                    <a class="secondary-button" href="/backup-restore">Backup / restore / delete all</a>
                     <a class="run-button" href="/designer">New flow</a>
                 </HeaderActions>
                 <ChildContent>
+                <div class="flow-filters">
+                    <label>Search flows
+                        <input type="search" @bind="_search" @bind:event="oninput" @bind:after="ResetPage" placeholder="Flow name, ID, category, module, or source" />
+                    </label>
+                    <label>Category
+                        <select @bind="_categoryFilter" @bind:after="ResetPage">
+                            <option value="">All categories</option>
+                            <option value="none">Uncategorized</option>
+                            @foreach (var category in Categories)
+                            {
+                                <option value="@($"category:{category}")">@category</option>
+                            }
+                        </select>
+                    </label>
+                    <label>Status
+                        <select @bind="_statusFilter" @bind:after="ResetPage">
+                            <option value="">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option>
+                        </select>
+                    </label>
+                    <label>Trigger
+                        <select @bind="_triggerFilter" @bind:after="ResetPage">
+                            <option value="">All triggers</option>
+                            @foreach (var trigger in _flows.Select(flow => flow.TriggerMode).Distinct().Order())
+                            {
+                                <option value="@trigger">@trigger</option>
+                            }
+                        </select>
+                    </label>
+                    <label>Module
+                        <select @bind="_moduleFilter" @bind:after="ResetPage">
+                            <option value="">All modules</option>
+                            @foreach (var module in _flows.SelectMany(FlowListFilter.Modules).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
+                            {
+                                <option value="@module">@module</option>
+                            }
+                        </select>
+                    </label>
+                    <label>Sort by flow ID
+                        <select @bind="_descending" @bind:after="ResetPage"><option value="false">A to Z</option><option value="true">Z to A</option></select>
+                    </label>
+                    <label class="checkbox-label"><input type="checkbox" @bind="_unresolvedOnly" @bind:after="ResetPage" /> Unresolved configuration only</label>
+                    <button class="secondary-button" @onclick="ClearFilters">Clear filters</button>
+                </div>
+                <p role="status">@FilteredFlows.Count of @_flows.Count flow(s) match</p>
+
+                @if (_managedFlow is { } managed)
+                {
+                    <section class="flow-action-editor" @ref="_actionEditor" tabindex="-1" aria-labelledby="flow-action-title">
+                        <h3 id="flow-action-title">@ActionTitle: @managed.Id</h3>
+                        <form @onsubmit="SaveActionAsync" @onsubmit:preventDefault>
+                            @if (_flowAction == "duplicate")
+                            {
+                                <label>New flow ID <input @bind="_newFlowId" required /></label>
+                                <p>The copy starts disabled. Settings, category, and configuration references are copied; run history and pending retries are not.</p>
+                            }
+                            else if (_flowAction == "category")
+                            {
+                                <label>Category <input @bind="_newCategory" list="flow-categories" placeholder="Enter a category, or leave empty to clear" /></label>
+                                <datalist id="flow-categories">
+                                    @foreach (var category in Categories)
+                                    {
+                                        <option value="@category"></option>
+                                    }
+                                </datalist>
+                            }
+                            else
+                            {
+                                <p>Delete this flow permanently? Its saved definition, pending retries, and orchestration checkpoints will be removed. This does not undo deliveries or cancel a run already in progress.</p>
+                            }
+                            <div class="flow-card-actions">
+                                <button type="submit" class="@(_flowAction == "delete" ? "secondary-button danger-button" : "run-button")" disabled="@IsBusy">@(_isManagingFlow ? "Saving..." : ActionTitle)</button>
+                                <button type="button" class="secondary-button" @onclick="CancelAction" disabled="@IsBusy">Cancel</button>
+                            </div>
+                        </form>
+                    </section>
+                }
 
                 @if (_flows.Count == 0)
                 {
-                    <p>No flows are configured.</p>
+                    <div class="empty-state">
+                        <h3>Your first integration starts here</h3>
+                        <p>Create a flow from scratch, import sample data, or bring in a BizTalk solution.</p>
+                        <a class="secondary-button" href="/designer">Open flow designer</a>
+                    </div>
+                }
+                else if (FilteredFlows.Count == 0)
+                {
+                    <div class="empty-state"><h3>No matching flows</h3><p>Change your search or filters to find more flows.</p></div>
                 }
                 else
                 {
                     <div class="flow-list">
-                        @foreach (var flow in _flows)
+                        @foreach (var flow in VisibleFlows)
                         {
-                            <section class="flow-card">
+                            <section class="flow-card" @key="flow.Id">
                                 <div class="flow-card-header">
                                     <div>
-                                        <h3>@flow.Id</h3>
-                                        <p><strong>Sources:</strong> @flow.Parses.Count parse node(s) fed by @flow.Fetches.Count fetch node(s)</p>
+                                        <div class="flow-title">
+                                            <h3>@flow.DisplayName</h3>
+                                            <span class="status-pill @(flow.Enabled ? "enabled" : null)">@(flow.Enabled ? "Enabled" : "Disabled")</span>
+                                            <span class="status-pill">@(flow.Category ?? "Uncategorized")</span>
+                                        </div>
+                                        <p><strong>Flow ID:</strong> @flow.Id</p>
+                                        <details>
+                                        <summary>@flow.Parses.Count parse node(s) fed by @flow.Fetches.Count fetch node(s)</summary>
                                         <ul class="source-list">
                                             @foreach (var parse in flow.Parses)
                                             {
@@ -62,17 +161,30 @@
                                                 </li>
                                             }
                                         </ul>
+                                        </details>
                                     </div>
                                     <div class="flow-card-actions">
-                                        <a class="secondary-button" href="/designer/@flow.Id">Configure</a>
-                                        <button class="secondary-button" @onclick="() => ToggleFlowEnabledAsync(flow)" disabled="@(_isTogglingFlowEnabled || (!flow.Enabled && HasUnresolvedConfig(flow.Id)))" title="@((!flow.Enabled && HasUnresolvedConfig(flow.Id)) ? "Resolve config/secret references before enabling this flow" : null)">
+                                        <a class="secondary-button" href="@($"/designer/{Uri.EscapeDataString(flow.Id)}")">Configure</a>
+                                        <button class="secondary-button" @onclick='() => BeginAction(flow, "category")' disabled="@IsBusy">Categorize</button>
+                                        <button class="secondary-button" @onclick='() => BeginAction(flow, "duplicate")' disabled="@IsBusy">Duplicate</button>
+                                        <button class="secondary-button danger-button" @onclick='() => BeginAction(flow, "delete")' disabled="@IsBusy">Delete</button>
+                                        <button class="secondary-button" @onclick="() => ToggleFlowEnabledAsync(flow)" disabled="@(IsBusy || (!flow.Enabled && (HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 })))" title="@((!flow.Enabled && (HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 })) ? "Resolve missing modules and config/secret references before enabling this flow" : null)">
                                             @(flow.Enabled ? "Disable" : "Enable")
                                         </button>
-                                        <button class="run-button" @onclick="() => RunFlowAsync(flow.Id)" disabled="@(_isRunningFlow || HasUnresolvedConfig(flow.Id))" title="@(HasUnresolvedConfig(flow.Id) ? "Resolve config/secret references before running this flow" : null)">
+                                        <button class="run-button" @onclick="() => RunFlowAsync(flow.Id)" disabled="@(IsBusy || HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 })" title="@((HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 }) ? "Resolve missing modules and config/secret references before running this flow" : null)">
                                             Run flow
                                         </button>
                                     </div>
                                 </div>
+                                @if (flow.MissingModules is { Count: > 0 } missingModules)
+                                {
+                                    <StatusBanner Compact="true">
+                                        <ErrorContent>
+                                            Unknown or unloaded modules: @string.Join(", ", missingModules).
+                                            <a href="/module-packages">Load the required packages</a> or correct module references before enabling or running this flow.
+                                        </ErrorContent>
+                                    </StatusBanner>
+                                }
                                 @{ var unresolvedCount = CountUnresolvedConfig(flow.Id); }
                                 @if (unresolvedCount > 0)
                                 {
@@ -106,82 +218,15 @@
                             </section>
                         }
                     </div>
+                    <nav class="flow-pagination" aria-label="Flow list pages">
+                        <button class="secondary-button" @onclick="PreviousPage" disabled="@(CurrentPage == 1)">Previous</button>
+                        <span>Page @CurrentPage of @PageCount</span>
+                        <button class="secondary-button" @onclick="NextPage" disabled="@(CurrentPage == PageCount)">Next</button>
+                    </nav>
                 }
                 </ChildContent>
             </Panel>
 
-            <Panel Title="Runtime module packages" Description="Packages are hot-discovered or managed at runtime and can be reloaded without restarting the API.">
-                @if (_packages.Count == 0)
-                {
-                    <p>No module packages are loaded.</p>
-                }
-                else
-                {
-                    <div class="flow-list">
-                        @foreach (var package in _packages)
-                        {
-                            <section class="flow-card">
-                                <div class="flow-card-header">
-                                    <div>
-                                        <h3>@package.Id</h3>
-                                        <p><strong>Package type:</strong> @package.SourceKind</p>
-                                    </div>
-                                    <button class="run-button" @onclick="() => ReloadPackageAsync(package.Id)" disabled="@(_isReloadingPackage || package.SourceKind == "BuiltIn")">
-                                        Reload package
-                                    </button>
-                                </div>
-                                <dl class="flow-metadata">
-                                    <div>
-                                        <dt>Loaded</dt>
-                                        <dd>@(package.IsLoaded ? "Yes" : "No")</dd>
-                                    </div>
-                                    <div>
-                                        <dt>Modules</dt>
-                                        <dd>@package.ModuleCount</dd>
-                                    </div>
-                                    <div>
-                                        <dt>Last loaded</dt>
-                                        <dd>@(package.LastLoadedAt == DateTimeOffset.MinValue ? "n/a" : package.LastLoadedAt.ToLocalTime().ToString("g"))</dd>
-                                    </div>
-                                </dl>
-                                <p><strong>Assembly:</strong> @package.AssemblyPath</p>
-                            </section>
-                        }
-                    </div>
-                }
-            </Panel>
-
-            <Panel Title="Available modules" Description="All data ingress, orchestration augmentation, and output delivery stay in the module layer.">
-                @if (_modules.Count == 0)
-                {
-                    <p>No modules are registered.</p>
-                }
-                else
-                {
-                    <table class="module-table">
-                        <thead>
-                            <tr>
-                                <th>Id</th>
-                                <th>Kind</th>
-                                <th>Name</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var module in _modules)
-                            {
-                                <tr>
-                                    <td>@module.Id</td>
-                                    <td>@module.Kind</td>
-                                    <td>
-                                        <strong>@module.DisplayName</strong>
-                                        <div class="module-description">@module.Description</div>
-                                    </td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                }
-            </Panel>
         </section>
     }
 </div>
@@ -189,12 +234,11 @@
 @code {
     private IReadOnlyList<FlowViewModel> _flows = [];
     private IReadOnlyList<ModuleViewModel> _modules = [];
-    private IReadOnlyList<ModulePackageViewModel> _packages = [];
     private IReadOnlyList<ConfigReferenceUsageViewModel> _configUsages = [];
     private bool _isLoading = true;
     private bool _isRunningFlow;
     private bool _isTogglingFlowEnabled;
-    private bool _isReloadingPackage;
+    private bool _isManagingFlow;
     private string? _errorMessage;
     private string? _lastRunMessage;
 
@@ -206,13 +250,11 @@
     private async Task LoadAsync()
     {
         _isLoading = true;
-        _errorMessage = null;
 
         try
         {
             _flows = await ApiClient.GetFlowsAsync(CancellationToken.None);
             _modules = await ApiClient.GetModulesAsync(CancellationToken.None);
-            _packages = await ApiClient.GetModulePackagesAsync(CancellationToken.None);
             _configUsages = await ApiClient.GetConfigValueUsagesAsync(CancellationToken.None);
         }
         catch (Exception exception)
@@ -269,28 +311,6 @@
         finally
         {
             _isTogglingFlowEnabled = false;
-            await LoadAsync();
-        }
-    }
-
-    private async Task ReloadPackageAsync(string packageId)
-    {
-        _isReloadingPackage = true;
-        _errorMessage = null;
-        _lastRunMessage = null;
-
-        try
-        {
-            var package = await ApiClient.ReloadModulePackageAsync(packageId, CancellationToken.None);
-            _lastRunMessage = $"Reloaded package {package.Id}.";
-        }
-        catch (Exception exception)
-        {
-            _errorMessage = $"Unable to reload package '{packageId}': {exception.Message}";
-        }
-        finally
-        {
-            _isReloadingPackage = false;
             await LoadAsync();
         }
     }

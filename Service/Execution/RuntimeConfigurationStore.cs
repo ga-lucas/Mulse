@@ -37,6 +37,69 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         return Clone(_state);
     }
 
+    public async Task<RuntimeMulseState> RestoreWorkspaceAsync(RuntimeMulseState restored, bool replace, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = Clone(_state);
+            if (replace)
+            {
+                updated.Pipelines.Clear();
+                updated.ManagedPackages.Clear();
+                updated.ConfigValues.Clear();
+                updated.OrchestrationCheckpoints.Clear();
+                updated.PendingRetries.Clear();
+            }
+            else if (restored.Pipelines.Any(flow => updated.Pipelines.Any(existing => string.Equals(existing.Id, flow.Id, StringComparison.OrdinalIgnoreCase)))
+                || restored.ManagedPackages.Any(package => updated.ManagedPackages.Any(existing => string.Equals(existing.Id, package.Id, StringComparison.OrdinalIgnoreCase)))
+                || restored.ConfigValues.Keys.Any(updated.ConfigValues.ContainsKey))
+            {
+                throw new InvalidOperationException("Merge conflicts with existing flow IDs, package IDs, or configuration keys. Nothing was restored.");
+            }
+            updated.Pipelines.AddRange(Clone(restored.Pipelines));
+            updated.ManagedPackages.AddRange(Clone(restored.ManagedPackages));
+            foreach (var pair in restored.ConfigValues) updated.ConfigValues.Add(pair.Key, pair.Value);
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
+            return Clone(_state);
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task<int> DeleteAllFlowsAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = Clone(_state);
+            var count = updated.Pipelines.Count;
+            updated.Pipelines.Clear();
+            updated.OrchestrationCheckpoints.Clear();
+            updated.PendingRetries.Clear();
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
+            return count;
+        }
+        finally { _gate.Release(); }
+    }
+
+    private async Task CommitWorkspaceAsync(RuntimeMulseState updated, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
+        var temporaryPath = _statePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            var bytes = _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(updated, SerializerOptions));
+            await File.WriteAllBytesAsync(temporaryPath, bytes, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Replace(temporaryPath, _statePath, destinationBackupFileName: null);
+            _state = updated;
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
     public async Task<RuntimeMulseState> UpsertFlowAsync(PipelineDefinition pipeline, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -106,8 +169,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
                 .OrderBy(static candidate => candidate.Id, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally
@@ -123,8 +185,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         {
             var updated = Clone(_state);
             updated.ManagedPackages.RemoveAll(candidate => string.Equals(candidate.Id, packageId, StringComparison.OrdinalIgnoreCase));
-            _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally

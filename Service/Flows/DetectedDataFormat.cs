@@ -5,5 +5,6 @@ public enum DetectedDataFormat
     Json,
     Xml,
     Csv,
-    Text
+    Text,
+    Excel
 }

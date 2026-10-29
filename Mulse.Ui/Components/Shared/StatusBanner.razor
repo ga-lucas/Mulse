@@ -1,6 +1,6 @@
 @if (!string.IsNullOrWhiteSpace(Error) || ErrorContent is not null)
 {
-    <div class="status-banner error@(Compact ? " compact" : string.Empty)">
+    <div class="status-banner error@(Compact ? " compact" : string.Empty)" role="alert">
         @if (ErrorContent is not null)
         {
             @ErrorContent
@@ -14,7 +14,7 @@
 
 @if (!string.IsNullOrWhiteSpace(Success))
 {
-    <div class="status-banner success@(Compact ? " compact" : string.Empty)">@Success</div>
+    <div class="status-banner success@(Compact ? " compact" : string.Empty)" role="status">@Success</div>
 }
 
 @code {

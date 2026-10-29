@@ -3,16 +3,19 @@
  * canvas. Body content styling is left to callers (they reuse shared.css classes internally). */
 
 .floating-panel {
+    --panel-top: clamp(1rem, var(--panel-y), max(1rem, calc(100% - 5rem)));
     position: absolute;
+    left: clamp(1rem, var(--panel-x), max(1rem, calc(100% - var(--panel-width, 360px) - 1rem)));
+    top: var(--panel-top);
     z-index: 20;
     display: flex;
     flex-direction: column;
-    max-height: calc(100vh - 5.5rem);
+    max-width: calc(100% - 2rem);
+    max-height: calc(100% - var(--panel-top) - 1rem);
     border: 1px solid var(--border-subtle);
-    border-radius: 0.85rem;
+    border-radius: var(--radius-md);
     background: var(--surface-panel);
-    backdrop-filter: blur(14px);
-    box-shadow: 0 12px 32px rgba(2, 6, 23, 0.45);
+    box-shadow: var(--shadow-floating);
     overflow: hidden;
 }
 
@@ -24,8 +27,8 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.55rem 0.6rem 0.55rem 0.85rem;
-    background: rgba(15, 23, 42, 0.9);
+    padding: 0.65rem 0.7rem 0.65rem 1rem;
+    background: var(--surface-card);
     border-bottom: 1px solid var(--border-faint);
     cursor: grab;
     user-select: none;
@@ -59,12 +62,12 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.6rem;
-    height: 1.6rem;
+    width: 2rem;
+    height: 2rem;
     padding: 0;
     border: 1px solid var(--border-subtle);
-    border-radius: 0.5rem;
-    background: rgba(30, 41, 59, 0.7);
+    border-radius: var(--radius-sm);
+    background: var(--surface-panel);
     color: var(--text-secondary);
     font-size: 0.8rem;
     line-height: 1;
@@ -77,6 +80,24 @@
 }
 
 .floating-panel-body {
-    padding: 0.9rem 1rem 1.1rem;
-    overflow-y: auto;
+    padding: 1rem;
+    overflow: auto;
+    min-height: 0;
+}
+
+@media (max-width: 1100px) {
+    .floating-panel {
+        position: relative;
+        left: auto !important;
+        top: auto !important;
+        width: 100% !important;
+        max-width: 100%;
+        max-height: 34rem;
+        flex: 0 0 auto;
+        order: 1;
+        box-shadow: var(--shadow-panel);
+    }
+
+    .floating-panel.toolbox-panel { order: -1; }
+    .floating-panel-header { cursor: default; touch-action: auto; }
 }

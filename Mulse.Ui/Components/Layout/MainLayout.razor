@@ -1,14 +1,42 @@
 ﻿@inherits LayoutComponentBase
+@inject IJSRuntime JS
 
 <div class="layout-shell">
-    <header class="top-bar">
-        <nav class="top-nav">
-            <a href="/">Dashboard</a>
-            <a href="/designer">Flow designer</a>
-            <a href="/config-values">Configuration</a>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="sidebar">
+        <a class="brand" href="/" aria-label="Mulse home">
+            <span class="brand-mark" aria-hidden="true">M</span>
+            <span>Mulse<small>Integration workspace</small></span>
+        </a>
+        <p class="nav-label" id="workspace-nav-label">Workspace</p>
+        <nav class="workspace-nav" aria-labelledby="workspace-nav-label">
+            <NavLink href="/" Match="NavLinkMatch.All"><span class="nav-icon" aria-hidden="true">&#9638;</span>Dashboard</NavLink>
         </nav>
+        <p class="nav-label" id="configuration-nav-label">Configuration</p>
+        <nav class="workspace-nav" aria-labelledby="configuration-nav-label">
+            <NavLink href="/config-values"><span class="nav-icon" aria-hidden="true">&#9881;</span>Config values</NavLink>
+            <NavLink href="/modules"><span class="nav-icon" aria-hidden="true">&#9639;</span>Modules</NavLink>
+            <NavLink href="/module-packages"><span class="nav-icon" aria-hidden="true">&#9638;</span>Module Packages</NavLink>
+            <NavLink href="/backup-restore"><span class="nav-icon" aria-hidden="true">&#8645;</span>Backup &amp; Restore</NavLink>
+        </nav>
+        <div class="sidebar-footer">
+            <button type="button" class="secondary-button theme-toggle" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">
+                <span aria-hidden="true">&#9680;</span> Dark mode
+            </button>
+            <span class="workspace-caption">Mulse orchestration console</span>
+        </div>
     </header>
-    <main>
+    <main id="main-content" tabindex="-1">
         @Body
     </main>
 </div>
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync("mulseTheme.refresh");
+        }
+    }
+}

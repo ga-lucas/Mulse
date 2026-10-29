@@ -1,0 +1,121 @@
+@page "/modules"
+@inject IMulseApiClient ApiClient
+
+<PageTitle>Modules | Mulse</PageTitle>
+
+<div class="page-shell">
+    <header class="page-hero">
+        <div>
+            <p class="eyebrow">Configuration</p>
+            <h1>Modules</h1>
+            <p class="lede">Explore available runtime modules. <a href="/module-packages">Manage module packages</a>.</p>
+        </div>
+    </header>
+
+    <StatusBanner Error="@_errorMessage" />
+
+    @if (_isLoading)
+    {
+        <p class="loading-state" role="status">Loading modules...</p>
+    }
+    else
+    {
+        <Panel Title="Available modules" Description="Search modules by ID, name, description, or source package and filter by kind or package. Only loaded modules are available.">
+            <div class="settings-grid">
+                <label>Search modules
+                    <input type="search" @bind="_search" @bind:event="oninput" placeholder="ID, name, description, or package" />
+                </label>
+                <label>Module kind
+                    <select @bind="_kind">
+                        <option value="">All kinds</option>
+                        @foreach (var kind in _modules.Select(module => module.Kind).Distinct().Order())
+                        {
+                            <option value="@kind">@kind</option>
+                        }
+                    </select>
+                </label>
+                <label>Source package
+                    <select @bind="Package">
+                        <option value="">All packages</option>
+                        @foreach (var packageId in _modules.Select(module => module.PackageId).Where(id => id.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
+                        {
+                            <option value="@packageId">@packageId</option>
+                        }
+                    </select>
+                </label>
+            </div>
+            <p role="status">@VisibleModules.Count of @_modules.Count module(s)</p>
+            @if (VisibleModules.Count == 0)
+            {
+                <p class="empty-state">No modules match these filters.</p>
+            }
+            else
+            {
+                <table class="module-table">
+                    <thead><tr><th>Id</th><th>Kind</th><th>Name</th><th>Source package</th></tr></thead>
+                    <tbody>
+                        @foreach (var module in VisibleModules)
+                        {
+                            <tr @key="module.Id">
+                                <td>@module.Id</td>
+                                <td>@module.Kind</td>
+                                <td><strong>@module.DisplayName</strong><div class="module-description">@module.Description</div></td>
+                                <td>
+                                    @if (string.IsNullOrEmpty(module.PackageId))
+                                    {
+                                        <span>Package information unavailable</span>
+                                    }
+                                    else
+                                    {
+                                        <a href="@($"/module-packages#package-{Uri.EscapeDataString(module.PackageId)}")">@module.PackageId</a>
+                                        <div class="module-description">@module.PackageSourceKind</div>
+                                        <details><summary>Assembly path</summary><code>@module.AssemblyPath</code></details>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </Panel>
+
+    }
+</div>
+
+@code {
+    private IReadOnlyList<ModuleViewModel> _modules = [];
+    private bool _isLoading = true;
+    private string _search = string.Empty;
+    private string _kind = string.Empty;
+    private string? _errorMessage;
+
+    [SupplyParameterFromQuery]
+    public string? Package { get; set; }
+
+    private IReadOnlyList<ModuleViewModel> VisibleModules => _modules
+        .Where(module => (_kind.Length == 0 || module.Kind == _kind)
+            && (string.IsNullOrEmpty(Package) || string.Equals(module.PackageId, Package, StringComparison.OrdinalIgnoreCase))
+            && new[] { module.Id, module.DisplayName, module.Description ?? "", module.PackageId, module.PackageSourceKind, module.AssemblyPath }
+                .Any(value => value.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)))
+        .OrderBy(module => module.Id, StringComparer.OrdinalIgnoreCase).ToArray();
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            _modules = await ApiClient.GetModulesAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to load modules: {exception.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+}

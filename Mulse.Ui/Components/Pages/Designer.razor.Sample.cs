@@ -3,7 +3,7 @@ using Mulse.Ui.Models;
 
 namespace Mulse.Ui.Components.Pages;
 
-// "Seed from sample data" side panel: upload a sample payload, analyze it, and populate the canvas.
+// Sample files help infer a source lane's data shape; they are never the runtime source.
 public partial class Designer
 {
     private void ToggleSamplePanel()
@@ -15,24 +15,116 @@ public partial class Designer
         }
     }
 
+    private string? _sampleBinary;
+
+    private static async Task<FlowDesignAnalysisRequestViewModel> ReadSampleFileAsync(IBrowserFile file)
+    {
+        var excel = Path.GetExtension(file.Name).ToLowerInvariant() is ".xls" or ".xlsx";
+        await using var stream = file.OpenReadStream(maxAllowedSize: excel ? 10 * 1024 * 1024 : 1_000_000);
+        if (excel)
+        {
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            return new(file.Name, file.ContentType, string.Empty, Convert.ToBase64String(buffer.ToArray()));
+        }
+        using var reader = new StreamReader(stream, new System.Text.UTF8Encoding(false, true), detectEncodingFromByteOrderMarks: true);
+        return new(file.Name, file.ContentType, await reader.ReadToEndAsync());
+    }
+
     private async Task HandleFileSelectedAsync(InputFileChangeEventArgs args)
     {
-        _errorMessage = null;
-        _statusMessage = null;
-
-        var file = args.File;
-        if (file is null)
+        _errorMessage = _statusMessage = null;
+        _analysis = null;
+        try
         {
-            return;
+            var request = await ReadSampleFileAsync(args.File);
+            _fileName = request.FileName;
+            _contentType = request.ContentType;
+            _sampleText = request.TextContent;
+            _sampleBinary = request.BinaryContent;
+            await AnalyzeSampleAsync();
         }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to read sample file: {exception.Message}";
+        }
+    }
 
-        _fileName = file.Name;
-        _contentType = file.ContentType;
+    private async Task HandleCanvasFilesAsync(InputFileChangeEventArgs args)
+    {
+        if (_isAnalyzingSample) return;
+        _isAnalyzingSample = true;
+        _errorMessage = _statusMessage = null;
+        try
+        {
+            var analyses = new List<FlowDesignAnalysisViewModel>();
+            foreach (var file in args.GetMultipleFiles(10))
+            {
+                var request = await ReadSampleFileAsync(file);
+                analyses.Add(await ApiClient.AnalyzeFlowDesignAsync(request, CancellationToken.None));
+            }
+            foreach (var analysis in analyses) AddFileSource(analysis);
+            _statusMessage = $"Added {analyses.Count} sample-shaped source lane(s) without replacing existing nodes. Samples were analyzed only, not saved on the server. Choose each lane's real fetch module, review parser settings and delivery routes before saving. "
+                + (analyses.Any(analysis => analysis.DetectedFormat == "Excel")
+                    ? "For Excel, choose sheetName or 1-based sheetNumber and review firstRowIsHeader. Load Mulse.Excel if unavailable. " : string.Empty)
+                + "Existing routes may receive the new source's data; review their source selection.";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to create draft from files: {exception.Message}";
+        }
+        finally { _isAnalyzingSample = false; }
+    }
 
-        await using var stream = file.OpenReadStream(maxAllowedSize: 1_000_000);
-        using var reader = new StreamReader(stream);
-        _sampleText = await reader.ReadToEndAsync();
-        await AnalyzeSampleAsync();
+    [Microsoft.JSInterop.JSInvokable]
+    public Task OnFileDropError(string message)
+    {
+        _errorMessage = message;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void AddFileSource(FlowDesignAnalysisViewModel analysis)
+    {
+        var empty = _nodes.Count == 0;
+        var y = empty ? CanvasPadding : _nodes.Max(node => node.Y) + RowSpacing;
+        var parseId = analysis.DetectedFormat == "Excel" ? "excel-parse"
+            : analysis.ParseModules.FirstOrDefault(module => module.SupportedFormats.Contains(analysis.DetectedFormat, StringComparer.OrdinalIgnoreCase)
+                && module.Capabilities.Contains("Parsing", StringComparer.OrdinalIgnoreCase))?.Id ?? string.Empty;
+        var (fetch, parse) = CreateSourcePair(NextParseId(), string.Empty, null, parseId, null);
+        fetch.Name = "Choose the real data source";
+        ApplyModuleDefaults(parse, FindCatalogModule(parseId));
+        if (analysis.DetectedFormat == "Excel")
+        {
+            parse.Settings["sheetNumber"] = "1";
+            parse.Settings["firstRowIsHeader"] = "true";
+        }
+        if (FindCatalogModule(parseId) is null)
+            _errorMessage = analysis.DetectedFormat == "Excel"
+                ? "The Excel source needs excel-parse. Load Mulse.Excel in Module Packages in another tab, then choose Refresh modules here before saving."
+                : $"No loaded parser supports {analysis.DetectedFormat}. Select or load a compatible parser before saving.";
+        fetch.X = CanvasPadding;
+        fetch.Y = y;
+        parse.X = CanvasPadding + ColumnSpacing;
+        parse.Y = y;
+        if (Routes.Count == 0)
+        {
+            SeedRoute("json-render", "logging-deliver", 0);
+            var route = Routes.Single();
+            route.Render!.X = CanvasPadding + 2 * ColumnSpacing;
+            route.Render.Y = y;
+            route.Delivers[0].X = CanvasPadding + 3 * ColumnSpacing;
+            route.Delivers[0].Y = y;
+        }
+        if (empty && !IsExistingFlow)
+        {
+            _flowId = CreateDefaultFlowId(analysis.DetectedFormat);
+            _enabled = false;
+            _triggerMode = "OnDemand";
+        }
+        _seedSource = SeedSource.Sample;
+        _selectedNodeId = fetch.Id;
+        if (empty) FitView();
     }
 
     private async Task AnalyzeSampleAsync()
@@ -44,7 +136,7 @@ public partial class Designer
         try
         {
             _analysis = await ApiClient.AnalyzeFlowDesignAsync(
-                new FlowDesignAnalysisRequestViewModel(_fileName, _contentType, _sampleText),
+                new FlowDesignAnalysisRequestViewModel(_fileName, _contentType, _sampleText, string.IsNullOrWhiteSpace(_sampleText) ? _sampleBinary : null),
                 CancellationToken.None);
             _statusMessage = $"Analyzed {_analysis.Fields.Count} field(s) from {_analysis.DetectedFormat} sample data.";
         }
@@ -65,58 +157,10 @@ public partial class Designer
             return;
         }
 
-        _nodes.Clear();
-        _joinEditors.Clear();
-        _mappingRows.Clear();
-        _bizTalkRequirements = [];
-        _bizTalkWarnings = [];
-        _selectedNodeId = null;
-
-        var fetchModuleId = ChooseModule(_analysis.FetchModules, requiredProtocol: "Sftp");
-        var parseModuleId = ChooseModule(_analysis.ParseModules, requiredCapability: "Parsing", requiredFormat: _analysis.DetectedFormat);
-        var (fetch, parse) = CreateSourcePair("primary", fetchModuleId ?? string.Empty, null, parseModuleId ?? string.Empty, null);
-        ApplyModuleDefaults(fetch, FindCatalogModule(fetchModuleId));
-        ApplyModuleDefaults(parse, FindCatalogModule(parseModuleId));
-
-        var mappingAugment = _analysis.OrchestrationAugmentModules
-            .FirstOrDefault(static module => string.Equals(module.Id, JoinModuleId, StringComparison.OrdinalIgnoreCase))?.Id;
-        if (mappingAugment is not null)
-        {
-            var joinNode = CreateNode(NodeStage.Augment, mappingAugment);
-            ApplyModuleDefaults(joinNode, FindCatalogModule(mappingAugment));
-            joinNode.Settings[LeftSourceKey] = parse.GraphId;
-        }
-
-        var jsonRender = ChooseModule(_analysis.RenderModules, requiredCapability: "Serialization", requiredFormat: "Json");
-        var httpDeliver = ChooseModule(_analysis.DeliverModules, requiredCapability: "Delivery", requiredProtocol: "Http");
-        SeedRoute(jsonRender, httpDeliver, 0);
-
-        var xmlRender = ChooseModule(_analysis.RenderModules, jsonRender, requiredCapability: "Serialization", requiredFormat: "Xml");
-        var fileDeliver = ChooseModule(_analysis.DeliverModules, httpDeliver, requiredCapability: "Delivery", requiredProtocol: "FileSystem");
-        SeedRoute(xmlRender, fileDeliver, 1);
-
-        foreach (var field in _analysis.Fields)
-        {
-            _mappingRows.Add(new FieldMappingRow
-            {
-                SourceKind = "Left",
-                SourcePath = field.SourcePath,
-                TargetField = field.SuggestedTargetField,
-                Condition = "Always",
-                LiteralValue = string.Empty
-            });
-        }
-
-        if (!IsExistingFlow)
-        {
-            _flowId = CreateDefaultFlowId(_fileName, _analysis.DetectedFormat);
-            _triggerMode = "Interval";
-        }
-
-        _seedSource = SeedSource.Sample;
+        var analysis = _analysis;
+        AddFileSource(analysis);
         _showSamplePanel = false;
-        AutoLayout();
-        _statusMessage = $"Populated the canvas with {_nodes.Count} node(s) from the analyzed {_analysis.DetectedFormat} sample.";
+        _statusMessage = $"Added a {analysis.DetectedFormat} sample-shaped source lane. Configure its real data source before saving; the sample itself was not added to the flow.";
     }
 
     private void SeedRoute(string? renderModuleId, string? deliverModuleId, int order)
@@ -136,6 +180,7 @@ public partial class Designer
     private void ClearSample()
     {
         _sampleText = string.Empty;
+        _sampleBinary = null;
         _fileName = null;
         _contentType = null;
         _analysis = null;

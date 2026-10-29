@@ -17,4 +17,10 @@ public sealed record FlowViewModel(
     IReadOnlyList<FlowParseNodeViewModel> Parses,
     IReadOnlyList<FlowStepViewModel> Augments,
     IReadOnlyList<DeliveryRouteViewModel> Deliveries,
-    RetryPolicyViewModel? Retry = null);
+    RetryPolicyViewModel? Retry = null,
+    string? Category = null,
+    IReadOnlyList<string>? MissingModules = null,
+    string? Name = null)
+{
+    public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Id : Name;
+}

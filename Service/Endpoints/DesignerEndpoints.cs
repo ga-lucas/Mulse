@@ -15,7 +15,7 @@ public static class DesignerEndpoints
             })
             .WithName("AnalyzeFlowDesignSample")
             .WithSummary("Analyze uploaded or pasted sample data")
-            .WithDescription("Detects a sample payload format, suggests compatible fetch, parse, augment, render, and deliver modules, and proposes field mappings for downstream routes.")
+            .WithDescription("Detects text payload formats and proposes module/field mappings. XLS/XLSX samples use binaryContent (base64, up to 10 MiB) with empty textContent; workbook inference checks container structure without executing plugin code or extracting cells.")
             .WithTags("Designer")
             .Produces<FlowDesignResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)

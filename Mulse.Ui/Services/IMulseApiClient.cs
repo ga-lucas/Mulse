@@ -32,6 +32,12 @@ public interface IMulseApiClient
 
     Task<FlowViewModel> SetFlowEnabledAsync(string flowId, bool enabled, CancellationToken cancellationToken);
 
+    Task<FlowViewModel> DuplicateFlowAsync(string flowId, string newFlowId, CancellationToken cancellationToken);
+
+    Task<FlowViewModel> SetFlowCategoryAsync(string flowId, string? category, CancellationToken cancellationToken);
+
+    Task DeleteFlowAsync(string flowId, CancellationToken cancellationToken);
+
     Task<IReadOnlyList<ConfigValueViewModel>> GetConfigValuesAsync(CancellationToken cancellationToken);
 
     Task<IReadOnlyList<ConfigReferenceUsageViewModel>> GetConfigValueUsagesAsync(CancellationToken cancellationToken);
@@ -41,4 +47,16 @@ public interface IMulseApiClient
     Task DeleteConfigValueAsync(string reference, CancellationToken cancellationToken);
 
     Task<ModulePackageViewModel> ReloadModulePackageAsync(string packageId, CancellationToken cancellationToken);
+
+    Task<ModulePackageViewModel> SetModulePackageEnabledAsync(string packageId, bool enabled, CancellationToken cancellationToken);
+
+    Task<ModulePackageViewModel> RegisterModulePackageAsync(string id, string assemblyPath, CancellationToken cancellationToken);
+
+    Task<DownloadedFileViewModel> BackupWorkspaceAsync(string password, CancellationToken cancellationToken);
+
+    Task<WorkspaceRestorePreviewViewModel> PreviewWorkspaceRestoreAsync(RestoreWorkspaceRequestViewModel request, CancellationToken cancellationToken);
+
+    Task<WorkspaceRestorePreviewViewModel> RestoreWorkspaceAsync(RestoreWorkspaceRequestViewModel request, CancellationToken cancellationToken);
+
+    Task<int> DeleteAllFlowsAsync(string confirmation, CancellationToken cancellationToken);
 }

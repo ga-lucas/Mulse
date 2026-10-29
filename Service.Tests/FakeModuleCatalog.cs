@@ -10,6 +10,8 @@ internal sealed class FakeModuleCatalog(IReadOnlyList<ModuleCatalogEntry> entrie
 
     public IReadOnlyList<ModulePackageInfo> GetPackages() => throw new NotSupportedException();
 
+    public IDisposable PinFlowModules(PipelineDefinition flow) => new ModuleUsageLease(static () => { });
+
     public ValueTask<ModuleLease<IFetchModule>> LeaseFetchAsync(string moduleId, CancellationToken cancellationToken)
         => throw new NotSupportedException();
 

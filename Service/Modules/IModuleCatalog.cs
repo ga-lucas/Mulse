@@ -8,6 +8,8 @@ public interface IModuleCatalog
 
     IReadOnlyList<ModulePackageInfo> GetPackages();
 
+    IDisposable PinFlowModules(PipelineDefinition flow);
+
     ValueTask<ModuleLease<IFetchModule>> LeaseFetchAsync(string moduleId, CancellationToken cancellationToken);
 
     ValueTask<ModuleLease<IParseModule>> LeaseParseAsync(string moduleId, CancellationToken cancellationToken);
