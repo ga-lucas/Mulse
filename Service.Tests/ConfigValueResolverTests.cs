@@ -96,6 +96,82 @@ public class ConfigValueResolverTests
     }
 
     [Fact]
+    public void Resolve_EmbeddedAdjacentAndRepeatedTokens_AreLiteralAndSinglePassAcrossAllStages()
+    {
+        const string template = "Server={{config:host}};Password={{secret:password}};{{config:host}}{{secret:password}}";
+        const string password = @"$1\data;{{config:not-recursive}}";
+        var state = new RuntimeMulseState { ConfigValues = { ["host"] = "db.example", ["password"] = password } };
+        var resolver = new ConfigValueResolver(new FakeRuntimeConfigurationStore(state));
+        var pipeline = BuildPipelineWithToken(template);
+        var steps = new[]
+        {
+            pipeline.Fetches[0].Fetch, pipeline.Parses[0].Parse,
+            new ModuleStepDefinition { Module = "augment", Settings = new() { ["value"] = template } },
+            pipeline.Deliveries[0].Render, pipeline.Deliveries[0].Delivers[0].Deliver,
+            new ModuleStepDefinition { Module = "compensate", Settings = new() { ["value"] = template } }
+        };
+        pipeline.Augments.Add(steps[2]);
+        pipeline.Deliveries[0].Render.Settings["value"] = template;
+        pipeline.Deliveries[0].Delivers[0].Deliver.Settings["value"] = template;
+        pipeline.Deliveries[0] = new DeliveryRouteDefinition
+        {
+            Render = steps[3],
+            Delivers = [new DeliveryActionDefinition { Deliver = steps[4] }, new DeliveryActionDefinition { Deliver = steps[4], Compensation = steps[5] }]
+        };
+
+        var resolved = resolver.Resolve(pipeline);
+        var expected = $"Server=db.example;Password={password};db.example{password}";
+        Assert.Equal(expected, resolved.Fetches[0].Fetch.Settings["host"]);
+        Assert.Equal(expected, resolved.Parses[0].Parse.Settings["schemaPath"]);
+        Assert.Equal(expected, resolved.Augments[0].Settings["value"]);
+        Assert.Equal(expected, resolved.Deliveries[0].Render.Settings["value"]);
+        Assert.Equal(expected, resolved.Deliveries[0].Delivers[0].Deliver.Settings["value"]);
+        Assert.Equal(expected, resolved.Deliveries[0].Delivers[1].Compensation!.Settings["value"]);
+        Assert.All(steps, step => Assert.All(step.Settings.Values, value => Assert.Equal(template, value)));
+        var usages = resolver.FindReferenceUsages([pipeline]);
+        Assert.Equal(14, usages.Count);
+        Assert.All(usages, usage => Assert.True(usage.IsResolved));
+        Assert.Contains(usages, usage => usage.SettingPath.Contains("compensation"));
+    }
+
+    [Fact]
+    public void Resolve_MissingEmbeddedReferences_ReportsAllWithoutRevealingValues()
+    {
+        var state = new RuntimeMulseState { ConfigValues = { ["password"] = "sensitive-value" } };
+        var resolver = new ConfigValueResolver(new FakeRuntimeConfigurationStore(state));
+        var pipeline = BuildPipelineWithToken("{{secret:password}};{{config:missing-a}}/{{secret:missing-b}}/{{config:missing-a}}");
+        var error = Assert.Throws<InvalidOperationException>(() => resolver.Resolve(pipeline));
+        Assert.Contains("2 unresolved", error.Message);
+        Assert.Contains("missing-a", error.Message);
+        Assert.Contains("missing-b", error.Message);
+        Assert.DoesNotContain("sensitive-value", error.Message);
+        var usages = resolver.FindReferenceUsages([pipeline]);
+        Assert.Equal(6, usages.Count);
+        Assert.Equal(4, usages.Count(usage => !usage.IsResolved));
+    }
+
+    [Theory]
+    [InlineData("prefix{{config:empty}}suffix", "prefixsuffix")]
+    [InlineData("{{config:empty}}{{config:empty}}", "")]
+    [InlineData("line one\n{{config:empty}}line two", "line one\nline two")]
+    public void Resolve_EmptyStoredValuesAndMultilineSettings(string input, string expected)
+    {
+        var resolver = new ConfigValueResolver(new FakeRuntimeConfigurationStore(new RuntimeMulseState { ConfigValues = { ["empty"] = "" } }));
+        Assert.Equal(expected, resolver.Resolve(BuildPipelineWithToken(input)).Fetches[0].Fetch.Settings["host"]);
+    }
+
+    [Theory]
+    [InlineData("{{config:}}")]
+    [InlineData("{{config:unfinished}")]
+    [InlineData("{{other:value}}")]
+    public void Resolve_NonTokenSyntaxRemainsLiteral(string value)
+    {
+        var resolver = new ConfigValueResolver(new FakeRuntimeConfigurationStore(new RuntimeMulseState()));
+        Assert.Equal(value, resolver.Resolve(BuildPipelineWithToken(value)).Fetches[0].Fetch.Settings["host"]);
+        Assert.Empty(resolver.FindReferenceUsages([BuildPipelineWithToken(value)]));
+    }
+
+    [Fact]
     public void FindReferenceUsages_ReportsResolvedAndUnresolvedTokensWithSettingPath()
     {
         var state = new RuntimeMulseState { ConfigValues = { ["ftp-host"] = "sftp.example.com" } };

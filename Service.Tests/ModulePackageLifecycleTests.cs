@@ -219,6 +219,44 @@ public sealed class ModulePackageLifecycleTests : IDisposable
         }, CancellationToken.None);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PendingSourceReceipts_BlockPackageUnloadEvenWithoutSavedFlowReference(bool checkpoint)
+    {
+        var pluginDirectory = Path.Combine(_directory, "plugins");
+        Directory.CreateDirectory(pluginDirectory);
+        var assemblyPath = Path.Combine(pluginDirectory, "fixture.dll");
+        File.Copy(typeof(LifecycleTestInstaller).Assembly.Location, assemblyPath);
+        var store = Store();
+        var catalog = Catalog(store);
+        await catalog.UpsertManagedPackageAsync(new ManagedModulePackageDefinition
+        {
+            Id = "fixture", AssemblyPath = assemblyPath, Enabled = true
+        }, CancellationToken.None);
+        var receipt = new FetchProcessingReceipt("receipt", "fetch", new ModuleStepDefinition { Module = "lifecycle-test-fetch" }, new());
+        if (checkpoint)
+            await store.UpsertOrchestrationCheckpointAsync(new FlowOrchestrationCheckpoint
+            {
+                FlowId = "pending", CorrelationKey = "key", SourceReceipts = [receipt]
+            }, CancellationToken.None);
+        else
+            await store.UpsertRetryStateAsync(new FlowRetryState
+            {
+                FlowId = "pending", ExecutionId = "execution", StageId = "source-outcome", SourceReceipts = [receipt]
+            }, CancellationToken.None);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => catalog.RemoveManagedPackageAsync("fixture", CancellationToken.None));
+        Assert.Contains("pending source outcome receipts", error.Message);
+        Assert.True(catalog.GetPackages().Single(package => package.Id == "fixture").IsLoaded);
+        if (checkpoint) await store.DeleteOrchestrationCheckpointAsync("pending", "key", CancellationToken.None);
+        else await store.DeleteAllRetryStateForExecutionAsync("pending", "execution", CancellationToken.None);
+        await catalog.UpsertManagedPackageAsync(new ManagedModulePackageDefinition
+        {
+            Id = "fixture", AssemblyPath = assemblyPath, Enabled = false
+        }, CancellationToken.None);
+        Assert.False(catalog.GetPackages().Single(package => package.Id == "fixture").IsLoaded);
+    }
+
     public void Dispose()
     {
         _services.Dispose();

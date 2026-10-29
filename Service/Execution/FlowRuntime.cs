@@ -50,17 +50,27 @@ public sealed partial class FlowRuntime(
         try
         {
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
+            var pendingSourceWork = (await flowRetryStateStore.GetAllAsync(cancellationToken).ConfigureAwait(false))
+                .FirstOrDefault(state => state.FlowId.Equals(pipeline.Id, StringComparison.OrdinalIgnoreCase) && state.SourceReceipts.Count > 0);
+            if (pendingSourceWork?.SourceCompletion?.NotificationsExhausted == true)
+                throw new InvalidOperationException($"Flow '{pipeline.Id}' has failed source outcome notifications: {pendingSourceWork.LastError}. New runs are blocked to prevent resending data. POST /api/flows/{Uri.EscapeDataString(pipeline.Id)}/source-outcomes/retry after resolving the source issue.");
+            if (pendingSourceWork is not null)
+                return new FlowExecutionResult(pipeline.Id, pendingSourceWork.ExecutionStartedAt, timeProvider.GetUtcNow(), 0, [],
+                    FlowExecutionOutcome.Retrying, "An earlier execution still has pending source processing or notification. No new data was fetched.", null, pendingSourceWork.NextAttemptAt);
             var startedAt = timeProvider.GetUtcNow();
-            var context = new FlowExecutionContext(pipeline.Id, Guid.CreateVersion7().ToString(), startedAt);
+            var context = new FlowExecutionContext(pipeline.Id, Guid.CreateVersion7().ToString(), startedAt)
+            {
+                PendingSourceReceipts = await orchestrationStateStore.GetPendingSourceReceiptsAsync(pipeline.Id, cancellationToken).ConfigureAwait(false)
+            };
 
             try
             {
-                return await RunSourceGraphOnwardAsync(
+                return await RunWithSourceOutcomesAsync(pipeline, context, () => RunSourceGraphOnwardAsync(
                     pipeline, context, startedAt,
                     resolvedFetches: new Dictionary<string, IntegrationBatch>(StringComparer.OrdinalIgnoreCase),
                     resolvedParses: new Dictionary<string, IntegrationBatch>(StringComparer.OrdinalIgnoreCase),
                     resumeStageId: null, resumeInput: null, resumeAttempts: 0,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken), cancellationToken).ConfigureAwait(false);
             }
             catch (FlowRetryScheduledSignal signal)
             {
@@ -119,7 +129,18 @@ public sealed partial class FlowRuntime(
                     invoke: async ct =>
                     {
                         await using var fetch = await moduleCatalog.LeaseFetchAsync(fetchStep.Module, ct).ConfigureAwait(false);
-                        return await fetch.Module.FetchAsync(context, fetchInput, fetchStep, ct).ConfigureAwait(false);
+                        var fetched = await fetch.Module.FetchAsync(context, fetchInput, fetchStep, ct).ConfigureAwait(false);
+                        if (fetch.Module is IFetchOutcomeModule && fetched.SourceReceipt is { } receipt)
+                        {
+                            context.RegisterSourceReceipt(new FetchProcessingReceipt($"{context.ExecutionId}:{fetchNode.Id}", fetchNode.Id,
+                                new ModuleStepDefinition
+                                {
+                                    Module = fetchStep.Module,
+                                    Settings = new Dictionary<string, string>(fetchStep.Settings, StringComparer.OrdinalIgnoreCase),
+                                    Retry = EffectiveRetry(pipeline, fetchStep)
+                                }, new Dictionary<string, string>(receipt, StringComparer.OrdinalIgnoreCase)));
+                        }
+                        return fetched;
                     },
                     cancellationToken).ConfigureAwait(false);
             }
@@ -304,7 +325,6 @@ public sealed partial class FlowRuntime(
         CancellationToken cancellationToken)
     {
         var atomicScopeFailures = new List<Exception>();
-        var independentDeliverFailures = new List<string>();
 
         for (var routeIndex = startRouteIndex; routeIndex < pipeline.Deliveries.Count; routeIndex++)
         {
@@ -375,7 +395,7 @@ public sealed partial class FlowRuntime(
                             exception,
                             "Flow {FlowId} execution {ExecutionId} delivery route {RouteIndex} deliver action {DeliverIndex} ({Module}) failed permanently; continuing with the remaining deliver actions.",
                             pipeline.Id, context.ExecutionId, routeIndex, deliverIndex, action.Deliver.Module);
-                        independentDeliverFailures.Add($"route {routeIndex} deliver {deliverIndex} ({action.Deliver.Module}): {exception.Message}");
+                        context.RecordDeliveryFailure($"route {routeIndex} deliver {deliverIndex} ({action.Deliver.Module}): {exception.Message}");
                     }
                 }
             }
@@ -419,21 +439,14 @@ public sealed partial class FlowRuntime(
                 : new InvalidOperationException(failedScopesMessage);
         }
 
-        if (context.PendingCheckpointCompletion is { } pendingCompletion)
-        {
-            await orchestrationStateStore.DeleteAsync(pendingCompletion.FlowId, pendingCompletion.CorrelationKey, cancellationToken).ConfigureAwait(false);
-        }
-
-        await flowRetryStateStore.DeleteAllForExecutionAsync(pipeline.Id, context.ExecutionId, cancellationToken).ConfigureAwait(false);
-
         var completedAt = timeProvider.GetUtcNow();
         string? detail = null;
-        if (independentDeliverFailures.Count > 0)
+        if (context.DeliveryFailures.Count > 0)
         {
-            detail = $"{independentDeliverFailures.Count} deliver action(s) failed: {string.Join("; ", independentDeliverFailures)}";
+            detail = $"{context.DeliveryFailures.Count} deliver action(s) failed: {string.Join("; ", context.DeliveryFailures)}";
             logger.LogWarning(
                 "Flow {FlowId} execution {ExecutionId} completed with {PayloadCount} payload(s); {FailedDeliverCount} independent deliver action(s) failed.",
-                pipeline.Id, context.ExecutionId, postAugmentBatch.Count, independentDeliverFailures.Count);
+                pipeline.Id, context.ExecutionId, postAugmentBatch.Count, context.DeliveryFailures.Count);
         }
         else
         {
@@ -565,7 +578,12 @@ public sealed partial class FlowRuntime(
                     ResolvedParsePayloads = SnapshotResolvedBatches(resolvedParsesForSnapshot),
                     PostAugmentPayloads = postAugmentBatchForSnapshot is null ? null : SnapshotBatch(postAugmentBatchForSnapshot),
                     CommittedAtomicDeliveries = committedAtomicDeliveries.ToList(),
-                    FailedAtomicScopes = failedAtomicScopes.ToList()
+                    FailedAtomicScopes = failedAtomicScopes.ToList(),
+                    SourceReceipts = context.SourceReceipts.ToList(),
+                    DeliveryFailures = context.DeliveryFailures.ToList(),
+                    Responses = SnapshotBatch(new IntegrationBatch(context.CapturedResponses)),
+                    CheckpointFlowId = context.PendingCheckpointCompletion?.FlowId,
+                    CheckpointCorrelationKey = context.PendingCheckpointCompletion?.CorrelationKey
                 };
                 await flowRetryStateStore.UpsertAsync(retryState, cancellationToken).ConfigureAwait(false);
                 logger.LogWarning(

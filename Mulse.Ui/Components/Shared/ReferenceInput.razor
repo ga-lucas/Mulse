@@ -1,0 +1,115 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="reference-input" @ref="_root">
+    @if (IsChoice && !_useReference && !Value.Contains("{{", StringComparison.Ordinal))
+    {
+        @if (InputKind == "Boolean")
+        {
+            <input type="checkbox" aria-label="@Label" checked="@(string.Equals(Value, "true", StringComparison.OrdinalIgnoreCase))"
+                   @onchange="BooleanChangedAsync" />
+        }
+        else
+        {
+            <select class="selector" aria-label="@Label" value="@Value" @onchange="ChangedAsync">
+                @foreach (var option in Options)
+                {
+                    <option value="@option.Value">@option.Label</option>
+                }
+            </select>
+        }
+        <button type="button" class="secondary-button" @onclick="UseReferenceAsync">Use config/secret reference</button>
+    }
+    else
+    {
+        @if (InputKind == "TextArea" && !_masked)
+        {
+            <textarea class="sample-textarea" data-reference-editor aria-label="@Label" placeholder="@Placeholder" @bind:get="Value" @bind:set="SetValueAsync" @bind:event="oninput"
+                      role="combobox" aria-autocomplete="list" aria-expanded="false" autocomplete="off"></textarea>
+        }
+        else
+        {
+            <input class="mapping-input" data-reference-editor aria-label="@Label" placeholder="@Placeholder" type="@(_masked ? "password" : "text")"
+                   inputmode="@(InputKind == "Number" ? "decimal" : null)" @bind:get="Value" @bind:set="SetValueAsync" @bind:event="oninput"
+                   role="combobox" aria-autocomplete="list" aria-expanded="false" autocomplete="off" />
+        }
+        @if (InputKind == "Password")
+        {
+            <button type="button" class="secondary-button" aria-pressed="@(!_masked ? "true" : "false")" @onclick="() => _masked = !_masked">@(_masked ? "Show value" : "Hide value")</button>
+        }
+        @if (IsChoice)
+        {
+            <button type="button" class="secondary-button" @onclick="UseLiteralAsync">Use literal value</button>
+        }
+    }
+    <div class="reference-suggestions" data-reference-popup hidden></div>
+</div>
+
+@code {
+    [Parameter] public string Value { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "Module setting";
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public string InputKind { get; set; } = "Text";
+    [Parameter] public string? DefaultValue { get; set; }
+    [Parameter] public IReadOnlyList<ModuleSettingOptionViewModel> Options { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    private bool IsChoice => InputKind is "Boolean" or "Select";
+    private bool _useReference;
+    private bool _masked;
+    private ElementReference _root;
+    private IJSObjectReference? _module;
+    private IJSObjectReference? _controller;
+
+    private string? _previousInputKind;
+
+    protected override void OnParametersSet()
+    {
+        if (_previousInputKind != InputKind)
+        {
+            _previousInputKind = InputKind;
+            _masked = InputKind == "Password";
+            _useReference = false;
+        }
+        if (IsChoice && Value.Contains("{{", StringComparison.Ordinal)) _useReference = true;
+    }
+
+    private Task BooleanChangedAsync(ChangeEventArgs args) => ValueChanged.InvokeAsync(args.Value is true ? "true" : "false");
+
+    private Task ChangedAsync(ChangeEventArgs args) => SetValueAsync(args.Value?.ToString() ?? string.Empty);
+
+    private Task SetValueAsync(string value) => ValueChanged.InvokeAsync(value);
+
+    private async Task UseReferenceAsync()
+    {
+        _useReference = true;
+        await ValueChanged.InvokeAsync("{{");
+    }
+
+    private async Task UseLiteralAsync()
+    {
+        _useReference = false;
+        await ValueChanged.InvokeAsync(DefaultValue ?? (InputKind == "Boolean" ? "false" : Options.FirstOrDefault()?.Value ?? string.Empty));
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/reference-input.js");
+        _controller ??= await _module.InvokeAsync<IJSObjectReference>("attach", _root);
+        await _controller.InvokeVoidAsync("updateReferences", References);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_controller is not null)
+            {
+                await _controller.InvokeVoidAsync("dispose");
+                await _controller.DisposeAsync();
+            }
+            if (_module is not null) await _module.DisposeAsync();
+        }
+        catch (JSDisconnectedException) { }
+    }
+}

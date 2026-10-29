@@ -15,6 +15,11 @@ internal sealed class InMemoryFlowOrchestrationStateStore : IFlowOrchestrationSt
         return Task.FromResult(checkpoint);
     }
 
+    public Task<IReadOnlyList<FetchProcessingReceipt>> GetPendingSourceReceiptsAsync(string flowId, CancellationToken cancellationToken)
+        => Task.FromResult<IReadOnlyList<FetchProcessingReceipt>>(_checkpoints
+            .Where(checkpoint => checkpoint.FlowId.Equals(flowId, StringComparison.OrdinalIgnoreCase))
+            .SelectMany(checkpoint => checkpoint.SourceReceipts).DistinctBy(receipt => receipt.Id).ToArray());
+
     public Task UpsertAsync(FlowOrchestrationCheckpoint checkpoint, CancellationToken cancellationToken)
     {
         _checkpoints.RemoveAll(existing =>

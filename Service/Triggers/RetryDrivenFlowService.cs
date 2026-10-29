@@ -39,7 +39,7 @@ public sealed class RetryDrivenFlowService(
     {
         var now = timeProvider.GetUtcNow();
         var pendingRetries = await flowRetryStateStore.GetAllAsync(stoppingToken).ConfigureAwait(false);
-        var dueRetries = pendingRetries.Where(retry => retry.NextAttemptAt <= now).ToArray();
+        var dueRetries = pendingRetries.Where(retry => retry.SourceCompletion?.NotificationsExhausted != true && retry.NextAttemptAt <= now).ToArray();
 
         foreach (var retryState in dueRetries)
         {

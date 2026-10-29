@@ -7,6 +7,11 @@ public static class ConfigValueEndpoints
 {
     public static WebApplication MapConfigValueEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/config-values/references", (IRuntimeConfigurationStore store) =>
+            TypedResults.Ok(store.GetState().ConfigValues.Keys.Order(StringComparer.OrdinalIgnoreCase).ToArray()))
+            .WithName("GetConfigReferences").WithTags("Configuration")
+            .WithSummary("List reference names without their stored values");
+
         app.MapGet("/api/config-values", Ok<ConfigValueResponse[]> (IRuntimeConfigurationStore runtimeConfigurationStore, CancellationToken cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();

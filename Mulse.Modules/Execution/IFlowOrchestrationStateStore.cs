@@ -4,6 +4,8 @@ public interface IFlowOrchestrationStateStore
 {
     Task<FlowOrchestrationCheckpoint?> GetAsync(string flowId, string correlationKey, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<FetchProcessingReceipt>> GetPendingSourceReceiptsAsync(string flowId, CancellationToken cancellationToken);
+
     Task UpsertAsync(FlowOrchestrationCheckpoint checkpoint, CancellationToken cancellationToken);
 
     Task DeleteAsync(string flowId, string correlationKey, CancellationToken cancellationToken);

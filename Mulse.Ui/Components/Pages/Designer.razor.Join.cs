@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.Web;
+using Mulse.Ui.Components.Shared;
 using Mulse.Ui.Models;
 
 namespace Mulse.Ui.Components.Pages;
@@ -23,11 +24,7 @@ public partial class Designer
             return;
         }
 
-        // Sequence numbers below are fixed integer literals representing each call site's source
-        // order, per the Blazor RenderTreeBuilder guidance (see ASP0006): a given literal always
-        // corresponds to the same logical position in this method, including across loop
-        // iterations and mutually-exclusive switch branches (only one branch executes per
-        // setting, since a setting's InputKind never changes between renders).
+        // RenderTreeBuilder sequence numbers identify source locations and stay fixed across loop iterations.
         builder.OpenElement(0, "div");
         builder.AddAttribute(1, "class", "settings-grid");
 
@@ -45,53 +42,18 @@ public partial class Designer
             }
             builder.CloseElement();
 
-            switch (setting.InputKind)
-            {
-                case "TextArea":
-                    builder.OpenElement(8, "textarea");
-                    builder.AddAttribute(9, "class", "sample-textarea");
-                    builder.AddAttribute(10, "value", GetSettingValue(settings, setting));
-                    builder.AddAttribute(11, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString(), onSettingChanged)));
-                    builder.CloseElement();
-                    break;
-                case "Boolean":
-                    builder.OpenElement(8, "label");
-                    builder.AddAttribute(9, "class", "field-label checkbox-row");
-                    builder.OpenElement(10, "input");
-                    builder.AddAttribute(11, "type", "checkbox");
-                    builder.AddAttribute(12, "checked", string.Equals(GetSettingValue(settings, setting), "true", StringComparison.OrdinalIgnoreCase));
-                    builder.AddAttribute(13, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetBooleanSettingValue(settings, setting.Key, GetBooleanValue(args), onSettingChanged)));
-                    builder.CloseElement();
-                    builder.OpenElement(14, "span");
-                    builder.AddContent(15, setting.Description);
-                    builder.CloseElement();
-                    builder.CloseElement();
-                    break;
-                case "Select":
-                    builder.OpenElement(8, "select");
-                    builder.AddAttribute(9, "class", "selector");
-                    builder.AddAttribute(10, "value", GetSettingValue(settings, setting));
-                    builder.AddAttribute(11, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString(), onSettingChanged)));
-                    foreach (var option in setting.Options)
-                    {
-                        builder.OpenElement(12, "option");
-                        builder.AddAttribute(13, "value", option.Value);
-                        builder.AddContent(14, option.Label);
-                        builder.CloseElement();
-                    }
-                    builder.CloseElement();
-                    break;
-                default:
-                    builder.OpenElement(8, "input");
-                    builder.AddAttribute(9, "class", "mapping-input");
-                    builder.AddAttribute(10, "type", setting.InputKind == "Password" ? "password" : setting.InputKind == "Number" ? "number" : "text");
-                    builder.AddAttribute(11, "value", GetSettingValue(settings, setting));
-                    builder.AddAttribute(12, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetSettingValue(settings, setting.Key, args.Value?.ToString(), onSettingChanged)));
-                    builder.CloseElement();
-                    break;
-            }
+            builder.OpenComponent<ReferenceInput>(8);
+            builder.SetKey((settings, setting.Key));
+            builder.AddAttribute(9, "Label", setting.Label);
+            builder.AddAttribute(10, "InputKind", setting.InputKind);
+            builder.AddAttribute(11, "Value", GetSettingValue(settings, setting));
+            builder.AddAttribute(12, "ValueChanged", EventCallback.Factory.Create<string>(this, value => SetSettingValue(settings, setting.Key, value, onSettingChanged)));
+            builder.AddAttribute(13, "Options", setting.Options);
+            builder.AddAttribute(14, "References", _configReferences);
+            builder.AddAttribute(15, "DefaultValue", setting.DefaultValue);
+            builder.CloseComponent();
 
-            if (!string.Equals(setting.InputKind, "Boolean", StringComparison.Ordinal))
+            if (!string.IsNullOrEmpty(setting.Description))
             {
                 builder.OpenElement(20, "div");
                 builder.AddAttribute(21, "class", "module-description");
@@ -118,11 +80,6 @@ public partial class Designer
 
         settings[key] = value ?? string.Empty;
     }
-
-    private static bool GetBooleanValue(ChangeEventArgs args) => args.Value is bool booleanValue && booleanValue;
-
-    private void SetBooleanSettingValue(Dictionary<string, string> settings, string key, bool value, Action<string, string?>? onSettingChanged = null)
-        => SetSettingValue(settings, key, value.ToString().ToLowerInvariant(), onSettingChanged);
 
     private bool IsJoinNode(FlowNode node)
         => node.Stage == NodeStage.Augment && string.Equals(node.ModuleId, JoinModuleId, StringComparison.OrdinalIgnoreCase);

@@ -14,27 +14,61 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly string _statePath;
-    private readonly IRuntimeStatePayloadProtector _protector;
+    private readonly string _keyEnvironmentVariable;
+    private IRuntimeStatePayloadProtector _protector;
+    private bool _usesEnvelope;
     private RuntimeMulseState _state;
+
+    private const string EnvelopeFormat = "mulse-runtime-state-v1";
+    private sealed record StateEnvelope(string Format, bool Encrypted, byte[] Payload);
 
     static RuntimeConfigurationStore()
     {
         SerializerOptions.Converters.Add(new JsonStringEnumConverter());
     }
 
-    public RuntimeConfigurationStore(IOptions<MulseOptions> options, IHostEnvironment environment, IRuntimeStatePayloadProtector protector)
+    public RuntimeConfigurationStore(IOptions<MulseOptions> options, IHostEnvironment environment, IRuntimeStatePayloadProtector? protector = null)
     {
         var configuredPath = options.Value.RuntimeStatePath;
         _statePath = Path.GetFullPath(Path.IsPathRooted(configuredPath)
             ? configuredPath
             : Path.Combine(environment.ContentRootPath, configuredPath));
-        _protector = protector;
-        _state = LoadState(options.Value);
+        _protector = protector ?? NoOpRuntimeStatePayloadProtector.Instance;
+        _keyEnvironmentVariable = options.Value.Encryption.KeyEnvironmentVariable;
+        _state = LoadState(options.Value, protector);
     }
 
     public RuntimeMulseState GetState()
     {
         return Clone(_state);
+    }
+
+    public RuntimeEncryptionStatus GetEncryptionStatus()
+    {
+        try
+        {
+            RuntimeEncryptionKey.FromEnvironment(_keyEnvironmentVariable);
+            return new(_protector is AesGcmRuntimeStatePayloadProtector, true, _keyEnvironmentVariable, null);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return new(_protector is AesGcmRuntimeStatePayloadProtector, false, _keyEnvironmentVariable, exception.Message);
+        }
+    }
+
+    public async Task<RuntimeEncryptionStatus> SetEncryptionAsync(bool enabled, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var environmentProtector = RuntimeEncryptionKey.FromEnvironment(_keyEnvironmentVariable);
+            IRuntimeStatePayloadProtector next = enabled ? environmentProtector : NoOpRuntimeStatePayloadProtector.Instance;
+            await WriteStateAsync(_state, next, true, cancellationToken).ConfigureAwait(false);
+            _protector = next;
+            _usesEnvelope = true;
+            return GetEncryptionStatus();
+        }
+        finally { _gate.Release(); }
     }
 
     public async Task<RuntimeMulseState> RestoreWorkspaceAsync(RuntimeMulseState restored, bool replace, CancellationToken cancellationToken)
@@ -84,15 +118,24 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
 
     private async Task CommitWorkspaceAsync(RuntimeMulseState updated, CancellationToken cancellationToken)
     {
+        await WriteStateAsync(updated, _protector, _usesEnvelope, cancellationToken).ConfigureAwait(false);
+        _state = updated;
+    }
+
+    private async Task WriteStateAsync(RuntimeMulseState state, IRuntimeStatePayloadProtector protector, bool envelope, CancellationToken cancellationToken)
+    {
         Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
         var temporaryPath = _statePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            var bytes = _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(updated, SerializerOptions));
+            var payload = protector.Protect(JsonSerializer.SerializeToUtf8Bytes(state, SerializerOptions));
+            var bytes = envelope
+                ? JsonSerializer.SerializeToUtf8Bytes(new StateEnvelope(EnvelopeFormat, protector is AesGcmRuntimeStatePayloadProtector, payload), SerializerOptions)
+                : payload;
+            if (envelope) bytes = [.. "MULSE-STATE\n"u8, .. bytes];
             await File.WriteAllBytesAsync(temporaryPath, bytes, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             File.Replace(temporaryPath, _statePath, destinationBackupFileName: null);
-            _state = updated;
         }
         finally
         {
@@ -348,16 +391,31 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         }
     }
 
-    private RuntimeMulseState LoadState(MulseOptions options)
+    private RuntimeMulseState LoadState(MulseOptions options, IRuntimeStatePayloadProtector? initialProtector)
     {
         if (File.Exists(_statePath))
         {
             var protectedBytes = File.ReadAllBytes(_statePath);
+            if (protectedBytes.AsSpan().StartsWith("MULSE-STATE\n"u8))
+            {
+                var envelope = JsonSerializer.Deserialize<StateEnvelope>(protectedBytes.AsSpan("MULSE-STATE\n"u8.Length), SerializerOptions)
+                    ?? throw new InvalidOperationException("The runtime state envelope is empty.");
+                if (envelope.Format != EnvelopeFormat)
+                    throw new InvalidOperationException("Unsupported runtime state format.");
+                _protector = envelope.Encrypted
+                    ? RuntimeEncryptionKey.FromEnvironment(_keyEnvironmentVariable)
+                    : NoOpRuntimeStatePayloadProtector.Instance;
+                _usesEnvelope = true;
+                return JsonSerializer.Deserialize<RuntimeMulseState>(_protector.Unprotect(envelope.Payload), SerializerOptions)
+                    ?? throw new InvalidOperationException("The runtime state is empty.");
+            }
+            _protector = initialProtector ?? RuntimeEncryptionKey.FromConfiguration(options.Encryption);
             var jsonBytes = _protector.Unprotect(protectedBytes);
             return JsonSerializer.Deserialize<RuntimeMulseState>(jsonBytes, SerializerOptions)
                 ?? CreateSeedState(options);
         }
 
+        _protector = initialProtector ?? RuntimeEncryptionKey.FromConfiguration(options.Encryption);
         var seededState = CreateSeedState(options);
         Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
         File.WriteAllBytes(_statePath, _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(seededState, SerializerOptions)));
@@ -376,12 +434,8 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         };
     }
 
-    private async Task PersistAsync(CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
-        var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(_state, SerializerOptions);
-        await File.WriteAllBytesAsync(_statePath, _protector.Protect(jsonBytes), cancellationToken).ConfigureAwait(false);
-    }
+    private Task PersistAsync(CancellationToken cancellationToken)
+        => WriteStateAsync(_state, _protector, _usesEnvelope, cancellationToken);
 
     private static T Clone<T>(T value)
     {

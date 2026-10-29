@@ -40,6 +40,12 @@ public interface IMulseApiClient
 
     Task<IReadOnlyList<ConfigValueViewModel>> GetConfigValuesAsync(CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<string>> GetConfigReferencesAsync(CancellationToken cancellationToken);
+
+    Task<RuntimeEncryptionViewModel> GetEncryptionAsync(CancellationToken cancellationToken);
+
+    Task<RuntimeEncryptionViewModel> SetEncryptionAsync(bool enabled, CancellationToken cancellationToken);
+
     Task<IReadOnlyList<ConfigReferenceUsageViewModel>> GetConfigValueUsagesAsync(CancellationToken cancellationToken);
 
     Task<ConfigValueViewModel> SetConfigValueAsync(string reference, string value, CancellationToken cancellationToken);

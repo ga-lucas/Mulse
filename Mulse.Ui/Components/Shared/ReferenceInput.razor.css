@@ -1,0 +1,41 @@
+.reference-input {
+    position: relative;
+    min-width: 0;
+    flex: 1;
+}
+
+.reference-input > input:not([type=checkbox]), .reference-input > textarea, .reference-input > select {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.reference-suggestions {
+    position: absolute;
+    z-index: 100;
+    left: 0;
+    right: 0;
+    max-height: 15rem;
+    overflow-y: auto;
+    background: var(--surface-panel);
+    color: var(--text-primary);
+    border: 1px solid var(--border-subtle);
+    border-radius: .4rem;
+    box-shadow: 0 4px 14px #0003;
+}
+
+.reference-suggestions ::deep button, .reference-suggestions ::deep p {
+    display: block;
+    width: 100%;
+    padding: .5rem;
+    margin: 0;
+    text-align: left;
+    overflow-wrap: anywhere;
+    background: transparent;
+    color: inherit;
+    border: 0;
+}
+
+.reference-suggestions ::deep button[aria-selected=true] {
+    background: var(--accent);
+    color: var(--accent-ink);
+}

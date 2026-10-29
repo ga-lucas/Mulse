@@ -12,9 +12,9 @@ namespace Service.ConfigValues;
 public interface IConfigValueResolver
 {
     /// <summary>
-    /// Returns a copy of <paramref name="pipeline"/> with every setting value that matches the
-    /// <c>{{config:reference}}</c> / <c>{{secret:reference}}</c> token pattern replaced by its stored
-    /// value. Throws <see cref="InvalidOperationException"/> naming every unresolved reference if one
+    /// Returns a copy of <paramref name="pipeline"/> with each whole-value or embedded
+    /// <c>{{config:reference}}</c> / <c>{{secret:reference}}</c> token replaced by its stored
+    /// value in a single pass, without recursively expanding stored values. Throws
     /// or more tokens have no matching stored value, so a flow can never silently run with a literal
     /// placeholder string as a module setting.
     /// </summary>
@@ -36,7 +36,7 @@ public sealed record ConfigReferenceUsage(string Reference, string FlowId, strin
 
 public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runtimeConfigurationStore) : IConfigValueResolver
 {
-    [GeneratedRegex(@"^\{\{(?:config|secret):(?<reference>.+)\}\}$")]
+    [GeneratedRegex(@"\{\{(?:config|secret):(?<reference>[^{}\r\n]+)\}\}")]
     internal static partial Regex TokenPattern();
 
     public PipelineDefinition Resolve(PipelineDefinition pipeline)
@@ -120,25 +120,24 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
 
         foreach (var (key, value) in settings)
         {
-            var match = TokenPattern().Match(value);
-            if (!match.Success)
-            {
-                continue;
-            }
-
-            var reference = match.Groups["reference"].Value;
-            if (configValues.TryGetValue(reference, out var resolvedValue))
-            {
-                resolved[key] = resolvedValue;
-            }
-            else
-            {
-                missingReferences.Add(reference);
-            }
+            resolved[key] = Substitute(value, configValues, missingReferences.Add);
         }
 
         return resolved;
     }
+
+    internal static string Substitute(string value, IReadOnlyDictionary<string, string>? configValues, Action<string> onMissing)
+        => TokenPattern().Replace(value, match =>
+        {
+            var reference = match.Groups["reference"].Value;
+            if (configValues is not null && configValues.TryGetValue(reference, out var storedValue))
+            {
+                return storedValue;
+            }
+
+            onMissing(reference);
+            return match.Value;
+        });
 
     public IReadOnlyList<ConfigReferenceUsage> FindReferenceUsages(IEnumerable<PipelineDefinition> pipelines)
     {
@@ -185,14 +184,12 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
     {
         foreach (var (key, value) in step.Settings)
         {
-            var match = TokenPattern().Match(value);
-            if (!match.Success)
+            var references = TokenPattern().Matches(value).Select(match => match.Groups["reference"].Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var reference in references)
             {
-                continue;
+                usages.Add(new ConfigReferenceUsage(reference, flowId, $"{settingPathPrefix}.{key}", configValues.ContainsKey(reference)));
             }
-
-            var reference = match.Groups["reference"].Value;
-            usages.Add(new ConfigReferenceUsage(reference, flowId, $"{settingPathPrefix}.{key}", configValues.ContainsKey(reference)));
         }
     }
 }

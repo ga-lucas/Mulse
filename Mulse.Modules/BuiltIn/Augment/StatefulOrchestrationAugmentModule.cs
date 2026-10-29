@@ -87,7 +87,7 @@ public sealed class StatefulOrchestrationAugmentModule(
         var checkpoint = await orchestrationStateStore.GetAsync(context.FlowId, correlationKey, cancellationToken).ConfigureAwait(false);
         if (checkpoint is null)
         {
-            var created = CreateCheckpoint(context.FlowId, correlationKey, bookmark, batch, capturedState, instanceId: Guid.CreateVersion7().ToString());
+            var created = CreateCheckpoint(context, context.FlowId, correlationKey, bookmark, batch, capturedState, instanceId: Guid.CreateVersion7().ToString());
             await orchestrationStateStore.UpsertAsync(created, cancellationToken).ConfigureAwait(false);
             context.SetOrchestrationInstance(created.InstanceId, created.CorrelationKey, created.Bookmark, isResumed: false);
             context.ReplaceOrchestrationState(created.StateValues);
@@ -109,6 +109,7 @@ public sealed class StatefulOrchestrationAugmentModule(
 
         context.SetOrchestrationInstance(checkpoint.InstanceId, checkpoint.CorrelationKey, checkpoint.Bookmark, isResumed: true);
         context.ReplaceOrchestrationState(checkpoint.StateValues);
+        foreach (var receipt in checkpoint.SourceReceipts) context.RegisterSourceReceipt(receipt);
         var mergedBatch = MergeBatches(checkpoint, batch);
         logger.LogInformation(
             "Flow {FlowId} execution {ExecutionId} resumed orchestration instance {InstanceId} on correlation key {CorrelationKey} at bookmark {Bookmark} with {PayloadCount} payload(s).",
@@ -132,7 +133,8 @@ public sealed class StatefulOrchestrationAugmentModule(
     {
         var existing = await orchestrationStateStore.GetAsync(context.FlowId, correlationKey, cancellationToken).ConfigureAwait(false);
         var instanceId = existing?.InstanceId ?? context.OrchestrationInstanceId ?? Guid.CreateVersion7().ToString();
-        var checkpoint = CreateCheckpoint(context.FlowId, correlationKey, bookmark, batch, capturedState, instanceId);
+        foreach (var receipt in existing?.SourceReceipts ?? []) context.RegisterSourceReceipt(receipt);
+        var checkpoint = CreateCheckpoint(context, context.FlowId, correlationKey, bookmark, batch, capturedState, instanceId);
         await orchestrationStateStore.UpsertAsync(checkpoint, cancellationToken).ConfigureAwait(false);
         context.SetOrchestrationInstance(checkpoint.InstanceId, checkpoint.CorrelationKey, checkpoint.Bookmark, isResumed: existing is not null || context.IsResumedOrchestration);
         context.ReplaceOrchestrationState(checkpoint.StateValues);
@@ -167,6 +169,7 @@ public sealed class StatefulOrchestrationAugmentModule(
 
         context.SetOrchestrationInstance(checkpoint.InstanceId, checkpoint.CorrelationKey, checkpoint.Bookmark, isResumed: context.IsResumedOrchestration);
         context.ReplaceOrchestrationState(checkpoint.StateValues);
+        foreach (var receipt in checkpoint.SourceReceipts) context.RegisterSourceReceipt(receipt);
         context.MarkCheckpointForCompletion(checkpoint.FlowId, checkpoint.CorrelationKey);
         logger.LogInformation(
             "Flow {FlowId} execution {ExecutionId} marked orchestration instance {InstanceId} complete on correlation key {CorrelationKey}; checkpoint will be deleted after successful completion.",
@@ -178,6 +181,7 @@ public sealed class StatefulOrchestrationAugmentModule(
     }
 
     private FlowOrchestrationCheckpoint CreateCheckpoint(
+        FlowExecutionContext context,
         string flowId,
         string correlationKey,
         string bookmark,
@@ -193,7 +197,8 @@ public sealed class StatefulOrchestrationAugmentModule(
             Bookmark = bookmark,
             UpdatedAt = timeProvider.GetUtcNow(),
             StateValues = new Dictionary<string, string>(stateValues, StringComparer.OrdinalIgnoreCase),
-            Payloads = batch.Payloads.Select(CreateSnapshot).ToList()
+            Payloads = batch.Payloads.Select(CreateSnapshot).ToList(),
+            SourceReceipts = context.SourceReceipts.ToList()
         };
     }
 

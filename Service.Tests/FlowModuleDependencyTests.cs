@@ -86,6 +86,19 @@ public sealed class FlowModuleDependencyTests
     }
 
     [Fact]
+    public void EmbeddedMappingTokens_ResolveDependenciesAndRejectMissingReferences()
+    {
+        var flow = Pipeline();
+        flow.Augments[0].Settings["mappingJson"] = "[{\"sourceKind\":\"Transform\",\"transformModule\":\"{{config:prefix}}-{{secret:suffix}}\",\"targetField\":\"result\"}]";
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["prefix"] = "custom", ["suffix"] = "transform" };
+        Assert.Contains(("custom-transform", ModuleKind.Transform), FlowModuleDependencies.References(flow, values));
+        values.Remove("suffix");
+        var error = Assert.Throws<ArgumentException>(() => FlowModuleDependencies.References(flow, values).ToArray());
+        Assert.Contains("suffix", error.Message);
+        Assert.DoesNotContain("custom", error.Message);
+    }
+
+    [Fact]
     public async Task RunPreflight_RejectsMissingLaterStageBeforeFetchingAnything()
     {
         var fetched = false;

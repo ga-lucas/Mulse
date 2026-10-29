@@ -339,6 +339,10 @@ public sealed class ModuleCatalog : IModuleCatalog
                 .Select(flow => flow.Id).Order(StringComparer.OrdinalIgnoreCase).ToArray();
             if (dependentFlows.Length > 0)
                 throw new InvalidOperationException($"Package '{packageId}' is used by saved flows: {string.Join(", ", dependentFlows)}. Remove or replace these references (including disabled flows) before unloading or removing the package.");
+            var pendingSources = state.PendingRetries.SelectMany(retry => retry.SourceReceipts)
+                .Concat(state.OrchestrationCheckpoints.SelectMany(checkpoint => checkpoint.SourceReceipts));
+            if (pendingSources.Any(receipt => package.Modules.ContainsKey(receipt.Step.Module)))
+                throw new InvalidOperationException($"Package '{packageId}' is required by pending source outcome receipts. Complete or explicitly discard those executions/checkpoints before unloading or removing it.");
             if (package.ActiveLeaseCount > 0)
                 throw new InvalidOperationException($"Package '{packageId}' is in use by active module executions. Wait for them to finish before unloading or removing it.");
             package.IsUnloading = true;

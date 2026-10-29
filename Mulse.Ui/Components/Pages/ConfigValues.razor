@@ -9,6 +9,7 @@
             <p class="eyebrow">Workspace settings</p>
             <h1>Configuration &amp; secrets</h1>
             <p class="lede">Manage the values behind <code>{{config:reference}}</code> and <code>{{secret:reference}}</code> tokens. Resolve missing references here before enabling or running a flow.</p>
+            <p>Tokens can fill a whole module parameter or appear within text, for example <code>Server={{config:db-host}};Database={{config:db-name}};Password={{secret:db-password}}</code>. Multiple tokens are supported. Stored values are inserted literally, without recursive expansion or format-specific escaping.</p>
         </div>
     </header>
 
@@ -26,6 +27,35 @@
             <div class="overview-stat"><dt>Resolved usages</dt><dd>@_allUsages.Count(usage => usage.IsResolved)</dd></div>
             <div class="overview-stat"><dt>Unresolved usages</dt><dd>@_unresolvedUsages.Count</dd></div>
         </dl>
+
+        <Panel Title="Runtime state encryption" Description="Encrypts the entire runtime state file, including flows and stored values. The key stays outside the application.">
+            @if (_encryption is not null)
+            {
+                <p>Encryption: <strong>@(_encryption.Enabled ? "On" : "Off")</strong></p>
+                <p>Key environment variable: <code>@_encryption.KeyEnvironmentVariable</code>. Valid key available: @(_encryption.KeyAvailable ? "Yes" : "No").</p>
+                @if (!_encryption.KeyAvailable)
+                {
+                    <p role="status">@_encryption.KeyError</p>
+                }
+                <button class="secondary-button" role="switch" aria-checked="@(_encryption.Enabled ? "true" : "false")"
+                        disabled="@(_isSaving || !_encryption.KeyAvailable)" @onclick="RequestEncryptionChangeAsync">
+                    @(_encryption.Enabled ? "Turn encryption off" : "Turn encryption on")
+                </button>
+                @if (_confirmDisableEncryption)
+                {
+                    <div class="action-row" role="alert">
+                        <p>This will rewrite all runtime state without encryption. Continue?</p>
+                        <button class="run-button" disabled="@_isSaving" @onclick="() => SetEncryptionAsync(false)">Confirm disable encryption</button>
+                        <button class="secondary-button" disabled="@_isSaving" @onclick="() => _confirmDisableEncryption = false">Cancel</button>
+                    </div>
+                }
+            }
+            <p class="field-hint">Changes apply immediately and survive restarts. Keep the same environment key available while encryption is on. Take a workspace backup first. Masking below is independent of encryption and is not access control; this PoC must not be exposed to untrusted users.</p>
+        </Panel>
+
+        <label class="field-label checkbox-row">
+            <input type="checkbox" @bind="_showValues" /> Show config/secret values
+        </label>
 
         <Panel Title="Needs attention" Description="Set a value for each missing reference to unblock the flows that use it.">
             @if (_unresolvedUsages.Count == 0)
@@ -52,7 +82,7 @@
                                 <td>@usage.FlowId</td>
                                 <td class="path-value">@usage.SettingPath</td>
                                 <td>
-                                    <input class="mapping-input" aria-label="@($"Value for {usage.Reference} in {usage.FlowId}")" placeholder="Enter a value..." @bind="_pendingValues[usage.Reference]" @bind:event="oninput" />
+                                    <input class="mapping-input" type="@(_showValues ? "text" : "password")" autocomplete="off" aria-label="@($"Value for {usage.Reference} in {usage.FlowId}")" placeholder="Enter a value..." @bind="_pendingValues[usage.Reference]" @bind:event="oninput" />
                                 </td>
                                 <td>
                                     <button class="run-button" @onclick="() => SaveAsync(usage.Reference)" disabled="@_isSaving">Save</button>
@@ -85,7 +115,7 @@
                             <tr>
                                 <td class="path-value">@value.Reference</td>
                                 <td>
-                                    <input class="mapping-input" aria-label="@($"Value for {value.Reference}")" @bind="_pendingValues[value.Reference]" @bind:event="oninput" />
+                                    <input class="mapping-input" type="@(_showValues ? "text" : "password")" autocomplete="off" aria-label="@($"Value for {value.Reference}")" @bind="_pendingValues[value.Reference]" @bind:event="oninput" />
                                 </td>
                                 <td class="action-row">
                                     <button class="run-button" @onclick="() => SaveAsync(value.Reference)" disabled="@_isSaving">Save</button>
@@ -101,7 +131,7 @@
             <label class="field-label" for="new-reference">Reference</label>
             <input id="new-reference" class="mapping-input" @bind="_newReference" @bind:event="oninput" placeholder="my-flow-id.fetch-settings-path" />
             <label class="field-label" for="new-value">Value</label>
-            <input id="new-value" class="mapping-input" @bind="_newValue" @bind:event="oninput" placeholder="C:\data\inbox or a connection string, URL, credential, etc." />
+            <input id="new-value" class="mapping-input" type="@(_showValues ? "text" : "password")" autocomplete="off" @bind="_newValue" @bind:event="oninput" placeholder="C:\data\inbox or a connection string, URL, credential, etc." />
             <div class="action-row">
                 <button class="run-button" @onclick="AddNewAsync" disabled="@_isSaving">Add value</button>
             </div>
@@ -149,8 +179,35 @@
     private string _newValue = string.Empty;
     private bool _isLoading = true;
     private bool _isSaving;
+    private bool _showValues;
+    private bool _confirmDisableEncryption;
+    private RuntimeEncryptionViewModel? _encryption;
     private string? _statusMessage;
     private string? _errorMessage;
+
+    private async Task RequestEncryptionChangeAsync()
+    {
+        if (_encryption?.Enabled == true) _confirmDisableEncryption = true;
+        else await SetEncryptionAsync(true);
+    }
+
+    private async Task SetEncryptionAsync(bool enabled)
+    {
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            _encryption = await ApiClient.SetEncryptionAsync(enabled, CancellationToken.None);
+            _confirmDisableEncryption = false;
+            _statusMessage = enabled ? "Runtime state encrypted." : "Runtime state encryption disabled.";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to change encryption: {exception.Message}";
+        }
+        finally { _isSaving = false; }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -164,6 +221,7 @@
 
         try
         {
+            _encryption = await ApiClient.GetEncryptionAsync(CancellationToken.None);
             _configValues = await ApiClient.GetConfigValuesAsync(CancellationToken.None);
             _allUsages = await ApiClient.GetConfigValueUsagesAsync(CancellationToken.None);
             _unresolvedUsages = _allUsages.Where(usage => !usage.IsResolved).ToArray();

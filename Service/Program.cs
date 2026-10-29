@@ -31,6 +31,7 @@ app.MapWorkspaceEndpoints();
 app.MapDesignerEndpoints();
 app.MapBizTalkMigrationEndpoints();
 app.MapConfigValueEndpoints();
+app.MapEncryptionEndpoints();
 app.MapHttpInboundEndpoints();
 
 app.Run();

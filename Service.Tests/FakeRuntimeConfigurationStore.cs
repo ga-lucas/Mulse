@@ -8,6 +8,11 @@ internal sealed class FakeRuntimeConfigurationStore(RuntimeMulseState state) : I
 {
     public RuntimeMulseState GetState() => state;
 
+    public RuntimeEncryptionStatus GetEncryptionStatus() => new(false, false, "MULSE_STATE_ENCRYPTION_KEY", null);
+
+    public Task<RuntimeEncryptionStatus> SetEncryptionAsync(bool enabled, CancellationToken cancellationToken)
+        => throw new NotSupportedException();
+
     public Task<RuntimeMulseState> RestoreWorkspaceAsync(RuntimeMulseState restored, bool replace, CancellationToken cancellationToken)
         => throw new NotSupportedException();
 

@@ -3,6 +3,21 @@ namespace Mulse.Modules.Execution;
 public sealed class FlowExecutionContext
 {
     private readonly Dictionary<string, string> _orchestrationState = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<FetchProcessingReceipt> _sourceReceipts = [];
+    private readonly List<string> _deliveryFailures = [];
+
+    public IReadOnlyList<FetchProcessingReceipt> SourceReceipts => _sourceReceipts;
+    public IReadOnlyList<string> DeliveryFailures => _deliveryFailures;
+
+    /// <summary>Sources already held by suspended checkpoints, not participants in this execution unless resumed.</summary>
+    public IReadOnlyList<FetchProcessingReceipt> PendingSourceReceipts { get; init; } = [];
+
+    public void RegisterSourceReceipt(FetchProcessingReceipt receipt)
+    {
+        if (!_sourceReceipts.Any(existing => existing.Id == receipt.Id)) _sourceReceipts.Add(receipt);
+    }
+
+    public void RecordDeliveryFailure(string failure) => _deliveryFailures.Add(failure);
 
     public FlowExecutionContext(string flowId, string executionId, DateTimeOffset startedAt)
     {

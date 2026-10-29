@@ -139,6 +139,44 @@ public sealed class FlowWorkspaceRenderingTests
     }
 
     [Fact]
+    public async Task ConfigValues_MasksValuesAndDisablesEncryptionWithoutEnvironmentKey()
+    {
+        var html = await RenderAsync<Mulse.Ui.Components.Pages.ConfigValues>();
+        Assert.Contains("Show config/secret values", html);
+        Assert.Contains("Runtime state encryption", html);
+        Assert.Contains("MULSE_STATE_ENCRYPTION_KEY", html);
+        Assert.Matches("role=\"switch\"[^>]*disabled", html);
+        Assert.Matches("type=\"password\"[^>]*aria-label=\"Value for db-host\"", html);
+        Assert.Matches("id=\"new-value\"[^>]*type=\"password\"", html);
+        Assert.Contains("not access control", html);
+    }
+
+    [Theory]
+    [InlineData("Password", "literal-value", "password")]
+    [InlineData("Number", "{{config:count}}", "text")]
+    [InlineData("Select", "{{config:mode}}", "text")]
+    [InlineData("Boolean", "{{config:enabled}}", "text")]
+    public async Task ReferenceInput_PreservesTokensAndMasksPasswordSettings(string kind, string value, string type)
+    {
+        await using var services = new ServiceCollection().AddLogging()
+            .AddSingleton<Microsoft.JSInterop.IJSRuntime>(new StaticRenderJsRuntime()).BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>());
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var rendered = await renderer.RenderComponentAsync<Mulse.Ui.Components.Shared.ReferenceInput>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                ["InputKind"] = kind, ["Value"] = value, ["Label"] = "Test setting", ["References"] = new[] { "count" }
+            }));
+            return rendered.ToHtmlString();
+        });
+        Assert.Contains($"type=\"{type}\"", html);
+        Assert.Contains("role=\"combobox\"", html);
+        Assert.Contains("data-reference-editor", html);
+        Assert.Contains(value, html);
+        if (kind == "Password") Assert.Contains("Show value", html);
+    }
+
+    [Fact]
     public async Task Designer_ShowsIndependentNameAndIdAndRightAlignedProperties()
     {
         var html = await RenderAsync<Designer>();
@@ -238,6 +276,9 @@ public sealed class FlowWorkspaceRenderingTests
                     new ModulePackageViewModel("offline", "C:\\plugins\\offline.dll", "AutoDiscovered", false, DateTimeOffset.MinValue, 0)
                 } : Array.Empty<ModulePackageViewModel>(),
                 "/api/config-values/usages" => Array.Empty<ConfigReferenceUsageViewModel>(),
+                "/api/config-values/references" => new[] { "db-host" },
+                "/api/config-values" => new[] { new ConfigValueViewModel("db-host", "example.internal") },
+                "/api/workspace/encryption" => new RuntimeEncryptionViewModel(false, false, "MULSE_STATE_ENCRYPTION_KEY", "Set the environment variable and restart the Service."),
                 _ => throw new InvalidOperationException($"Unexpected API call: {request.RequestUri}")
             };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(payload, payload.GetType()) });

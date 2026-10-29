@@ -7,21 +7,42 @@ public sealed partial class FlowRuntime
     /// <summary>
     /// Resumes a previously persisted <see cref="FlowRetryState"/>, either because its delay has elapsed or
     /// because the service is recovering pending work found on disk after a restart. Returns <c>null</c> (after
-    /// deleting the stale retry entry) if the flow has since been deleted or disabled.
+    /// deleting stale retry entries) if the flow has been deleted. Source-bearing processing retries stay
+    /// pending while a flow is disabled; terminal source callbacks use their original settings even if it is disabled.
     /// </summary>
-    public async Task<FlowExecutionResult?> ResumeRetryAsync(FlowRetryState retryState, CancellationToken cancellationToken)
+    public Task<FlowExecutionResult?> ResumeRetryAsync(FlowRetryState retryState, CancellationToken cancellationToken)
+        => ResumeRetryCoreAsync(retryState, restartSourceNotifications: false, cancellationToken);
+
+    public async Task<FlowExecutionResult> RetrySourceOutcomesAsync(string flowId, CancellationToken cancellationToken)
+    {
+        var state = (await flowRetryStateStore.GetAllAsync(cancellationToken).ConfigureAwait(false))
+            .FirstOrDefault(candidate => candidate.FlowId.Equals(flowId, StringComparison.OrdinalIgnoreCase) && candidate.SourceCompletion?.NotificationsExhausted == true)
+            ?? throw new InvalidOperationException($"Flow '{flowId}' has no exhausted source outcome notifications to retry.");
+        return await ResumeRetryCoreAsync(state, restartSourceNotifications: true, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The source outcome state was removed or another caller already retried it.");
+    }
+
+    private async Task<FlowExecutionResult?> ResumeRetryCoreAsync(FlowRetryState retryState, bool restartSourceNotifications, CancellationToken cancellationToken)
     {
         PipelineDefinition pipeline;
         try
         {
-            pipeline = GetConfiguredFlow(retryState.FlowId);
+            pipeline = retryState.SourceCompletion is not null
+                ? new PipelineDefinition
+                {
+                    Id = flowDefinitionService.GetById(retryState.FlowId).Id,
+                    Enabled = false,
+                    Fetches = retryState.SourceReceipts.Select((receipt, index) => new FetchNodeDefinition { Id = $"receipt-{index}", Fetch = receipt.Step }).ToList()
+                }
+                : GetConfiguredFlow(retryState.FlowId);
         }
         catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException)
         {
             logger.LogWarning(
-                "Abandoning pending retry for flow {FlowId} execution {ExecutionId} stage {StageId}: {Reason}",
+                "Cannot resume pending retry for flow {FlowId} execution {ExecutionId} stage {StageId}: {Reason}",
                 retryState.FlowId, retryState.ExecutionId, retryState.StageId, exception.Message);
-            await flowRetryStateStore.DeleteAllForExecutionAsync(retryState.FlowId, retryState.ExecutionId, cancellationToken).ConfigureAwait(false);
+            if (retryState.SourceReceipts.Count == 0 || exception is KeyNotFoundException)
+                await flowRetryStateStore.DeleteAllForExecutionAsync(retryState.FlowId, retryState.ExecutionId, cancellationToken).ConfigureAwait(false);
             return null;
         }
 
@@ -29,12 +50,26 @@ public sealed partial class FlowRuntime
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var current = (await flowRetryStateStore.GetAllAsync(cancellationToken).ConfigureAwait(false))
+                .FirstOrDefault(candidate => candidate.FlowId.Equals(retryState.FlowId, StringComparison.OrdinalIgnoreCase)
+                    && candidate.ExecutionId == retryState.ExecutionId && candidate.StageId == retryState.StageId);
+            if (current is null || (!restartSourceNotifications && current.SourceCompletion?.NotificationsExhausted == true)) return null;
+            if (restartSourceNotifications && current.SourceCompletion?.NotificationsExhausted != true) return null;
+            retryState = current;
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
-            var context = new FlowExecutionContext(pipeline.Id, retryState.ExecutionId, retryState.ExecutionStartedAt);
+            var context = new FlowExecutionContext(pipeline.Id, retryState.ExecutionId, retryState.ExecutionStartedAt)
+            {
+                PendingSourceReceipts = await orchestrationStateStore.GetPendingSourceReceiptsAsync(pipeline.Id, cancellationToken).ConfigureAwait(false)
+            };
+            foreach (var receipt in retryState.SourceReceipts) context.RegisterSourceReceipt(receipt);
+            foreach (var failure in retryState.DeliveryFailures) context.RecordDeliveryFailure(failure);
+            context.CaptureResponse(RestoreBatch(retryState.Responses));
+            if (retryState.CheckpointFlowId is { } checkpointFlow && retryState.CheckpointCorrelationKey is { } checkpointKey)
+                context.MarkCheckpointForCompletion(checkpointFlow, checkpointKey);
             var committedAtomicDeliveries = new List<FlowRetryCommittedDelivery>(retryState.CommittedAtomicDeliveries);
             var inputBatch = RestoreBatch(retryState.InputPayloads);
 
-            try
+            async Task<FlowExecutionResult> ResumeStagesAsync()
             {
                 if (IsSourceGraphStageId(retryState.StageId))
                 {
@@ -74,6 +109,25 @@ public sealed partial class FlowRuntime
                     resumeRenderInput: null, resumeRenderAttempts: 0,
                     resumeDeliverIndex: deliverIndex, resumeRenderedBatch: inputBatch, resumeDeliverAttempts: retryState.AttemptsMade,
                     committedAtomicDeliveries, failedAtomicScopes, cancellationToken).ConfigureAwait(false);
+            }
+
+            try
+            {
+                if (retryState.SourceCompletion is { } completion)
+                {
+                    if (restartSourceNotifications)
+                        completion = new FlowSourceCompletion
+                        {
+                            Outcome = completion.Outcome, ThrowProcessingFailure = completion.ThrowProcessingFailure,
+                            PayloadCount = completion.PayloadCount, DeliverModules = completion.DeliverModules,
+                            Responses = completion.Responses, CompletedReceiptIds = completion.CompletedReceiptIds.ToList(),
+                            CheckpointFlowId = completion.CheckpointFlowId, CheckpointCorrelationKey = completion.CheckpointCorrelationKey
+                        };
+                    return await CompleteSourcesAsync(pipeline, context, completion,
+                        restartSourceNotifications ? 0 : retryState.SourceReceiptIndex,
+                        restartSourceNotifications ? 0 : retryState.AttemptsMade, cancellationToken).ConfigureAwait(false);
+                }
+                return await RunWithSourceOutcomesAsync(pipeline, context, ResumeStagesAsync, cancellationToken).ConfigureAwait(false);
             }
             catch (FlowRetryScheduledSignal signal)
             {

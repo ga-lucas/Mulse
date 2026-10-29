@@ -12,9 +12,9 @@ public static class FetchPostProcessing
     public static readonly IReadOnlyList<ModuleSettingOption> ActionOptions =
     [
         new(nameof(FetchPostProcessingAction.None), "Leave in place (may re-process on next run)"),
-        new(nameof(FetchPostProcessingAction.Delete), "Delete after successful fetch"),
-        new(nameof(FetchPostProcessingAction.MoveToArchive), "Move to an archive folder after successful fetch"),
-        new(nameof(FetchPostProcessingAction.Rename), "Rename in place after successful fetch")
+        new(nameof(FetchPostProcessingAction.Delete), "Delete"),
+        new(nameof(FetchPostProcessingAction.MoveToArchive), "Move to an archive folder"),
+        new(nameof(FetchPostProcessingAction.Rename), "Rename in place")
     ];
 
     /// <summary>Parses an "after processing" setting value, defaulting to <see cref="FetchPostProcessingAction.None"/> when absent.</summary>
@@ -26,7 +26,7 @@ public static class FetchPostProcessing
             return FetchPostProcessingAction.None;
         }
 
-        if (Enum.TryParse<FetchPostProcessingAction>(raw, ignoreCase: true, out var action))
+        if (Enum.TryParse<FetchPostProcessingAction>(raw, ignoreCase: true, out var action) && Enum.IsDefined(action))
         {
             return action;
         }

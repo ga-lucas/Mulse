@@ -104,5 +104,7 @@
   ],
   "orchestrationCheckpoints": [],
   "pendingRetries": [],
-  "configValues": {}
+  "configValues": {
+    "myname": "LUCAS"
+  }
 }

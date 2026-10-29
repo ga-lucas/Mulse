@@ -55,9 +55,140 @@ Two ways to ship a module:
   activate them from **Configuration > Module Packages**. Loading uses a collectible `AssemblyLoadContext`
   so packages can later be reloaded or unloaded without restarting the service.
 
+## Stored values in module parameters
+
+Add values under **Configuration > Config values**, then reference them in any module setting with
+`{{config:reference}}` or `{{secret:reference}}`. Tokens can fill the whole parameter or be embedded,
+including multiple tokens, for example:
+
+```text
+Server={{config:db-host}};Database={{config:db-name}};User ID={{config:db-user}};Password={{secret:db-password}}
+```
+
+References resolve at execution time in fetch, parse, augment, render, deliver and compensation settings.
+The saved flow retains its tokens. Missing references are reported in configuration usages and block
+execution; repeated uses of the same reference within a setting appear once in the usage list.
+Replacement is single-pass and literal: stored values containing `$`, backslashes or token syntax are
+not reinterpreted or recursively expanded. No SQL, JSON, URL or connection-string escaping is performed;
+ensure the resulting parameter is valid (store a complete connection string when its values need special
+quoting). Reference names cannot contain braces or line breaks. `secret` and `config` share the same
+store; the prefix alone does not control encryption or masking.
+
+The flow designer suggests stored reference names after `{{`, including tokens embedded in longer
+values and multiline parameters. Type to filter; use Up/Down and Enter/Tab, or click a suggestion.
+Escape dismisses the list. Only reference names are fetched for suggestions, never their values.
+Boolean/select settings retain their normal controls and offer **Use config/secret reference**.
+Numeric parameters also accept reference tokens. Refresh the designer catalog to pick up newly added
+references. Password module settings have a Show/Hide button. On **Config values**, all value-entry
+fields start masked; **Show config/secret values** reveals them regardless of encryption state.
+Masking is visual only: the configuration API and page still have access to the actual values.
+
+### Runtime state encryption
+
+On **Configuration > Config values**, the encryption switch is available only when the Service has a
+valid base64-encoded AES key in its environment (16, 24 or 32 decoded bytes). The default variable is
+`MULSE_STATE_ENCRYPTION_KEY`; its name can be changed through
+`Mulse:Encryption:KeyEnvironmentVariable`. Generate a 256-bit key once in PowerShell:
+
+```powershell
+[Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+```
+
+Store that key securely outside source control and make the environment variable available to the
+Service process before starting it (restart Visual Studio/AppHost if they need to inherit a new
+variable). Do not generate a different key on each launch. The UI never accepts, returns or stores the
+key. A legacy `Mulse:Encryption:KeyBase64` setting alone does not enable the UI switch.
+
+Take a workspace backup first. Turning encryption on atomically migrates the existing state to AES-GCM;
+turning it off requires confirmation and rewrites the state without encryption. Changes take effect
+immediately, serialize with other state writes, and persist across restarts without manually moving
+the state file. The state file includes a versioned envelope recording the selected mode (the disabled
+payload is base64-encoded JSON, not encrypted). Saved mode overrides the original
+`Mulse:Encryption:Enabled` default. Legacy plaintext and configuration-encrypted files remain readable;
+a UI switch migrates them to the new format, which older application versions cannot read.
+
+Keep the same environment key available while encryption is on. A missing/wrong key or damaged
+encrypted payload fails startup rather than replacing your data with an empty workspace. Workspace
+backup encryption uses its own password, independently of this switch. At-rest encryption protects
+the state file, not live API/UI access or other files produced by modules.
+
+This remains a PoC without application access control. Use only in a trusted environment; masking and
+encryption are not authentication or authorization. Add access control and HTTPS before exposing it
+to untrusted users or networks.
+
+Run the reference autocomplete interaction tests with `node --test Service.Tests\reference-input.test.mjs`.
+
+## Source acknowledgement and cleanup
+
+Fetchers can optionally implement `IFetchOutcomeModule` and return an opaque, serializable
+`IntegrationBatch.SourceReceipt`. The runtime captures that receipt with the original resolved fetch
+settings before parsing, and calls `OnProcessingCompletedAsync` with a `FetchProcessingOutcome`:
+
+- **Success** only when all processing and applicable deliveries succeed, including flows with zero
+  delivery actions. Conditionally skipped actions are not failures.
+- **Failure** after a processing/delivery stage permanently fails (its retries are exhausted).
+  Independent delivery failures retain their existing best-effort `Completed` result with warnings,
+  but still produce a **failure** source notification. Failure does **not** mean nothing was delivered;
+  some destinations may already have received data.
+- Pending processing retries, orchestration suspension and cancellation do not send a terminal
+  notification. Receipts survive retry persistence and correlated orchestration checkpoints.
+
+This is a focused fetcher lifecycle hook, not a general event bus or an extra pipeline module type.
+Database/custom fetchers can use it to mark records or update source status; existing read-only database
+fetchers are unchanged. Modules without the interface or without a receipt retain their old behavior.
+
+### Built-in source actions
+
+**Behavior change:** local filesystem/document-repository `afterProcessing` and SFTP `deleteAfterRead`
+settings no longer remove files immediately after reading. They now apply only after successful full
+processing/delivery. Defaults still leave sources in place.
+
+- Filesystem and document repository: `afterProcessing` selects `None`, `Delete`, `MoveToArchive` or
+  `Rename` on success. `onFailure` independently selects the permanent-failure action (default `None`).
+  `archivePath` and `failureArchivePath` choose destinations; their defaults are sibling
+  `<source-directory>.processed` and `<source-directory>.failed` folders. Relative subdirectories are
+  preserved. Rename adds `.processed` or `.failed`; choose a search pattern that excludes these suffixes
+  (a broad `*.*` pattern can read renamed files again). Repository sidecars move/delete with documents.
+- SFTP: `deleteAfterRead: true` now means delete on successful processing. Optional `failureRemotePath`
+  quarantines failed files in an **existing remote directory**, using an execution-specific filename;
+  blank keeps the original. No live SFTP-server integration test is included.
+
+Built-in fetchers skip unchanged files held by that flow's suspended checkpoints, while still accepting
+new files. An idle poll does not count as a follow-up message for `ResumeOrWait`. Custom source modules
+can consult `FlowExecutionContext.PendingSourceReceipts` to provide the same reservation behavior;
+custom orchestration stores must implement `GetPendingSourceReceiptsAsync`.
+
+Receipts identify exact paths, sizes, timestamps and SHA-256 content hashes.
+the source directory or trust payload metadata paths, does not overwrite archive files, and refuses
+changed/replacement sources. Actions tolerate retries after partial cleanup. These checks are not a
+filesystem transaction or a distributed source lock: do not let other flows/processes concurrently
+replace files being consumed. Sources remain present during delivery retries. Choosing `None` deliberately
+allows a later, fresh run to read them again.
+
+### Notification retries and recovery
+
+Source callbacks use the **original fetch step's retry policy** (step override, then flow default,
+otherwise one attempt). Notification-only retry state survives restarts; it never re-fetches, re-parses
+or resends successful deliveries. Already acknowledged sources are skipped. A callback can still be
+repeated after a crash between its side effect and durable acknowledgement: implementations **must be
+idempotent**, use the stable receipt ID for deduplication, and not depend on the original module instance.
+
+Exhausted notifications are logged and retained as failed source state, blocking fresh executions of
+that flow to prevent accidental redelivery. Fix the source/permissions problem, then explicitly retry
+only the failed notifications with `POST /api/flows/{flowId}/source-outcomes/retry` (also available in
+OpenAPI). This uses the original settings and outcome, even if the flow was subsequently edited or
+disabled, and gives failed callbacks a fresh attempt budget. A processing failure remains a failure;
+notification recovery does not turn it into success. Callback errors and the original processing error
+are both reported. Source packages cannot be unloaded while receipts still need them.
+
+Successful orchestration checkpoints are removed only after successful notifications. Deleting a flow,
+replacing the workspace or discarding its runtime state also discards its pending work: reconcile source
+files and partial deliveries before doing so. Receipts contain resolved settings (potentially credentials)
+and share the runtime state's optional at-rest encryption; protect backups and API access accordingly.
+
 ## File system delivery
 
-The **File system deliver** module (`file-system-deliver`) exposes these options in the designer:
+The **File system deliver** module
 
 | `namingMode` | Example output | Behavior |
 |---|---|---|

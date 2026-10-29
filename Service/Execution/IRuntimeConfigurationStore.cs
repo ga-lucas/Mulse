@@ -4,6 +4,10 @@ public interface IRuntimeConfigurationStore
 {
     RuntimeMulseState GetState();
 
+    RuntimeEncryptionStatus GetEncryptionStatus();
+
+    Task<RuntimeEncryptionStatus> SetEncryptionAsync(bool enabled, CancellationToken cancellationToken);
+
     Task<RuntimeMulseState> RestoreWorkspaceAsync(RuntimeMulseState restored, bool replace, CancellationToken cancellationToken);
 
     Task<int> DeleteAllFlowsAsync(CancellationToken cancellationToken);

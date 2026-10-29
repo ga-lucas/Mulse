@@ -15,7 +15,7 @@ public sealed class FlowRetryState
 
     /// <summary>
     /// Identifies which stage of the flow is stalled: "fetch:{fetchNodeId}", "parse:{parseNodeId}",
-    /// "augment:{index}", "delivery:{routeIndex}:render", or "delivery:{routeIndex}:deliver:{deliverIndex}".
+    /// "augment:{index}", "delivery:{routeIndex}:render", "delivery:{routeIndex}:deliver:{deliverIndex}", or "source-outcome".
     /// </summary>
     public string StageId { get; init; } = string.Empty;
 
@@ -64,4 +64,14 @@ public sealed class FlowRetryState
     /// resume keeps skipping their remaining deliver actions and still reports the execution as failed at the end.
     /// </summary>
     public List<string> FailedAtomicScopes { get; init; } = [];
+
+    public List<FetchProcessingReceipt> SourceReceipts { get; init; } = [];
+    public List<string> DeliveryFailures { get; init; } = [];
+    public List<FlowOrchestrationPayloadSnapshot> Responses { get; init; } = [];
+    public string? CheckpointFlowId { get; init; }
+    public string? CheckpointCorrelationKey { get; init; }
+
+    /// <summary>Present only for a source-outcome stage; resumes callbacks, never processing or deliveries.</summary>
+    public FlowSourceCompletion? SourceCompletion { get; init; }
+    public int SourceReceiptIndex { get; init; }
 }

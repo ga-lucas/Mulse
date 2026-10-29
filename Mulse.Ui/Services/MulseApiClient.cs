@@ -106,6 +106,21 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
     public Task<IReadOnlyList<ConfigValueViewModel>> GetConfigValuesAsync(CancellationToken cancellationToken)
         => GetListAsync<ConfigValueViewModel>("/api/config-values", cancellationToken);
 
+    public Task<IReadOnlyList<string>> GetConfigReferencesAsync(CancellationToken cancellationToken)
+        => GetListAsync<string>("/api/config-values/references", cancellationToken);
+
+    public async Task<RuntimeEncryptionViewModel> GetEncryptionAsync(CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync("/api/workspace/encryption", cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<RuntimeEncryptionViewModel>(response, cancellationToken, "encryption status").ConfigureAwait(false);
+    }
+
+    public async Task<RuntimeEncryptionViewModel> SetEncryptionAsync(bool enabled, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PutAsJsonAsync("/api/workspace/encryption", new { Enabled = enabled }, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<RuntimeEncryptionViewModel>(response, cancellationToken, "encryption status").ConfigureAwait(false);
+    }
+
     public Task<IReadOnlyList<ConfigReferenceUsageViewModel>> GetConfigValueUsagesAsync(CancellationToken cancellationToken)
         => GetListAsync<ConfigReferenceUsageViewModel>("/api/config-values/usages", cancellationToken);
 

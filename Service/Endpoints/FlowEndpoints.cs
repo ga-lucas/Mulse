@@ -148,6 +148,22 @@ public static class FlowEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
+        app.MapPost("/api/flows/{flowId}/source-outcomes/retry", async Task<Ok<FlowRunResponse>> (string flowId, IFlowRuntime flowRuntime, CancellationToken cancellationToken) =>
+            {
+                var result = await flowRuntime.RetrySourceOutcomesAsync(flowId, cancellationToken).ConfigureAwait(false);
+                return TypedResults.Ok(new FlowRunResponse(result.FlowId, result.StartedAt, result.CompletedAt,
+                    result.PayloadCount, result.DeliverModules, result.ResponsePayloads?.Count ?? 0,
+                    result.Outcome.ToString(), result.NextAttemptAt, ToResponsePayloads(result.ResponsePayloads), result.Detail));
+            })
+            .WithName("RetrySourceOutcomes")
+            .WithSummary("Retry failed source notifications without fetching or delivering again")
+            .WithDescription("Restarts exhausted source notification attempts using their original receipts/settings. Already acknowledged sources are skipped; the original processing outcome is unchanged.")
+            .WithTags("Flows")
+            .Produces<FlowRunResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status500InternalServerError);
+
         return app;
     }
 

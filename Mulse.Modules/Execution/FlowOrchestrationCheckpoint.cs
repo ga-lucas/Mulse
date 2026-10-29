@@ -15,4 +15,6 @@ public sealed class FlowOrchestrationCheckpoint
     public Dictionary<string, string> StateValues { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
     public List<FlowOrchestrationPayloadSnapshot> Payloads { get; init; } = [];
+
+    public List<FetchProcessingReceipt> SourceReceipts { get; init; } = [];
 }

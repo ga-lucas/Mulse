@@ -456,6 +456,7 @@
             var catalogModule = FindCatalogModule(node.ModuleId);
             <h3>@NodeHeading(node)</h3>
             <p class="panel-hint">@StageDescription(node.Stage)</p>
+            <p class="field-hint">Type <code>{{</code> in a module setting for config/secret reference suggestions. Use Up/Down and Enter/Tab, or click a suggestion. <a href="/config-values">Manage stored values</a>.</p>
 
             <label class="field-label">Name</label>
             <input class="mapping-input" placeholder="@DefaultNodeHeading(node)" value="@node.Name"
@@ -608,10 +609,9 @@
                     @if (string.Equals(cardinality, "Nested", StringComparison.OrdinalIgnoreCase))
                     {
                         <label class="field-label">Nested target path *</label>
-                        <input class="mapping-input"
-                               value="@(node.Settings.GetValueOrDefault(NestedPathKey) ?? string.Empty)"
-                               placeholder="order.lineItems"
-                               @oninput="@(args => SetJoinSetting(node, NestedPathKey, args.Value?.ToString()))" />
+                        <ReferenceInput Value="@(node.Settings.GetValueOrDefault(NestedPathKey) ?? string.Empty)"
+                                        Placeholder="order.lineItems" Label="Nested target path" References="_configReferences"
+                                        ValueChanged="value => SetJoinSetting(node, NestedPathKey, value)" />
                         <p class="field-hint">Where the array of mapped right rows is written on each left row, e.g. <code>order.lineItems</code>. Required for nested cardinality.</p>
                     }
 
@@ -624,10 +624,10 @@
                     @foreach (var key in joinEditor.Keys)
                     {
                         <div class="inline-row" @key="key">
-                            <input class="mapping-input" placeholder="@($"Left path ({JoinSideName(node, "Left")})")" value="@key.LeftPath"
-                                   @oninput="@(args => SetJoinKeyPath(node, key, isLeft: true, args.Value?.ToString()))" />
-                            <input class="mapping-input" placeholder="@($"Right path ({JoinSideName(node, "Right")})")" value="@key.RightPath"
-                                   @oninput="@(args => SetJoinKeyPath(node, key, isLeft: false, args.Value?.ToString()))" />
+                            <ReferenceInput Placeholder="@($"Left path ({JoinSideName(node, "Left")})")" Value="@key.LeftPath"
+                                            Label="Left join path" References="_configReferences" ValueChanged="value => SetJoinKeyPath(node, key, true, value)" />
+                            <ReferenceInput Placeholder="@($"Right path ({JoinSideName(node, "Right")})")" Value="@key.RightPath"
+                                            Label="Right join path" References="_configReferences" ValueChanged="value => SetJoinKeyPath(node, key, false, value)" />
                             <button class="secondary-button" @onclick="@(() => RemoveJoinKey(node, key))">Remove</button>
                         </div>
                     }
@@ -668,10 +668,10 @@
                                         }
                                         else
                                         {
-                                            <input class="mapping-input" value="@row.SourcePath" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.SourcePath, args.Value?.ToString()))" />
+                                            <ReferenceInput Value="@row.SourcePath" ValueChanged="value => SetJoinMappingField(node, row, JoinMappingField.SourcePath, value)" Label="Mapping source path" References="_configReferences" />
                                         }
                                     </td>
-                                    <td><input class="mapping-input" value="@row.TargetField" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.TargetField, args.Value?.ToString()))" /></td>
+                                    <td><ReferenceInput Value="@row.TargetField" ValueChanged="value => SetJoinMappingField(node, row, JoinMappingField.TargetField, value)" Label="Mapping target field" References="_configReferences" /></td>
                                     <td>
                                         <select class="selector compact" value="@row.Condition" @onchange="@(args => SetJoinMappingField(node, row, JoinMappingField.Condition, args.Value?.ToString()))">
                                             @foreach (var condition in ConditionOptions)
@@ -683,7 +683,7 @@
                                     <td>
                                         @if (!isTransformRow)
                                         {
-                                            <input class="mapping-input" value="@row.LiteralValue" @oninput="@(args => SetJoinMappingField(node, row, JoinMappingField.LiteralValue, args.Value?.ToString()))" />
+                                            <ReferenceInput Value="@row.LiteralValue" ValueChanged="value => SetJoinMappingField(node, row, JoinMappingField.LiteralValue, value)" Label="Mapping literal JSON" References="_configReferences" />
                                         }
                                     </td>
                                     <td><button class="secondary-button" @onclick="@(() => RemoveJoinMapping(node, row))">Remove</button></td>
@@ -727,13 +727,13 @@
                                                     </select>
                                                     @if (isLiteralInput)
                                                     {
-                                                        <input class="mapping-input" placeholder="Literal JSON value" value="@input.LiteralValue"
-                                                               @oninput="@(args => SetTransformInputField(node, row, input, JoinMappingField.LiteralValue, args.Value?.ToString()))" />
+                                                        <ReferenceInput Placeholder="Literal JSON value" Value="@input.LiteralValue" Label="Transform literal JSON" References="_configReferences"
+                                                                        ValueChanged="value => SetTransformInputField(node, row, input, JoinMappingField.LiteralValue, value)" />
                                                     }
                                                     else
                                                     {
-                                                        <input class="mapping-input" placeholder="Source path" value="@input.SourcePath"
-                                                               @oninput="@(args => SetTransformInputField(node, row, input, JoinMappingField.SourcePath, args.Value?.ToString()))" />
+                                                        <ReferenceInput Placeholder="Source path" Value="@input.SourcePath" Label="Transform source path" References="_configReferences"
+                                                                        ValueChanged="value => SetTransformInputField(node, row, input, JoinMappingField.SourcePath, value)" />
                                                     }
                                                     <button class="secondary-button" @onclick="@(() => RemoveTransformInput(node, row, input))">Remove</button>
                                                 </div>
@@ -771,7 +771,7 @@
                         <div class="setting-row" @key="key">
                             <label class="field-label">@key</label>
                             <div class="inline-row">
-                                <input class="mapping-input" value="@node.Settings[key]" @oninput="e => node.Settings[key] = e.Value?.ToString() ?? string.Empty" />
+                                <ReferenceInput Value="@node.Settings[key]" ValueChanged="value => node.Settings[key] = value" Label="@key" References="_configReferences" />
                                 <button class="secondary-button" @onclick="() => node.Settings.Remove(key)">Remove</button>
                             </div>
                         </div>
@@ -877,8 +877,8 @@
                                     }
                                 </select>
                             </td>
-                            <td><input class="mapping-input" value="@row.SourcePath" @oninput="e => row.SourcePath = e.Value?.ToString() ?? string.Empty" /></td>
-                            <td><input class="mapping-input" value="@row.TargetField" @oninput="e => row.TargetField = e.Value?.ToString() ?? string.Empty" /></td>
+                            <td><ReferenceInput Value="@row.SourcePath" ValueChanged="value => row.SourcePath = value" Label="Mapping source path" References="_configReferences" /></td>
+                            <td><ReferenceInput Value="@row.TargetField" ValueChanged="value => row.TargetField = value" Label="Mapping target field" References="_configReferences" /></td>
                             <td>
                                 <select class="selector compact" value="@row.Condition" @onchange="e => row.Condition = e.Value?.ToString() ?? row.Condition">
                                     @foreach (var condition in ConditionOptions)
@@ -887,7 +887,7 @@
                                     }
                                 </select>
                             </td>
-                            <td><input class="mapping-input" value="@row.LiteralValue" @oninput="e => row.LiteralValue = e.Value?.ToString() ?? string.Empty" /></td>
+                            <td><ReferenceInput Value="@row.LiteralValue" ValueChanged="value => row.LiteralValue = value" Label="Mapping literal JSON" References="_configReferences" /></td>
                             <td><button class="secondary-button" @onclick="() => _mappingRows.Remove(row)">Remove</button></td>
                         </tr>
                     }

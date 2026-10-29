@@ -22,14 +22,8 @@ internal static class FlowModuleDependencies
             if (string.Equals(step.Module, "multi-source-join-map-augment", StringComparison.OrdinalIgnoreCase)
                 && step.Settings.TryGetValue("mappingJson", out var json) && !string.IsNullOrWhiteSpace(json))
             {
-                var token = ConfigValueResolver.TokenPattern().Match(json);
-                if (token.Success)
-                {
-                    var reference = token.Groups["reference"].Value;
-                    if (configValues is null || !configValues.TryGetValue(reference, out var configuredJson))
-                        throw new ArgumentException($"Flow '{flow.Id}' requires configuration '{reference}' to determine its mapping module dependencies.");
-                    json = configuredJson;
-                }
+                json = ConfigValueResolver.Substitute(json, configValues, reference =>
+                    throw new ArgumentException($"Flow '{flow.Id}' requires configuration '{reference}' to determine its mapping module dependencies."));
                 foreach (var mapping in ParseMappings(flow.Id, json).Where(mapping => mapping.SourceKind == WorkflowFieldSourceKind.Transform))
                     yield return (mapping.TransformModule?.Trim() ?? string.Empty, ModuleKind.Transform);
             }

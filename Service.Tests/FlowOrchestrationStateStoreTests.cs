@@ -51,4 +51,29 @@ public sealed class FlowOrchestrationStateStoreTests
         Assert.Null(await store.GetAsync("flow-a", "key-1", CancellationToken.None));
         Assert.NotNull(await store.GetAsync("flow-a", "key-2", CancellationToken.None));
     }
+
+    [Fact]
+    public async Task PendingSources_ArePersistableFlowScopedAndDeduplicatedAcrossCheckpoints()
+    {
+        var receipt = new FetchProcessingReceipt("receipt", "fetch", new ModuleStepDefinition
+        {
+            Module = "file-system-fetch", Settings = new() { ["path"] = "original-directory" }
+        }, new() { ["identity"] = "original-source" });
+        var state = new RuntimeMulseState
+        {
+            OrchestrationCheckpoints =
+            [
+                new() { FlowId = "Flow-A", CorrelationKey = "first", SourceReceipts = [receipt] },
+                new() { FlowId = "Flow-A", CorrelationKey = "second", SourceReceipts = [receipt] },
+                new() { FlowId = "Other", SourceReceipts = [receipt with { Id = "unrelated" }] }
+            ]
+        };
+        var restored = System.Text.Json.JsonSerializer.Deserialize<RuntimeMulseState>(System.Text.Json.JsonSerializer.Serialize(state))!;
+        var store = new FlowOrchestrationStateStore(new FakeRuntimeConfigurationStore(restored));
+        var pending = Assert.Single(await store.GetPendingSourceReceiptsAsync("flow-a", CancellationToken.None));
+        Assert.Equal("receipt", pending.Id);
+        Assert.Equal("original-directory", pending.Step.Settings["path"]);
+        Assert.Equal("original-source", pending.Data["identity"]);
+        Assert.Empty(await store.GetPendingSourceReceiptsAsync("missing", CancellationToken.None));
+    }
 }

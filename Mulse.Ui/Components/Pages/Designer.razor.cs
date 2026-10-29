@@ -61,6 +61,7 @@ public partial class Designer : IAsyncDisposable
     private readonly List<FieldMappingRow> _mappingRows = [];
 
     private IReadOnlyList<ModuleViewModel> _modules = [];
+    private IReadOnlyList<string> _configReferences = [];
     private IReadOnlyList<ConfigReferenceUsageViewModel> _configUsages = [];
     private IReadOnlyList<BizTalkSettingRequirementViewModel> _bizTalkRequirements = [];
     private IReadOnlyList<string> _bizTalkWarnings = [];
@@ -305,6 +306,7 @@ public partial class Designer : IAsyncDisposable
         try
         {
             _modules = await ApiClient.GetModulesAsync(CancellationToken.None);
+            _configReferences = await ApiClient.GetConfigReferencesAsync(CancellationToken.None);
             _configUsages = await ApiClient.GetConfigValueUsagesAsync(CancellationToken.None);
             UpdateUnresolvedConfigCount();
         }
