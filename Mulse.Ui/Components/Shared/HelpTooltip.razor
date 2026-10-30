@@ -1,0 +1,25 @@
+<span class="help-tooltip @(_dismissed ? "dismissed" : null) @(_pinned ? "pinned" : null)" @onmouseenter="ResetDismissal" @onfocusin="ResetDismissal" @onkeydown="HandleKeyDown">
+    <button type="button" class="help-trigger" style="anchor-name: --@_id" aria-label="@($"Help: {Label}")" aria-describedby="@_id" @onclick="Toggle">?</button>
+    <span id="@_id" class="help-content" style="position-anchor: --@_id" role="tooltip">@ChildContent</span>
+</span>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    private readonly string _id = "help-" + Guid.NewGuid().ToString("n");
+    private bool _dismissed;
+    private bool _pinned;
+
+    private void ResetDismissal() => _dismissed = false;
+    private void Toggle()
+    {
+        _pinned = !_pinned;
+        _dismissed = !_pinned;
+    }
+    private void HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key != "Escape") return;
+        _pinned = false;
+        _dismissed = true;
+    }
+}

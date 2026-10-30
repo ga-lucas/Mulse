@@ -1,0 +1,8 @@
+.help-tooltip { position: relative; display: inline-flex; vertical-align: middle; margin: 0 .25rem; }
+.help-trigger { display: inline-grid; place-items: center; width: 1.4rem; height: 1.4rem; padding: 0; border: 1px solid var(--border-subtle); border-radius: 50%; background: var(--surface-panel); color: var(--text-secondary); font: inherit; font-size: .8rem; cursor: help; }
+.help-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.help-content { display: none; position: absolute; z-index: 100; top: 100%; left: 0; width: max-content; max-width: min(28rem, 65vw); padding: .65rem .8rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-panel); color: var(--text-primary); box-shadow: var(--shadow-panel); font-size: .85rem; font-weight: normal; line-height: 1.5; white-space: normal; }
+.help-tooltip:not(.dismissed):hover .help-content, .help-tooltip:not(.dismissed):focus-within .help-content, .help-tooltip.pinned .help-content { display: block; }
+@supports (top: anchor(bottom)) {
+    .help-content { position: fixed; top: anchor(bottom); left: anchor(left); position-try-fallbacks: flip-inline, flip-block, flip-block flip-inline; max-height: 70vh; overflow: auto; }
+}

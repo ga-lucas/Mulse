@@ -488,64 +488,11 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             .ToArray();
     }
 
-    /// <summary>
-    /// Well-known BizTalk pipeline stage category GUIDs that only appear in receive pipelines
-    /// (Decode, Disassemble, Validate, Resolve Party).
-    /// </summary>
-    private static readonly IReadOnlyList<string> ReceivePipelineStageCategoryIds =
-    [
-        "9d0e4103-4cce-4536-83fa-4a5040674ad6",
-        "9d0e4105-4cce-4536-83fa-4a5040674ad6",
-        "9d0e410d-4cce-4536-83fa-4a5040674ad6",
-        "9d0e410e-4cce-4536-83fa-4a5040674ad6",
-    ];
-
-    /// <summary>
-    /// Well-known BizTalk pipeline stage category GUIDs that only appear in send pipelines
-    /// (Pre-Assemble, Assemble, Encode).
-    /// </summary>
-    private static readonly IReadOnlyList<string> SendPipelineStageCategoryIds =
-    [
-        "9d0e4101-4cce-4536-83fa-4a5040674ad6",
-        "9d0e4107-4cce-4536-83fa-4a5040674ad6",
-        "9d0e4108-4cce-4536-83fa-4a5040674ad6",
-    ];
-
-    /// <summary>
-    /// Classifies each pipeline (.btp) artifact as receive- or send-direction by inspecting the stage category
-    /// GUIDs it declares, so a project that only receives messages isn't given a bogus bidirectional draft. A
-    /// pipeline's file name is a hint at best ("XReceivePipeline"), but its stage categories are authoritative:
-    /// BizTalk only allows Decode/Disassemble/Validate/ResolveParty stages in receive pipelines and
-    /// Pre-Assemble/Assemble/Encode stages in send pipelines.
-    /// </summary>
     private static (int ReceiveCount, int SendCount) ClassifyPipelineDirections(IReadOnlyList<BizTalkArtifactResponse> artifacts)
     {
-        var receiveCount = 0;
-        var sendCount = 0;
-
-        foreach (var artifact in artifacts.Where(static artifact => string.Equals(artifact.Kind, "Pipeline", StringComparison.OrdinalIgnoreCase)))
-        {
-            string content;
-            try
-            {
-                content = File.ReadAllText(artifact.FullPath);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-
-            if (SendPipelineStageCategoryIds.Any(categoryId => content.Contains(categoryId, StringComparison.OrdinalIgnoreCase)))
-            {
-                sendCount++;
-            }
-            else if (ReceivePipelineStageCategoryIds.Any(categoryId => content.Contains(categoryId, StringComparison.OrdinalIgnoreCase)))
-            {
-                receiveCount++;
-            }
-        }
-
-        return (receiveCount, sendCount);
+        var directions = artifacts.Where(static artifact => string.Equals(artifact.Kind, "Pipeline", StringComparison.OrdinalIgnoreCase))
+            .Select(artifact => BizTalkPipelineInventoryAnalyzer.Analyze(artifact.FullPath).Inventory?.Direction).ToArray();
+        return (directions.Count(direction => direction == "Receive"), directions.Count(direction => direction == "Send"));
     }
 
     private static IEnumerable<BizTalkArtifactResponse> OrchestrationArtifacts(IReadOnlyList<BizTalkArtifactResponse> artifacts)

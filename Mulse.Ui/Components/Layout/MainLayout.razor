@@ -1,29 +1,34 @@
 ﻿@inherits LayoutComponentBase
 @inject IJSRuntime JS
 
-<div class="layout-shell">
+<div class="layout-shell @(_menuCollapsed ? "sidebar-collapsed" : null)">
     <a class="skip-link" href="#main-content">Skip to content</a>
     <header class="sidebar">
-        <a class="brand" href="/" aria-label="Mulse home">
+        <a class="brand" href="/" aria-label="Mulse home" title="Mulse home">
             <span class="brand-mark" aria-hidden="true">M</span>
-            <span>Mulse<small>Integration workspace</small></span>
+            <span class="brand-text">Mulse<small>Integration workspace</small></span>
         </a>
-        <p class="nav-label" id="workspace-nav-label">Workspace</p>
-        <nav class="workspace-nav" aria-labelledby="workspace-nav-label">
-            <NavLink href="/" Match="NavLinkMatch.All"><span class="nav-icon" aria-hidden="true">&#9638;</span>Dashboard</NavLink>
-        </nav>
-        <p class="nav-label" id="configuration-nav-label">Configuration</p>
-        <nav class="workspace-nav" aria-labelledby="configuration-nav-label">
-            <NavLink href="/config-values"><span class="nav-icon" aria-hidden="true">&#9881;</span>Config values</NavLink>
-            <NavLink href="/modules"><span class="nav-icon" aria-hidden="true">&#9639;</span>Modules</NavLink>
-            <NavLink href="/module-packages"><span class="nav-icon" aria-hidden="true">&#9638;</span>Module Packages</NavLink>
-            <NavLink href="/backup-restore"><span class="nav-icon" aria-hidden="true">&#8645;</span>Backup &amp; Restore</NavLink>
-        </nav>
-        <div class="sidebar-footer">
-            <button type="button" class="secondary-button theme-toggle" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">
-                <span aria-hidden="true">&#9680;</span> Dark mode
-            </button>
-            <span class="workspace-caption">Mulse orchestration console</span>
+        <button type="button" class="secondary-button sidebar-toggle" aria-label="@(_menuCollapsed ? "Expand main menu" : "Collapse main menu")" title="@(_menuCollapsed ? "Expand main menu" : "Collapse main menu")" aria-expanded="@(!_menuCollapsed ? "true" : "false")" aria-controls="main-menu" @onclick="ToggleMenu">
+            <span aria-hidden="true">@(_menuCollapsed ? ">" : "<")</span><span class="menu-text">Collapse menu</span>
+        </button>
+        <div id="main-menu" class="menu-content">
+            <p class="nav-label" id="workspace-nav-label">Workspace</p>
+            <nav class="workspace-nav" aria-labelledby="workspace-nav-label">
+                <NavLink href="/" Match="NavLinkMatch.All" aria-label="Dashboard" title="Dashboard"><span class="nav-icon" aria-hidden="true">&#9638;</span><span class="menu-text">Dashboard</span></NavLink>
+            </nav>
+            <p class="nav-label" id="configuration-nav-label">Configuration</p>
+            <nav class="workspace-nav" aria-labelledby="configuration-nav-label">
+                <NavLink href="/config-values" aria-label="Config values" title="Config values"><span class="nav-icon" aria-hidden="true">&#9881;</span><span class="menu-text">Config values</span></NavLink>
+                <NavLink href="/modules" aria-label="Modules" title="Modules"><span class="nav-icon" aria-hidden="true">&#9639;</span><span class="menu-text">Modules</span></NavLink>
+                <NavLink href="/module-packages" aria-label="Module Packages" title="Module Packages"><span class="nav-icon" aria-hidden="true">&#9638;</span><span class="menu-text">Module Packages</span></NavLink>
+                <NavLink href="/backup-restore" aria-label="Backup & Restore" title="Backup & Restore"><span class="nav-icon" aria-hidden="true">&#8645;</span><span class="menu-text">Backup &amp; Restore</span></NavLink>
+            </nav>
+            <div class="sidebar-footer">
+                <button type="button" class="secondary-button theme-toggle" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode" aria-pressed="false">
+                    <span aria-hidden="true">&#9680;</span><span class="menu-text">Dark mode</span>
+                </button>
+                <span class="workspace-caption">Mulse orchestration console</span>
+            </div>
         </div>
     </header>
     <main id="main-content" tabindex="-1">
@@ -32,6 +37,9 @@
 </div>
 
 @code {
+    private bool _menuCollapsed;
+    private void ToggleMenu() => _menuCollapsed = !_menuCollapsed;
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)

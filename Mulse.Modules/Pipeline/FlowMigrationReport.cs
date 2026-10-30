@@ -41,6 +41,7 @@ public sealed record MigrationArtifactReport(
     IReadOnlyList<MigrationDiagnostic> Diagnostics)
 {
     public OrchestrationMigrationInventory? Orchestration { get; init; }
+    public PipelineMigrationInventory? Pipeline { get; init; }
 }
 
 public sealed record OrchestrationMigrationInventory(

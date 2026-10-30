@@ -4,7 +4,7 @@
 
 <details>
     <summary>XSD schema trees and BizTalk map import</summary>
-    <p class="field-hint">Available to scratch-built and imported flows. Paste an XSD or select up to 16 XSD files per side, including imported namespaces. Inspection alone does not save schemas; applied proposals include them for runtime validation. External files/network locations are never resolved. Persisted mapping JSON, including schemas, is limited to 256 KiB characters.</p>
+    <HelpTooltip Label="Schemas and import">Paste an XSD or select up to 16 files per side, including imported namespaces. Inspection alone does not save schemas; applied proposals include runtime validation. External files/network locations are never resolved. Saved mapping JSON, including schemas, is limited to 256 KiB characters.</HelpTooltip>
     @if (_error is not null)
     {
         <p class="status-banner error" role="alert">@_error</p>
@@ -24,12 +24,12 @@
     <p>Source: @_sourceSelection?.Field.Path / Target: @_targetSelection?.Field.Path</p>
     <button class="secondary-button" disabled="@(_busy || _sourceSelection is null || _targetSelection is null)" @onclick="AddSelectedAsync">Add selected scalar field mapping</button>
     <button class="secondary-button" disabled="@_busy" @onclick="AttachSchemasAsync">Use supplied XSDs for runtime validation</button>
-    <p class="field-hint">Optional sources require an explicit missing-value policy. Repeating/record values cannot be added as scalar mappings. Attaching schemas upgrades the mapping to version 2 and validates input and output in preview and execution; it does not approve an imported flow.</p>
+    <HelpTooltip Label="Runtime validation">Optional sources require an explicit missing-value policy. Repeating/record values cannot be added as scalar mappings. Attaching schemas upgrades the mapping to version 2 and validates input and output in preview and execution; it does not approve an imported flow.</HelpTooltip>
     <label class="field-label">BizTalk map XML (.btm)</label>
     <textarea class="sample-textarea" aria-label="BizTalk map XML" value="@_mapXml" @onchange="e => { _mapXml = e.Value?.ToString() ?? string.Empty; Invalidate(); }"></textarea>
     <InputFile OnChange="ReadMapAsync" accept=".btm" disabled="@_busy" />
     <button class="secondary-button" disabled="@_busy" @onclick="ConvertAsync">Create native map proposal</button>
-    <p class="field-hint">Requires source/target XSDs. Only complete supported scalar-link/constant maps are accepted. Optional links require optional targets and use an explicit presence condition. Repeating sources, structured copies, functoids, scripts, custom XSLT, unknown constructs and unsupported target shapes fail explicitly; no partial map replaces your work.</p>
+    <HelpTooltip Label="Native map proposals">Requires source/target XSDs. Only complete supported scalar-link/constant maps are accepted. Optional links require optional targets and use an explicit presence condition. Repeating sources, structured copies, functoids, scripts, custom XSLT, unknown constructs and unsupported targets fail explicitly; no partial map replaces your work.</HelpTooltip>
     @if (_proposal is { } proposal)
     {
         @foreach (var warning in proposal.Warnings)
@@ -39,7 +39,7 @@
         <details><summary>Proposed native mapping JSON</summary><pre>@proposal.MappingJson</pre></details>
         <details><summary>Proposed XSLT</summary><pre>@proposal.Xslt</pre></details>
         <button class="secondary-button" @onclick="() => Applied.InvokeAsync(proposal.MappingJson)">Replace this node's mapping with proposal</button>
-        <p class="field-hint">This replaces only the selected mapping, not its flow provenance. Imported flows stay blocked. Save the flow to persist the change.</p>
+        <HelpTooltip Label="Apply proposal">This replaces only the selected mapping, not its flow provenance. Imported flows stay blocked. Save the flow to persist the change.</HelpTooltip>
     }
 </details>
 
@@ -47,6 +47,7 @@
     [Parameter] public EventCallback<string> Applied { get; set; }
     [Parameter] public EventCallback<XmlSchemaFieldPairViewModel> FieldAdded { get; set; }
     [Parameter] public EventCallback<XmlMappingSchemasViewModel> SchemasApplied { get; set; }
+    [Parameter] public EventCallback<XmlMappingTreesViewModel> TreesChanged { get; set; }
     private string _sourceXsd = string.Empty;
     private string _targetXsd = string.Empty;
     private string _mapXml = string.Empty;
@@ -68,11 +69,12 @@
         _error = null;
     }
 
-    private void SetText(string text, bool source)
+    private async Task SetText(string text, bool source)
     {
         if (source) { _sourceXsd = text; _sourceTree = null; _sourceSelection = null; }
         else { _targetXsd = text; _targetTree = null; _targetSelection = null; }
         Invalidate();
+        await TreesChanged.InvokeAsync(new(_sourceTree, _targetTree));
     }
 
     private IReadOnlyList<string> Schemas(bool source)
@@ -89,6 +91,7 @@
         var revision = _revision;
         if (source) { _sourceTree = null; _sourceSelection = null; _sourceFiles = []; }
         else { _targetTree = null; _targetSelection = null; _targetFiles = []; }
+        await TreesChanged.InvokeAsync(new(_sourceTree, _targetTree));
         try
         {
             var files = new List<string>();
@@ -138,6 +141,7 @@
             {
                 if (source) { _sourceTree = tree; _sourceSelection = null; }
                 else { _targetTree = tree; _targetSelection = null; }
+                await TreesChanged.InvokeAsync(new(_sourceTree, _targetTree));
             }
         }
         catch (Exception exception) { if (revision == _revision) _error = $"Unable to inspect XSDs: {exception.Message}"; }

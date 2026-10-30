@@ -85,6 +85,23 @@
                 <p><strong>@diagnostic.Severity - @diagnostic.Code:</strong> @diagnostic.Message</p>
                 <p><strong>Next action:</strong> @diagnostic.Remediation</p>
             }
+            @if (artifact.Pipeline is { } pipeline)
+            {
+                <details>
+                    <summary>Pipeline source inventory (@pipeline.Direction; @pipeline.TotalStages stages / @pipeline.TotalComponents components)</summary>
+                    <p class="field-hint">Declared source order, not verified execution behavior. Property values, descriptions and cached display metadata are not copied into this report. Review the original component configuration securely; no component is translated or executed by this inventory.</p>
+                    <p>Omitted stages: @pipeline.OmittedStageCount / omitted components: @pipeline.OmittedComponentCount</p>
+                    @foreach (var stage in pipeline.Stages)
+                    {
+                        <h5>@stage.Order. @stage.StageName / line @stage.SourceLine / @stage.CategoryId</h5>
+                        @foreach (var component in stage.Components)
+                        {
+                            <p>@component.Order. <code>@component.ClassName</code> / version @component.Version / line @component.SourceLine</p>
+                            <p>Property names only (@component.TotalProperties; @component.OmittedPropertyCount omitted): @string.Join(", ", component.PropertyNames)</p>
+                        }
+                    }
+                </details>
+            }
             @if (artifact.Orchestration is { } inventory)
             {
                 <details>

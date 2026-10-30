@@ -257,7 +257,7 @@ public sealed partial class BizTalkImportService
         var scaffoldedModules = CollectScaffoldedModules(effectiveProject);
         if (scaffoldedModules.Count > 0)
         {
-            openQuestions.Add($"{scaffoldedModules.Count} starter artifact(s) were scaffolded for logic that could not be auto-translated ({string.Join(", ", scaffoldedModules.Select(static module => module.FileName))}). Orchestration stubs fail explicitly until implemented. Who owns implementing and testing these artifacts? Registration alone does not approve imported execution.");
+            openQuestions.Add($"{scaffoldedModules.Count} starter artifact(s) were scaffolded for logic that could not be auto-translated ({string.Join(", ", scaffoldedModules.Select(static module => module.FileName))}). Orchestration and pipeline stubs fail explicitly until implemented; starter XSLT may be incomplete. Who owns implementing and testing these artifacts? Registration alone does not approve imported execution.");
         }
 
         var isLikelyTestArtifact = split is not null
@@ -348,10 +348,8 @@ public sealed partial class BizTalkImportService
     }
 
     /// <summary>
-    /// Collects every starter artifact generated for a candidate: C# module skeletons for orchestrations whose
-    /// control flow could not be auto-translated, plus XSLT stylesheets generated from BizTalk maps. Both reuse
-    /// <see cref="BizTalkScaffoldedModuleResponse"/> (and therefore the existing zip/single-file download
-    /// endpoints) because that contract is content-agnostic.
+    /// Collects starter C# modules for untranslated orchestrations/pipelines and starter map stylesheets.
+    /// All reuse <see cref="BizTalkScaffoldedModuleResponse"/> and the existing download endpoints.
     /// </summary>
     private static IReadOnlyList<BizTalkScaffoldedModuleResponse> CollectScaffoldedModules(BizTalkProjectResponse project)
     {
@@ -371,6 +369,10 @@ public sealed partial class BizTalkImportService
                 analysis.ScaffoldedModuleId ?? analysis.MapName,
                 analysis.MapName,
                 analysis.GeneratedXsltSourceCode!)));
+        modules.AddRange(project.Artifacts.Concat(project.ReferencedArtifacts)
+            .Where(static artifact => string.Equals(artifact.Kind, "Pipeline", StringComparison.OrdinalIgnoreCase))
+            .DistinctBy(static artifact => artifact.FullPath, StringComparer.OrdinalIgnoreCase)
+            .Select(static artifact => BizTalkPipelineScaffolder.Create(artifact.FullPath)));
 
         return modules;
     }

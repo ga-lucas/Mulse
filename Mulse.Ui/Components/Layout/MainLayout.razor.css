@@ -4,6 +4,18 @@
     color: var(--text-primary);
 }
 
+.layout-shell.sidebar-collapsed { --sidebar-width: 72px; }
+.menu-content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
+.sidebar-toggle { margin-top: 1rem; gap: .65rem; justify-content: center; flex-shrink: 0; }
+.brand-mark { flex-shrink: 0; }
+.sidebar-collapsed .brand-text, .sidebar-collapsed .menu-text, .sidebar-collapsed .workspace-caption { display: none; }
+.sidebar-collapsed .sidebar { padding: 1rem .5rem; }
+.sidebar-collapsed .brand { justify-content: center; padding: 0; }
+.sidebar-collapsed .nav-label { height: 0; margin: 1rem 0 .25rem; overflow: hidden; }
+.sidebar-collapsed .workspace-nav ::deep a { justify-content: center; padding: .8rem .5rem; }
+.sidebar-collapsed .theme-toggle { justify-content: center; padding: .65rem .5rem; }
+.sidebar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
@@ -166,10 +178,18 @@
         font-size: 0.8rem;
     }
 
+    .sidebar-toggle { position: absolute; right: 1rem; top: .75rem; margin: 0; padding: .4rem .65rem; min-height: 2.25rem; }
+    .sidebar-toggle .menu-text { display: none; }
+    .brand { padding-right: 3rem; }
+    .menu-content { gap: .5rem; overflow: visible; }
+    .sidebar-collapsed .sidebar { padding: .75rem 1rem; }
+    .sidebar-collapsed .brand { justify-content: flex-start; padding-right: 3rem; }
+    .sidebar-collapsed .brand-text { display: inline; }
+    .sidebar-collapsed .menu-content { display: none; }
+
     .sidebar-footer {
-        position: absolute;
-        right: 1rem;
-        top: 0.6rem;
+        align-items: flex-start;
+        margin-top: 0;
         padding: 0;
     }
 

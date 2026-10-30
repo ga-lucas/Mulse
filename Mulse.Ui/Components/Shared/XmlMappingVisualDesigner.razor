@@ -1,0 +1,142 @@
+@using Mulse.Ui.Models
+@using Mulse.Ui.Services
+@inject IMulseApiClient ApiClient
+
+<section class="visual-mapping" aria-label="Visual XML mapping designer">
+    <h4>Visual mapping designer <HelpTooltip Label="Visual connections">Select a supported source and target field, then Connect fields. Select a connection or operation to edit its settings below. Lines show saved assignments, not execution approval.</HelpTooltip></h4>
+    @if (_error is not null)
+    {
+        <p class="status-banner error" role="alert">@_error</p>
+        <button class="secondary-button" disabled="@_loading" @onclick="ReloadAsync">Retry loading saved schemas</button>
+    }
+    @if (_loading)
+    {
+        <p role="status">Loading saved schema trees...</p>
+    }
+    <div class="visual-toolbar">
+        <span>Source: @(_source?.Field.Path ?? "none selected")</span>
+        <span>Target: @(_target?.Field.Path ?? "none selected")</span>
+        <button class="secondary-button" disabled="@(_source is null || _target is null)" @onclick="ConnectAsync">Connect fields</button>
+        <button class="secondary-button" @onclick="() => Selected.InvokeAsync(null)">Show all field settings</button>
+    </div>
+    <p class="field-hint">Source: @(SourceTree is not null ? "inspected XSDs" : _savedSource is not null ? "saved validation XSDs" : "saved paths only") / Target: @(TargetTree is not null ? "inspected XSDs" : _savedTarget is not null ? "saved validation XSDs" : "saved paths only")
+        <HelpTooltip Label="Schema trees">Upload/inspect XSDs above to expose unmapped fields. Attached schemas reload on reopen. Inspection does not attach runtime validation. Without schemas, trees show saved paths only. Repeating/unsupported fields cannot create scalar links. Optional-source to optional-target links start with Omit; review the policy in field settings.</HelpTooltip>
+    </p>
+    @{
+        var sources = XmlMappingGraph.Nodes(Map, SourceTree ?? _savedSource, true);
+        var targets = XmlMappingGraph.Nodes(Map, TargetTree ?? _savedTarget, false);
+        var top = 44;
+        var cards = Map.Fields.Select(field => { var y = top; top += 104 + field.Operations.Count * 32; return (Field: field, Y: y); }).ToArray();
+        var height = Math.Max(220, Math.Max(top, 80 + Math.Max(sources.Count, targets.Count) * 36));
+    }
+    <div class="visual-scroll" tabindex="0" aria-label="Scrollable mapping canvas">
+        <div class="visual-canvas" style="height: @(height)px">
+            <h5 class="source-heading">Source</h5><h5 class="operation-heading">Connections and operations</h5><h5 class="target-heading">Target</h5>
+            <svg class="mapping-lines" width="1100" height="@height" aria-label="Field connection lines">
+                @foreach (var card in cards)
+                {
+                    var sourceKey = XmlMappingGraph.Key(card.Field.SourcePath, Map.Namespaces);
+                    var targetKey = XmlMappingGraph.Key("/" + Map.TargetRoot + "/" + card.Field.TargetPath, Map.Namespaces);
+                    var sourceIndex = sources.ToList().FindIndex(node => node.Key == sourceKey);
+                    var targetIndex = targets.ToList().FindIndex(node => node.Key == targetKey);
+                    var middle = card.Y + 24;
+                    if (card.Field.Constant is null && sourceIndex >= 0)
+                    {
+                        <path class="@(ReferenceEquals(SelectedField, card.Field) ? "selected-line" : null)" d="@($"M 290 {62 + sourceIndex * 36} C 335 {62 + sourceIndex * 36}, 335 {middle}, 380 {middle}")" />
+                    }
+                    if (targetIndex >= 0)
+                    {
+                        <path class="@(ReferenceEquals(SelectedField, card.Field) ? "selected-line" : null)" d="@($"M 720 {middle} C 765 {middle}, 765 {62 + targetIndex * 36}, 810 {62 + targetIndex * 36}")" />
+                    }
+                }
+            </svg>
+            @for (var index = 0; index < sources.Count; index++)
+            {
+                var node = sources[index];
+                <button class="tree-node source-node @(_source?.Field.Path == node.Path ? "chosen" : null)" style="top: @(44 + index * 36)px; padding-left: @(8 + Math.Min(node.Depth, 12) * 10)px" disabled="@(!node.CanConnect)" title="@NodeTitle(node)" aria-label="@($"Select source field {node.Path}")" aria-pressed="@(_source?.Field.Path == node.Path ? "true" : "false")" @onclick="() => _source = node.Selection">@node.Path.Split('/').Last() @(node.Selection?.Field.Repeating == true ? "(repeating)" : null)</button>
+            }
+            @for (var index = 0; index < targets.Count; index++)
+            {
+                var node = targets[index];
+                <button class="tree-node target-node @(_target?.Field.Path == node.Path ? "chosen" : null)" style="top: @(44 + index * 36)px; padding-left: @(8 + Math.Min(node.Depth, 12) * 10)px" disabled="@(!node.CanConnect || node.Selection?.Field.Path == node.Selection?.Root.Path)" title="@NodeTitle(node)" aria-label="@($"Select target field {node.Path}")" aria-pressed="@(_target?.Field.Path == node.Path ? "true" : "false")" @onclick="() => _target = node.Selection">@node.Path.Split('/').Last() @(node.Selection?.Field.Repeating == true ? "(repeating)" : null)</button>
+            }
+            @foreach (var card in cards)
+            {
+                <div @key="card.Field" class="connection-node @(ReferenceEquals(SelectedField, card.Field) ? "chosen" : null)" style="top: @(card.Y)px" aria-label="@($"Mapping connection to {card.Field.TargetPath}")">
+                    <button class="connection-title" @onclick="() => Selected.InvokeAsync(card.Field)">@(card.Field.Constant is null ? card.Field.SourcePath : "Constant: " + card.Field.Constant) to @card.Field.TargetPath</button>
+                    @foreach (var operation in card.Field.Operations)
+                    {
+                        <button class="operation-node" @onclick="() => Selected.InvokeAsync(card.Field)">@operation.Kind @(operation.Argument is null ? null : ": " + operation.Argument)</button>
+                    }
+                    <div class="connection-actions">
+                        <button class="secondary-button" disabled="@(card.Field.Operations.Count >= 16)" @onclick="() => AddOperation.InvokeAsync(card.Field)">Add operation</button>
+                        <button class="secondary-button" @onclick="() => Removed.InvokeAsync(card.Field)">Remove connection</button>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public XmlMappingViewModel Map { get; set; } = new();
+    [Parameter] public XmlSchemaTreeViewModel? SourceTree { get; set; }
+    [Parameter] public XmlSchemaTreeViewModel? TargetTree { get; set; }
+    [Parameter] public XmlFieldMappingViewModel? SelectedField { get; set; }
+    [Parameter] public EventCallback<XmlSchemaFieldPairViewModel> Connected { get; set; }
+    [Parameter] public EventCallback<XmlFieldMappingViewModel?> Selected { get; set; }
+    [Parameter] public EventCallback<XmlFieldMappingViewModel> AddOperation { get; set; }
+    [Parameter] public EventCallback<XmlFieldMappingViewModel> Removed { get; set; }
+    private XmlSchemaSelectionViewModel? _source;
+    private XmlSchemaSelectionViewModel? _target;
+    private XmlSchemaTreeViewModel? _savedSource;
+    private XmlSchemaTreeViewModel? _savedTarget;
+    private string[]? _sourceSchemas;
+    private string[]? _targetSchemas;
+    private string? _error;
+    private bool _loading;
+    private int _revision;
+    private XmlSchemaTreeViewModel? _lastSourceTree;
+    private XmlSchemaTreeViewModel? _lastTargetTree;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!ReferenceEquals(SourceTree, _lastSourceTree)) { _source = null; _lastSourceTree = SourceTree; }
+        if (!ReferenceEquals(TargetTree, _lastTargetTree)) { _target = null; _lastTargetTree = TargetTree; }
+        if (_sourceSchemas is not null && _sourceSchemas.SequenceEqual(Map.SourceSchemas)
+            && _targetSchemas is not null && _targetSchemas.SequenceEqual(Map.TargetSchemas)) return;
+        var sourceSchemas = _sourceSchemas = Map.SourceSchemas.ToArray();
+        var targetSchemas = _targetSchemas = Map.TargetSchemas.ToArray();
+        _source = _target = null;
+        _savedSource = _savedTarget = null;
+        _error = null;
+        _loading = true;
+        var revision = ++_revision;
+        try
+        {
+            var source = sourceSchemas.Length == 0 ? null : await ApiClient.AnalyzeXmlMappingSchemasAsync(new(sourceSchemas), default);
+            var target = targetSchemas.Length == 0 ? null : await ApiClient.AnalyzeXmlMappingSchemasAsync(new(targetSchemas), default);
+            if (revision == _revision) { _savedSource = source; _savedTarget = target; }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            if (revision == _revision) _error = $"Unable to load saved schema trees: {exception.Message} Saved mappings are preserved.";
+        }
+        finally { if (revision == _revision) _loading = false; }
+    }
+
+    private async Task ReloadAsync()
+    {
+        _sourceSchemas = _targetSchemas = null;
+        await OnParametersSetAsync();
+    }
+
+    private async Task ConnectAsync()
+    {
+        if (_source is null || _target is null) { _error = "Select a supported source and target field first."; return; }
+        await Connected.InvokeAsync(new(_source, _target));
+    }
+
+    private static string NodeTitle(XmlMappingGraphNode node) => node.Path + " - " + (node.Selection is null ? "Saved path (inspect XSDs to connect)"
+        : node.Selection.Field.UnsupportedReason ?? (node.Selection.Field.Repeating ? "Repeating record: scalar links are unsupported" : node.CanConnect ? "Select to connect" : "Record/root: choose a scalar field"));
+}

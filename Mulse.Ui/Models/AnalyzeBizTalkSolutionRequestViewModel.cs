@@ -1,6 +1,8 @@
+using System.Text.Json.Serialization;
+
 namespace Mulse.Ui.Models;
 
 public sealed record AnalyzeBizTalkSolutionRequestViewModel(
     string SourcePath,
-    IReadOnlyList<string>? AdditionalBindingPaths = null,
-    IReadOnlyList<string>? AdditionalSourcePaths = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AdditionalBindingPaths = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AdditionalSourcePaths = null);

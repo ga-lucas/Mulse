@@ -8,6 +8,7 @@ public static class DesignerEndpoints
 {
     public static WebApplication MapDesignerEndpoints(this WebApplication app)
     {
+        Service.Mapping.ParsedDataMappingEndpoints.MapParsedDataMappingEndpoints(app);
         app.MapPost("/api/flow-designer/xml-mapping/schemas", (XmlSchemaAnalysisRequest request, CancellationToken cancellationToken) =>
                 TypedResults.Ok(Service.Mapping.XmlSchemaInspector.Analyze(request.Schemas, cancellationToken)))
             .WithName("AnalyzeXmlMappingSchemas")

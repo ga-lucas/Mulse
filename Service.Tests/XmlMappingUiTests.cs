@@ -52,6 +52,24 @@ public sealed class XmlMappingUiTests
         await (Task)Invoke(editor, "SetMissingBehaviorAsync", optional, "Default")!;
         optional.DefaultValue = "default from UI";
         await (Task)Invoke(editor, "WriteAsync")!;
+        await (Task)Invoke(editor, "AddOperationAsync", added)!;
+        var operation = added.Operations.Single();
+        await (Task)Invoke(editor, "SetOperationKindAsync", operation, "Prefix")!;
+        operation.Argument = "id:";
+        await (Task)Invoke(editor, "AddOperationAsync", added)!;
+        var uppercase = added.Operations.Last();
+        await (Task)Invoke(editor, "SetOperationKindAsync", uppercase, "UppercaseAscii")!;
+        await (Task)Invoke(editor, "MoveOperationAsync", added, uppercase, -1)!;
+        Assert.Equal(new[] { "UppercaseAscii", "Prefix" }, added.Operations.Select(entry => entry.Kind));
+        var visual = new XmlMappingVisualDesigner();
+        Property(visual, "Connected").SetValue(visual, EventCallback.Factory.Create<XmlSchemaFieldPairViewModel>(new object(), pair => (Task)Invoke(editor, "AddSchemaFieldAsync", pair)!));
+        var sourceTree = XmlMappingVisualDesignerTests.Tree(NativeMapImportTests.SourceXsd);
+        var targetTree = XmlMappingVisualDesignerTests.Tree(NativeMapImportTests.TargetXsd);
+        Field(visual, "_source").SetValue(visual, XmlMappingVisualDesignerTests.Select(sourceTree, "/Order/Id"));
+        Field(visual, "_target").SetValue(visual, XmlMappingVisualDesignerTests.Select(targetTree, "/Result/Text"));
+        await (Task)Invoke(visual, "ConnectAsync")!;
+        Assert.Equal("Text", model.Fields.Last().TargetPath);
+        Assert.Equal("/s:Order/s:Id", model.Fields.Last().SourcePath);
         Assert.Equal(2, model.Version);
         await (Task)Invoke(designer, "SaveAsync")!;
         Assert.Null(Field(designer, "_errorMessage").GetValue(designer));
@@ -59,6 +77,9 @@ public sealed class XmlMappingUiTests
         Assert.Equal(settings["mappingJson"], handler.Saved!.Deliveries[0].Render.Settings["mappingJson"]);
         Invoke(designer, "BuildFromFlow", View(handler.Saved));
         Assert.Equal(editor.Value, RenderSettings(designer)["mappingJson"]);
+        var output = new Mulse.CompatibilityPack.XmlMappingEngine(RenderSettings(designer)["mappingJson"]).Transform(XmlMappingTests.Sample);
+        Assert.Equal("id:FROM UI", System.Xml.Linq.XDocument.Parse(output).Root!.Element(System.Xml.Linq.XName.Get("EditorAdded", "urn:target"))!.Value);
+        Assert.Equal("42", System.Xml.Linq.XDocument.Parse(output).Root!.Element("Text")!.Value);
         await (Task)Invoke(designer, "SaveAsync")!;
         Assert.Null(Field(designer, "_errorMessage").GetValue(designer));
         Assert.Equal(2, handler.Saves);
@@ -71,7 +92,9 @@ public sealed class XmlMappingUiTests
     public async Task MappingPanel_ExposesEditorAndNativeRenderCreationWithoutUnsavedGlobalTable()
     {
         using var http = new HttpClient(new SavingHandler()) { BaseAddress = new Uri("http://localhost/") };
+        var components = new TrackingActivator();
         await using var services = new ServiceCollection().AddLogging()
+            .AddSingleton<IComponentActivator>(components)
             .AddSingleton<IMulseApiClient>(new MulseApiClient(http)).AddSingleton<NavigationManager>(new TestNavigation())
             .AddSingleton<Microsoft.JSInterop.IJSRuntime>(new NoJs()).BuildServiceProvider();
         await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
@@ -83,7 +106,9 @@ public sealed class XmlMappingUiTests
                 [nameof(DesignerHost.Capture)] = (Action<Designer>)(value => designer = value)
             }));
             Assert.NotNull(designer);
-            Invoke(designer, "ToggleMappingDesigner");
+            Assert.Contains("aria-label=\"Designer workspace\"", rendered.ToHtmlString());
+            Assert.DoesNotContain("XML mapping editor", rendered.ToHtmlString());
+            Invoke(designer, "SetMappingWorkspace", true);
             await designer.SetParametersAsync(ParameterView.Empty);
             var html = rendered.ToHtmlString();
             Assert.Contains("Add XML mapping render", html);
@@ -97,12 +122,47 @@ public sealed class XmlMappingUiTests
             Assert.Contains("XSD schema trees and BizTalk map import", html);
             Assert.Contains("Inspect source schema tree", html);
             Assert.Contains("Create native map proposal", html);
+            Assert.Contains("Add string operation", html);
+            Assert.Contains("ASCII case conversion", html);
+            Assert.Contains("id=\"flow-workspace\" class=\"flow-workspace\" role=\"tabpanel\" aria-labelledby=\"flow-workspace-tab\" hidden", html);
+            Assert.DoesNotContain("floating-panel-title\">Mapping Designer", html);
+            Assert.Contains("role=\"tooltip\"", html);
             Assert.DoesNotContain("Mapping literal JSON", html);
+            var editor = Assert.Single(components.Created.OfType<XmlMappingEditor>());
+            var tools = Assert.Single(components.Created.OfType<XmlMappingSourceTools>());
+            designer.OnDockSplitChanged(63);
+            await (Task)Invoke(tools, "SetText", NativeMapImportTests.SourceXsd, true)!;
+            Field(editor, "_sample").SetValue(editor, XmlMappingTests.Sample);
+            await (Task)Invoke(editor, "PreviewAsync")!;
+            var preview = Assert.IsType<XmlMappingPreviewViewModel>(Field(editor, "_preview").GetValue(editor));
+            var before = RenderSettings(designer)["mappingJson"];
+            Invoke(designer, "SetMappingWorkspace", false);
+            await designer.SetParametersAsync(ParameterView.Empty);
+            var flowHtml = rendered.ToHtmlString();
+            Assert.Contains("id=\"mapping-workspace\" class=\"mapping-workspace\" role=\"tabpanel\" aria-labelledby=\"mapping-workspace-tab\" hidden", flowHtml);
+            Assert.Contains("XML mapping editor", flowHtml);
+            Invoke(designer, "SetMappingWorkspace", true);
+            await designer.SetParametersAsync(ParameterView.Empty);
+            Assert.Equal(before, RenderSettings(designer)["mappingJson"]);
+            Assert.Same(editor, Assert.Single(components.Created.OfType<XmlMappingEditor>()));
+            Assert.Same(tools, Assert.Single(components.Created.OfType<XmlMappingSourceTools>()));
+            Assert.Equal(NativeMapImportTests.SourceXsd, Field(tools, "_sourceXsd").GetValue(tools));
+            Assert.Equal(XmlMappingTests.Sample, Field(editor, "_sample").GetValue(editor));
+            Assert.Same(preview, Field(editor, "_preview").GetValue(editor));
+            Assert.Equal(63d, Field(designer, "_toolboxShare").GetValue(designer));
+            Assert.Contains("aria-valuenow=\"63\"", rendered.ToHtmlString());
             Invoke(designer, "AddXmlMappingRender");
             await designer.SetParametersAsync(ParameterView.Empty);
             var nodes = ((IEnumerable)Field(designer, "_nodes").GetValue(designer)!).Cast<object>();
-            Assert.Equal(2, nodes.Count(node => (string)Property(node, "ModuleId").GetValue(node)! == "xml-mapping-render"));
+            var maps = nodes.Where(node => (string)Property(node, "ModuleId").GetValue(node)! == "xml-mapping-render").ToArray();
+            Assert.Equal(2, maps.Length);
+            Assert.Equal(Property(maps.Last(), "Id").GetValue(maps.Last()), Property(designer, "ActiveMappingNodeId").GetValue(designer));
             Assert.Contains("add a deliver node before saving", rendered.ToHtmlString());
+            Invoke(designer, "OpenMappingDesigner", maps.First());
+            await designer.SetParametersAsync(ParameterView.Empty);
+            Assert.Equal(Property(maps.First(), "Id").GetValue(maps.First()), Property(designer, "ActiveMappingNodeId").GetValue(designer));
+            Assert.Equal(2, components.Created.OfType<XmlMappingEditor>().Count());
+            Assert.Same(preview, Field(editor, "_preview").GetValue(editor));
         });
     }
 
@@ -110,6 +170,9 @@ public sealed class XmlMappingUiTests
     [InlineData("{\"version\":9,\"fields\":[]}")]
     [InlineData("{\"version\":1,\"futureProperty\":42}")]
     [InlineData("{\"version\":1,\"fields\":[null]}")]
+    [InlineData("{\"version\":2,\"fields\":[{\"operations\":null}]}")]
+    [InlineData("{\"version\":2,\"fields\":[{\"operations\":[null]}]}")]
+    [InlineData("{\"version\":2,\"fields\":[{\"operations\":[{\"kind\":\"Unknown\"}]}]}")]
     [InlineData("{")]
     public async Task UnsupportedOrMalformedJson_IsPreservedAndShowsAnError(string json)
     {
@@ -228,6 +291,76 @@ public sealed class XmlMappingUiTests
     }
 
     [Fact]
+    public async Task PipelineScaffolds_AppearInTheImportPanelWithDownloadControlsAndWarnings()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "mulse-pipeline-ui-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "Send.btp"), "<Document><Stages><Stage CategoryId='9d0e4107-4cce-4536-83fa-4a5040674ad6'><Components/></Stage></Stages></Document>");
+            var project = Path.Combine(directory, "Pipelines.btproj");
+            File.WriteAllText(project, "<Project><ItemGroup><Pipeline Include='Send.btp'/></ItemGroup></Project>");
+            var analysis = await new BizTalkImportService().AnalyzeAsync(new AnalyzeBizTalkSolutionRequest { SourcePath = project }, default);
+            var view = JsonSerializer.Deserialize<BizTalkSolutionAnalysisViewModel>(JsonSerializer.Serialize(analysis, Options), Options)!;
+            using var http = new HttpClient(new SavingHandler()) { BaseAddress = new Uri("http://localhost/") };
+            await using var services = new ServiceCollection().AddLogging()
+                .AddSingleton<IMulseApiClient>(new MulseApiClient(http)).AddSingleton<NavigationManager>(new TestNavigation())
+                .AddSingleton<Microsoft.JSInterop.IJSRuntime>(new NoJs()).BuildServiceProvider();
+            await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
+            await renderer.Dispatcher.InvokeAsync(async () =>
+            {
+                Designer? designer = null;
+                var rendered = await renderer.RenderComponentAsync<DesignerHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
+                {
+                    [nameof(DesignerHost.Capture)] = (Action<Designer>)(value => designer = value)
+                }));
+                Assert.NotNull(designer);
+                Field(designer, "_bizTalkAnalysis").SetValue(designer, view);
+                Field(designer, "_showBizTalkPanel").SetValue(designer, true);
+                await designer.SetParametersAsync(ParameterView.Empty);
+                var html = rendered.ToHtmlString();
+                Assert.Contains(Assert.Single(view.FlowCandidates).ScaffoldedModules.Single().FileName, html);
+                Assert.Contains("Download all (.zip)", html);
+                Assert.Contains(">Download</button>", html);
+                Assert.Contains("C# stubs fail until implemented", html);
+                Assert.Contains("does not approve execution", html);
+            });
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OperationControls_UpgradeVersionAndRejectInvalidMovesKindsAndExcessOperations()
+    {
+        var editor = new XmlMappingEditor();
+        Property(editor, "Value").SetValue(editor, XmlMappingTests.Json());
+        Invoke(editor, "OnParametersSet");
+        var map = (XmlMappingViewModel)Field(editor, "_map").GetValue(editor)!;
+        var field = map.Fields[0];
+        await (Task)Invoke(editor, "AddOperationAsync", field)!;
+        Assert.Equal(2, map.Version);
+        var operation = Assert.Single(field.Operations);
+        await (Task)Invoke(editor, "SetOperationKindAsync", operation, "Prefix")!;
+        Assert.Equal("", operation.Argument);
+        operation.Argument = "literal";
+        await (Task)Invoke(editor, "SetOperationKindAsync", operation, "UppercaseAscii")!;
+        Assert.Null(operation.Argument);
+        var original = editor.Value;
+        await (Task)Invoke(editor, "MoveOperationAsync", field, operation, -1)!;
+        Assert.Equal(original, editor.Value);
+        Assert.Contains("cannot be moved", Assert.IsType<string>(Field(editor, "_error").GetValue(editor)));
+        await (Task)Invoke(editor, "SetOperationKindAsync", operation, "Unknown")!;
+        Assert.Equal(original, editor.Value);
+        Assert.Contains("supported string operation", Assert.IsType<string>(Field(editor, "_error").GetValue(editor)));
+        for (var index = 1; index < 16; index++) await (Task)Invoke(editor, "AddOperationAsync", field)!;
+        original = editor.Value;
+        await (Task)Invoke(editor, "AddOperationAsync", field)!;
+        Assert.Equal(16, field.Operations.Count);
+        Assert.Equal(original, editor.Value);
+        Assert.Contains("at most 16", Assert.IsType<string>(Field(editor, "_error").GetValue(editor)));
+    }
+
+    [Fact]
     public async Task RuntimeSchemas_AreAttachedOnlyByExplicitActionAndCanBeRemovedWithoutLosingFields()
     {
         using var http = new HttpClient(new SavingHandler()) { BaseAddress = new Uri("http://localhost/") };
@@ -238,6 +371,8 @@ public sealed class XmlMappingUiTests
         var editor = new XmlMappingEditor();
         Property(editor, "Value").SetValue(editor, XmlMappingTests.Json());
         Invoke(editor, "OnParametersSet");
+        var field = ((XmlMappingViewModel)Field(editor, "_map").GetValue(editor)!).Fields[0];
+        await (Task)Invoke(editor, "AddOperationAsync", field)!;
         Property(tools, "SchemasApplied").SetValue(tools, EventCallback.Factory.Create<XmlMappingSchemasViewModel>(new object(), schemas => (Task)Invoke(editor, "SetSchemasAsync", schemas)!));
         await (Task)Invoke(tools, "AnalyzeAsync", true)!;
         Assert.Empty(JsonSerializer.Deserialize<XmlMappingViewModel>(editor.Value, Options)!.SourceSchemas);
@@ -268,6 +403,17 @@ public sealed class XmlMappingUiTests
     {
         var render = ((IEnumerable)Field(designer, "_nodes").GetValue(designer)!).Cast<object>().Single(node => Property(node, "Stage").GetValue(node)!.ToString() == "Render");
         return (Dictionary<string, string>)Property(render, "Settings").GetValue(render)!;
+    }
+
+    private sealed class TrackingActivator : IComponentActivator
+    {
+        public List<IComponent> Created { get; } = [];
+        public IComponent CreateInstance(Type componentType)
+        {
+            var component = (IComponent)Activator.CreateInstance(componentType)!;
+            Created.Add(component);
+            return component;
+        }
     }
 
     private sealed class DesignerHost : ComponentBase

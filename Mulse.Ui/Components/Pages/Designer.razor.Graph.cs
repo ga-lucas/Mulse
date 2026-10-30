@@ -268,7 +268,8 @@ public partial class Designer
 
             foreach (var augment in AugmentNodes)
             {
-                foreach (var key in new[] { LeftSourceKey, RightSourceKey })
+                var sourceKeys = IsParsedMappingNode(augment) ? new[] { "sourceId" } : new[] { LeftSourceKey, RightSourceKey };
+                foreach (var key in sourceKeys)
                 {
                     if (augment.Settings.TryGetValue(key, out var current) && string.Equals(current, previousId, StringComparison.OrdinalIgnoreCase))
                     {

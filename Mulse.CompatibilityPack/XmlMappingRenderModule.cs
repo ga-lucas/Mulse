@@ -6,8 +6,8 @@ public sealed class XmlMappingRenderModule : IRenderModule
 {
     public ModuleDescriptor Descriptor { get; } = new(
         "xml-mapping-render", "XML mapping render", ModuleKind.Render,
-        "Maps scalar XML fields and constants using a saved, namespace-aware mapping definition with optional XSD validation. Configure it in Mapping Designer.",
-        [new("mappingJson", "XML mapping", "Versioned mapping edited in Mapping Designer. Scalar paths use explicit missing-value policies; repetitions are not supported. Version 2 can retain source/target XSD validation.", true, ModuleSettingInputKind.TextArea)],
+        "Maps scalar XML fields and constants using a saved, namespace-aware definition with ordered string operations and optional XSD validation. Configure it in Mapping Designer.",
+        [new("mappingJson", "XML mapping", "Versioned mapping edited in Mapping Designer. Scalar paths use explicit missing-value policies; repetitions are not supported. Version 2 supports ordered string operations and source/target XSD validation.", true, ModuleSettingInputKind.TextArea)],
         new ModuleRecommendationProfile([ModuleDataFormat.Xml], capabilities: [ModuleCapability.Mapping, ModuleCapability.Serialization, ModuleCapability.Transformation]));
 
     public Task<IntegrationBatch> RenderAsync(FlowExecutionContext context, IntegrationBatch batch, ModuleStepDefinition step, CancellationToken cancellationToken)

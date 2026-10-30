@@ -197,7 +197,14 @@ public sealed class FlowWorkspaceRenderingTests
         var html = await RenderAsync<Designer>();
         Assert.Contains("for=\"flow-name\"", html);
         Assert.Contains("fixed after creation", html);
-        Assert.Contains("--panel-x:calc(100% - var(--panel-width, 360px) - 1rem)", html);
+        Assert.Contains("class=\"designer-properties dock-panel\"", html);
+        Assert.Contains("class=\"designer-left-dock\"", html);
+        Assert.Contains("role=\"separator\"", html);
+        Assert.Contains("aria-orientation=\"horizontal\"", html);
+        Assert.Contains("aria-controls=\"designer-toolbox designer-overview\"", html);
+        Assert.DoesNotContain("floating-panel-title\">Toolbox", html);
+        Assert.DoesNotContain("floating-panel-title\">Flow overview", html);
+        Assert.DoesNotContain("floating-panel-title\">Properties", html);
         Assert.Contains("Create flow", html);
         Assert.Contains("80%", html);
         Assert.Contains("data-node-type=\"render\"", html);
@@ -270,6 +277,26 @@ public sealed class FlowWorkspaceRenderingTests
             object Find(string stage) => nodes.Cast<object>().First(node => Value(node, "Stage") == stage);
             void Invoke(string method, params object?[] arguments) => typeof(Designer).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(designer, arguments);
             async Task Refresh() => await designer.OnViewChanged(0, 0, 1600, 800);
+
+            designer.OnDockSplitChanged(61);
+            await Refresh();
+            Assert.Contains("aria-valuenow=\"61\"", rendered.ToHtmlString());
+            Invoke("ResizeDockByKey", new KeyboardEventArgs { Key = "ArrowDown" });
+            await Refresh();
+            Assert.Contains("aria-valuenow=\"66\"", rendered.ToHtmlString());
+            Invoke("ResizeDockByKey", new KeyboardEventArgs { Key = "Home" });
+            Invoke("ResizeDockByKey", new KeyboardEventArgs { Key = "ArrowUp" });
+            await Refresh();
+            Assert.Contains("aria-valuenow=\"20\"", rendered.ToHtmlString());
+            Invoke("ResizeDockByKey", new KeyboardEventArgs { Key = "End" });
+            Invoke("ResizeDockByKey", new KeyboardEventArgs { Key = "ArrowDown" });
+            Invoke("ResizeDockByKey", new KeyboardEventArgs { Key = "Tab" });
+            await Refresh();
+            Assert.Contains("aria-valuenow=\"80\"", rendered.ToHtmlString());
+            designer.OnDockSplitChanged(-500);
+            await Refresh();
+            Assert.Contains("aria-valuenow=\"20\"", rendered.ToHtmlString());
+            Assert.Throws<ArgumentOutOfRangeException>(() => designer.OnDockSplitChanged(double.NaN));
 
             var fetchId = Value(Find("Fetch"), "Id");
             var parseId = Value(Find("Parse"), "Id");

@@ -1,8 +1,5 @@
 @page "/designer"
 @page "/designer/{FlowId}"
-@using System.Globalization
-@using System.Text.Json
-@using System.Text.Json.Serialization
 @inject IMulseApiClient ApiClient
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
@@ -17,12 +14,11 @@
             <h1>@(string.IsNullOrWhiteSpace(_flowName) ? IsExistingFlow ? FlowId : "New flow" : _flowName)</h1>
         </div>
         <div class="designer-topbar-actions" role="group" aria-label="Flow actions">
-            <button class="secondary-button @(_showSamplePanel ? "active" : null)" aria-expanded="@(_showSamplePanel ? "true" : "false")" @onclick="ToggleSamplePanel">Add sample data</button>
-            <button class="secondary-button @(_showMappingDesigner ? "active" : null)" aria-expanded="@(_showMappingDesigner ? "true" : "false")" @onclick="ToggleMappingDesigner">Mapping Designer</button>
-            <button class="secondary-button @(_showBizTalkPanel ? "active" : null)" aria-expanded="@(_showBizTalkPanel ? "true" : "false")" @onclick="ToggleBizTalkPanel">Import from BizTalk</button>
+            <button class="secondary-button @(_showSamplePanel ? "active" : null)" aria-expanded="@(_showSamplePanel ? "true" : "false")" @onclick="() => { SetMappingWorkspace(false); ToggleSamplePanel(); }">Add sample data</button>
+            <button class="secondary-button @(_showBizTalkPanel ? "active" : null)" aria-expanded="@(_showBizTalkPanel ? "true" : "false")" @onclick="() => { SetMappingWorkspace(false); ToggleBizTalkPanel(); }">Import from BizTalk</button>
             <button class="secondary-button" @onclick="RefreshCatalogAsync" disabled="@_isAnalyzingSample">Refresh modules</button>
-            <button class="secondary-button" @onclick="AutoLayout">Auto layout</button>
-            <button class="secondary-button" @onclick="ClearCanvas">Clear canvas</button>
+            <button class="secondary-button" @onclick="AutoLayout" disabled="@_showMappingDesigner">Auto layout</button>
+            <button class="secondary-button" @onclick="ClearCanvas" disabled="@_showMappingDesigner">Clear canvas</button>
         </div>
     </header>
 
@@ -36,12 +32,17 @@
         <div class="status-banner error designer-banner" role="alert">@_errorMessage</div>
     }
 
+    <div class="workspace-tabs" role="tablist" aria-label="Designer workspace">
+        <button @ref="_flowTab" id="flow-workspace-tab" role="tab" type="button" aria-selected="@(!_showMappingDesigner ? "true" : "false")" aria-controls="flow-workspace" tabindex="@(!_showMappingDesigner ? 0 : -1)" @onclick="() => SetMappingWorkspace(false)" @onkeydown="args => HandleWorkspaceKeyAsync(args, false)">Flow</button>
+        <button @ref="_mappingTab" id="mapping-workspace-tab" role="tab" type="button" aria-selected="@(_showMappingDesigner ? "true" : "false")" aria-controls="mapping-workspace" tabindex="@(_showMappingDesigner ? 0 : -1)" @onclick="() => SetMappingWorkspace(true)" @onkeydown="args => HandleWorkspaceKeyAsync(args, true)">Mapping</button>
+    </div>
     <div class="designer-surface">
+        <div id="flow-workspace" class="flow-workspace" role="tabpanel" aria-labelledby="flow-workspace-tab" hidden="@_showMappingDesigner">
         @if (_showSamplePanel)
         {
             <FloatingPanel Title="Add a sample to the canvas" Icon="📥" X="80" Y="80" Width="420" ShowClose="true" OnClose="ToggleSamplePanel">
 
-            <p class="field-hint">A sample helps infer the data shape and parser. It is not the flow's data source and is not saved or processed by the flow. Choose the real source later in the fetch node.</p>
+            <HelpTooltip Label="Sample data">A sample helps infer the data shape and parser. It is not the flow's data source and is not saved or processed by the flow. Choose the real source later in the fetch node.</HelpTooltip>
             <label class="drop-zone">
                 <span>Select a sample file</span>
                 <InputFile OnChange="HandleFileSelectedAsync" class="drop-zone-input" />
@@ -125,15 +126,15 @@
 
             <label class="field-label" for="source-path">Source path</label>
             <input id="source-path" class="mapping-input" @bind="_sourcePath" @bind:event="oninput" placeholder="C:\Users\...\MyBizTalkApp.sln" />
-            <p class="field-hint">Choose a solution, project, directory, or .odx file. An .odx file must be explicitly included by exactly one .btproj in the same folder; its whole project is analyzed. Choose the desired orchestration candidate below.</p>
+            <HelpTooltip Label="BizTalk source path">Choose a solution, project, directory, or .odx file. An .odx file must be explicitly included by exactly one .btproj in the same folder; its whole project is analyzed. Choose the desired orchestration candidate below.</HelpTooltip>
 
             <label class="field-label" for="additional-source-paths">Additional solutions/projects (optional)</label>
             <input id="additional-source-paths" class="mapping-input" @bind="_additionalSourcePaths" @bind:event="oninput" placeholder="C:\...\Partners.sln; C:\...\Core.sln" />
-            <p class="field-hint">Semicolon-separated additional solution, project, or directory paths analyzed alongside the source path as one combined workspace.</p>
+            <HelpTooltip Label="Additional sources">Semicolon-separated additional solution, project, or directory paths analyzed alongside the source path as one combined workspace.</HelpTooltip>
 
             <label class="field-label" for="additional-binding-paths">Additional binding export paths (optional)</label>
             <input id="additional-binding-paths" class="mapping-input" @bind="_additionalBindingPaths" @bind:event="oninput" placeholder="C:\Exports\Bindings; C:\Exports\Prod.BindingInfo.xml" />
-            <p class="field-hint">Semicolon-separated files or folders containing bindings exported from the BizTalk Administration Console.</p>
+            <HelpTooltip Label="Binding exports">Semicolon-separated files or folders containing bindings exported from the BizTalk Administration Console.</HelpTooltip>
 
             <div class="action-row">
                 <button class="run-button" @onclick="AnalyzeBizTalkAsync" disabled="@_isAnalyzingBizTalk">@(_isAnalyzingBizTalk ? "Analyzing..." : "Analyze source")</button>
@@ -223,7 +224,7 @@
                                 {
                                     <div class="scaffolded-modules">
                                         <p>
-                                            <strong>Scaffolded modules:</strong> @candidate.ScaffoldedModules.Count starter C# module(s) for decision/control-flow logic too complex to auto-translate.
+                                            <strong>Scaffolded modules:</strong> @candidate.ScaffoldedModules.Count starter artifact(s) for untranslated orchestration/pipeline behavior or partial map stylesheets. C# stubs fail until implemented; downloading/building does not approve execution.
                                             <button class="run-button" @onclick="() => DownloadBizTalkScaffoldedModulesAsync(candidate)">Download all (.zip)</button>
                                         </p>
                                         <ul>
@@ -245,9 +246,11 @@
         </FloatingPanel>
     }
 
-    <FloatingPanel Title="Toolbox" Icon="🧰" X="24" Y="24" Width="220" Class="toolbox-panel">
-        <p class="toolbox-hint">Click or drag onto the canvas.</p>
-        <p class="toolbox-hint">Solid arrows carry batches. Dashed arrows supply lookup inputs. BATCH combines payloads, not matching rows; use Join sources to join by key.</p>
+    <aside class="designer-left-dock" aria-label="Flow tools and overview" @ref="_leftDock" style="--toolbox-share: @F(_toolboxShare)fr; --overview-share: @F(100 - _toolboxShare)fr">
+    <section id="designer-toolbox" class="dock-panel toolbox-panel" aria-labelledby="toolbox-heading">
+        <h2 id="toolbox-heading" class="dock-heading">Toolbox</h2>
+        <div class="dock-body">
+        <HelpTooltip Label="Toolbox and connections">Click or drag tools onto the canvas. Solid arrows carry batches. Dashed arrows supply lookup inputs. BATCH combines payloads, not matching rows; use Join sources to join by key.</HelpTooltip>
         <div class="toolbox-list" @ref="_toolboxElement">
             <button class="toolbox-item" data-node-type="source" data-node-label="Source" @onclick="AddSourceLane" title="Adds a new source: a fetch node plus a parse node that parses it, pre-linked. Join augments and other fetch nodes reference the parse node's id.">
                 <span class="toolbox-icon">⭘→</span> Source
@@ -263,6 +266,9 @@
             </button>
             <button class="toolbox-item" data-node-type="join" data-node-label="Join sources" @onclick="AddJoinAugmentNode" disabled="@(ParseNodes.Count < 2)" title="Adds a multi-source join and map augment, pre-wired to the first two parse nodes on the canvas.">
                 <span class="toolbox-icon">⋈</span> Join sources
+            </button>
+            <button class="toolbox-item" data-node-type="parsed-map" data-node-label="Map parsed data" @onclick="AddParsedDataMapping" title="Maps fields after any parser, before rendering. Define fields manually or discover them from supplied sample or parsed data.">
+                <span class="toolbox-icon">&#8594;</span> Map parsed data
             </button>
             <button class="toolbox-item" data-node-type="render" data-node-label="Render" @onclick="AddRenderNode" title="Adds a render to a selected route missing one, or creates a new render-only route. Add a deliver node before saving.">
                 <span class="toolbox-icon">◇</span> Render
@@ -288,9 +294,12 @@
                 </div>
             }
         }
-    </FloatingPanel>
-
-    <FloatingPanel Title="Flow overview" Icon="🗺" X="24" Y="400" Width="260">
+        </div>
+    </section>
+    <div @ref="_dockSplitter" class="dock-splitter" role="separator" tabindex="0" aria-label="Resize Toolbox and Flow overview" title="Drag to resize; use Up/Down or Home/End when focused" aria-orientation="horizontal" aria-controls="designer-toolbox designer-overview" aria-valuemin="20" aria-valuemax="80" aria-valuenow="@F(_toolboxShare)" @onkeydown="ResizeDockByKey"></div>
+    <section id="designer-overview" class="dock-panel" aria-labelledby="overview-heading">
+        <h2 id="overview-heading" class="dock-heading">Flow overview</h2>
+        <div class="dock-body">
         @if (_unresolvedConfigCount > 0)
         {
             <p class="status-banner error compact">
@@ -301,11 +310,11 @@
 
         <label class="field-label" for="flow-name">Flow name</label>
         <input id="flow-name" class="mapping-input" @bind="_flowName" @bind:event="oninput" placeholder="e.g. Import customer orders" />
-        <p class="field-hint">An editable display name. Leave blank to display the flow ID.</p>
+        <HelpTooltip Label="Flow name">An editable display name. Leave blank to display the flow ID.</HelpTooltip>
 
         <label class="field-label" for="flow-id">Flow ID</label>
         <input id="flow-id" class="mapping-input" @bind="_flowId" @bind:event="oninput" disabled="@IsExistingFlow" />
-        <p class="field-hint">Unique technical identifier used in URLs and API calls; fixed after creation.</p>
+        <HelpTooltip Label="Flow ID">Unique technical identifier used in URLs and API calls; fixed after creation.</HelpTooltip>
 
         <label class="field-label checkbox-row">
             <input type="checkbox" checked="@_enabled" @onchange="e => _enabled = (bool)(e.Value ?? false)" disabled="@(_migration is not null && !_enabled)" />
@@ -324,7 +333,7 @@
             }
         </select>
 
-        <p class="field-hint">@TriggerGuidance</p>
+        <HelpTooltip Label="Trigger mode">@TriggerGuidance</HelpTooltip>
         @if (string.Equals(_triggerMode, "Push", StringComparison.OrdinalIgnoreCase) && PushTriggerFetch is null)
         {
             <p class="status-banner error compact">Push requires a loaded push-capable fetch module. SFTP alone cannot trigger this flow.</p>
@@ -346,7 +355,7 @@
         </label>
 
         <label class="field-label checkbox-row">
-            <input type="checkbox" checked="@_hasDefaultRetry"
+            <input type="checkbox" @bind="_hasDefaultRetry" />
             <span>Use a default retry policy</span>
         </label>
 
@@ -393,7 +402,9 @@
                 <dd>@SeedSourceLabel</dd>
             </div>
         </dl>
-    </FloatingPanel>
+        </div>
+    </section>
+    </aside>
 
     <div class="canvas-surface">
         <InputFile @ref="_canvasFileInput" OnChange="HandleCanvasFilesAsync" multiple hidden disabled="@_isAnalyzingSample" />
@@ -501,7 +512,9 @@
         </svg>
     </div>
 
-    <FloatingPanel Title="Properties" Icon="⚙" AlignRight="true" Y="24" Width="360">
+    <aside class="designer-properties dock-panel" aria-labelledby="properties-heading">
+        <h2 id="properties-heading" class="dock-heading">Properties</h2>
+        <div class="dock-body">
         @if (SelectedNode is null)
         {
             <p class="panel-hint">Select a node on the canvas to choose its module and edit its settings.</p>
@@ -511,23 +524,24 @@
             var node = SelectedNode;
             var catalogModule = FindCatalogModule(node.ModuleId);
             <h3>@NodeHeading(node)</h3>
-            <p class="panel-hint">@StageDescription(node.Stage)</p>
+            <HelpTooltip Label="Node stage">@StageDescription(node.Stage)</HelpTooltip>
             @if (IsJoinNode(node))
             {
                 <button class="secondary-button" @onclick="() => RemoveCanvasNode(node)">Remove join</button>
-                <p class="field-hint">Removing this join keeps the sources, render and deliver nodes. Configure its keys and mappings below.</p>
+                <HelpTooltip Label="Remove join">Removing this join keeps the sources, render and deliver nodes. Configure its keys and mappings below.</HelpTooltip>
             }
             @if (node.Stage == NodeStage.Render)
             {
                 <h3>Incoming batch</h3>
-                <p class="field-hint">All parsed sources feed the ordered augment chain, then this render. Converging arrows are automatic batch wiring, not a removable join. Add or configure a Join sources step to match rows by key.</p>
+                <HelpTooltip Label="Incoming batch">All parsed sources feed the ordered augment chain, then this render. Converging arrows are automatic batch wiring, not a removable join. Add or configure a Join sources step to match rows by key.</HelpTooltip>
                 @foreach (var join in AugmentNodes.Where(IsJoinNode))
                 {
                     <button class="secondary-button" @onclick="() => SelectNode(join)">Configure @NodeHeading(join)</button>
                 }
                 <button class="secondary-button" @onclick="AddJoinAugmentNode" disabled="@(ParseNodes.Count < 2)">Add join sources</button>
             }
-            <p class="field-hint">Type <code>{{</code> in a module setting for config/secret reference suggestions. Use Up/Down and Enter/Tab, or click a suggestion. <a href="/config-values">Manage stored values</a>.</p>
+            <HelpTooltip Label="Setting references">Type <code>{{</code> in a module setting for config/secret suggestions. Use Up/Down and Enter/Tab, or click a suggestion.</HelpTooltip>
+            <a href="/config-values">Manage stored values</a>
 
             <label class="field-label">Name</label>
             <input class="mapping-input" placeholder="@DefaultNodeHeading(node)" value="@node.Name"
@@ -548,7 +562,7 @@
 
             @if (catalogModule is not null)
             {
-                <p class="module-description">@catalogModule.Description</p>
+                <HelpTooltip Label="Module description">@catalogModule.Description</HelpTooltip>
             }
 
             @if (node.Stage == NodeStage.Fetch)
@@ -557,12 +571,12 @@
                 <h3>Fetch node</h3>
                 <label class="field-label">Fetch node id</label>
                 <input class="mapping-input" value="@node.GraphId" @onchange="@(args => RenameGraphNode(node, args.Value?.ToString()))" />
-                <p class="field-hint">Parse nodes reference this id to interpret this fetch's output. Fetch and parse node ids share one namespace.</p>
+                <HelpTooltip Label="Fetch node identity">Parse nodes reference this id to interpret this fetch's output. Fetch and parse node ids share one namespace.</HelpTooltip>
                 <h3>Execution and trigger</h3>
-                <p class="field-hint">@FetchTriggerGuidance(node)</p>
+                <HelpTooltip Label="Fetch execution and trigger">@FetchTriggerGuidance(node)</HelpTooltip>
                 @if (node.ModuleId == "sql-server-lookup-fetch")
                 {
-                    <p class="field-hint">SQL lookup emits a JSON array of rows, not an Excel file or database reader. Use JSON parse to validate/normalize it and name the row source for a join. It does not rerun the SQL query or match rows; configure Join sources separately.</p>
+                    <HelpTooltip Label="SQL lookup output">SQL lookup emits a JSON array of rows, not an Excel file or database reader. Use JSON parse to validate/normalize it and name the row source for a join. Parsing does not rerun the query or match rows; configure Join sources separately.</HelpTooltip>
                 }
 
                 <label class="field-label">Parsed by (parse nodes)</label>
@@ -582,7 +596,7 @@
                             <span>@parse.GraphId</span>
                         </label>
                     }
-                    <p class="field-hint">Every selected parse node parses this fetch's raw batch with its own module and settings. A fetch must be parsed by at least one parse node.</p>
+                    <HelpTooltip Label="Fetch parsers">Every selected parse node parses this fetch's raw batch with its own module and settings. A fetch must be parsed by at least one parse node.</HelpTooltip>
                 }
 
                 <label class="field-label">Input from (parsed output of)</label>
@@ -601,7 +615,7 @@
                             <span>@parse.GraphId</span>
                         </label>
                     }
-                    <p class="field-hint">The selected parse nodes' finished batches are merged and handed to this fetch module as its input (e.g. for lookups). The source graph must stay acyclic.</p>
+                    <HelpTooltip Label="Fetch inputs">The selected parse nodes' finished batches are merged and handed to this fetch module as its input (e.g. for lookups). The source graph must stay acyclic.</HelpTooltip>
                 }
             }
 
@@ -610,7 +624,7 @@
                 <h3>Parse node</h3>
                 <label class="field-label">Parse node id</label>
                 <input class="mapping-input" value="@node.GraphId" @onchange="@(args => RenameGraphNode(node, args.Value?.ToString()))" />
-                <p class="field-hint">Payloads this node produces are tagged with this id as their source id: join augments reference it as their left/right source, and fetch nodes reference it when they take this node's output as input.</p>
+                <HelpTooltip Label="Parse node identity">Payloads this node produces are tagged with this source id. Joins reference it as their left/right source; fetch nodes reference it when taking this node's output as input.</HelpTooltip>
 
                 <label class="field-label">Parses raw output of (fetch nodes)</label>
                 @if (FetchNodes.Count == 0)
@@ -628,7 +642,7 @@
                             <span>@fetch.GraphId</span>
                         </label>
                     }
-                    <p class="field-hint">Each selected fetch's raw batch is parsed separately with this module and settings, and the parsed results are merged into this node's single output. Select at least one.</p>
+                    <HelpTooltip Label="Parse inputs">Each selected fetch's raw batch is parsed separately with this module and settings, then merged into this node's single output. Select at least one.</HelpTooltip>
                 }
             }
 
@@ -653,7 +667,7 @@
                             <option value="@leftValue">@leftValue (unknown parse node)</option>
                         }
                     </select>
-                    <p class="field-hint">Sources are parse node ids (each parse node tags its output with its id). Choose "*" to join against everything accumulated so far, which is how several joins are chained together.</p>
+                    <HelpTooltip Label="Join sources">Sources are parse node ids. Choose "*" to join against everything accumulated so far when chaining joins.</HelpTooltip>
 
                     <label class="field-label">Right source *</label>
                     <select class="selector" value="@rightValue" @onchange="@(args => SetJoinSetting(node, RightSourceKey, args.Value?.ToString()))">
@@ -690,11 +704,11 @@
                         <ReferenceInput Value="@(node.Settings.GetValueOrDefault(NestedPathKey) ?? string.Empty)"
                                         Placeholder="order.lineItems" Label="Nested target path" References="_configReferences"
                                         ValueChanged="value => SetJoinSetting(node, NestedPathKey, value)" />
-                        <p class="field-hint">Where the array of mapped right rows is written on each left row, e.g. <code>order.lineItems</code>. Required for nested cardinality.</p>
+                        <HelpTooltip Label="Nested target">Where the array of mapped right rows is written on each left row, e.g. <code>order.lineItems</code>. Required for nested cardinality.</HelpTooltip>
                     }
 
                     <h3>Join keys</h3>
-                    <p class="panel-hint">Every key pair must match for two rows to join. Paths use the payload path convention, e.g. <code>$.customerId</code> or <code>order.customer.id</code>.</p>
+                    <HelpTooltip Label="Join keys">Every key pair must match for two rows to join. Paths use the payload path convention, e.g. <code>$.customerId</code> or <code>order.customer.id</code>.</HelpTooltip>
                     @if (joinEditor.Keys.Count == 0)
                     {
                         <p class="field-hint">No join keys yet. Add at least one pair.</p>
@@ -714,7 +728,7 @@
                     </div>
 
                     <h3>Join field mappings</h3>
-                    <p class="panel-hint">Each row writes one target field from the left row, the right row, a literal JSON value, or a transform (e.g. concatenate, add, format date) of several such inputs.</p>
+                    <HelpTooltip Label="Join field mappings">Each row writes one target field from the left row, the right row, a literal JSON value, or a transform (e.g. concatenate, add, format date) of several such inputs.</HelpTooltip>
                     <table class="mapping-table">
                         <thead>
                             <tr>
@@ -827,15 +841,19 @@
                             }
                         </tbody>
                     </table>
-                    <p class="field-hint">Literal values are raw JSON, so text literals need quotes: <code>"enriched"</code>.</p>
+                    <HelpTooltip Label="Literal JSON">Literal values are raw JSON, so text literals need quotes: <code>"enriched"</code>.</HelpTooltip>
                     <div class="action-row">
                         <button class="secondary-button" @onclick="@(() => AddJoinMapping(node))">Add mapping</button>
                     </div>
                 }
                 else if (node.Stage == NodeStage.Render && node.ModuleId == "xml-mapping-render")
                 {
-                    <p class="field-hint">Open Mapping Designer to edit this node's saved XML field mappings and preview sample output.</p>
-                    <button class="secondary-button" @onclick="() => _showMappingDesigner = true">Edit XML mapping</button>
+                    <HelpTooltip Label="XML mapping settings">Edit this node's saved XML field mappings and preview sample output in the Mapping workspace.</HelpTooltip>
+                    <button class="secondary-button" @onclick="() => OpenMappingDesigner(node)">Edit XML mapping</button>
+                }
+                else if (IsParsedMappingNode(node))
+                {
+                    <button class="secondary-button" @onclick="() => OpenMappingDesigner(node)">Edit parsed-data mapping</button>
                 }
                 else
                 {
@@ -870,7 +888,7 @@
                 @if (node.Stage == NodeStage.Augment)
                 {
                     <h3>Order</h3>
-                    <p class="panel-hint">Augment steps run in order after every source has been fetched and parsed. Join behaviour is configured through the module's own settings.</p>
+                    <HelpTooltip Label="Augment order">Augment steps run in order after every source has been fetched and parsed. Join behaviour is configured through the module's own settings.</HelpTooltip>
                     <div class="inline-row">
                         <button class="secondary-button" @onclick="() => MoveAugment(node, -1)">Move earlier</button>
                         <button class="secondary-button" @onclick="() => MoveAugment(node, 1)">Move later</button>
@@ -882,14 +900,14 @@
                     var route = FindRoute(node.RouteId);
                     var deliverCount = route?.Delivers.Count ?? 0;
                     <h3>Delivery route</h3>
-                    <p class="panel-hint">Route @RouteNumber(node) renders once and hands the same rendered output to its @deliverCount deliver node(s). Each deliver node runs independently: if one fails, the others still run (unless the route has an atomic scope).</p>
+                    <HelpTooltip Label="Delivery route">Route @RouteNumber(node) renders once and hands the same output to its @deliverCount deliver node(s). Each deliver runs independently, unless the route has an atomic scope.</HelpTooltip>
 
                     @if (route?.Render is { } routeRender)
                     {
                         <label class="field-label">Atomic scope (optional)</label>
                         <input class="mapping-input" value="@routeRender.AtomicScope" placeholder="e.g. order-commit"
                                @onchange="@(args => { routeRender.AtomicScope = NormalizeAtomicScope(args.Value?.ToString()); })" />
-                        <p class="field-hint">Routes sharing a scope are all-or-nothing: if any of their deliver nodes fails permanently, the scope's already-delivered actions are compensated and its remaining ones are skipped. Leave empty for independent, best-effort delivery.</p>
+                        <HelpTooltip Label="Atomic scope">Routes sharing a scope are all-or-nothing: if any delivery fails permanently, already-delivered actions are compensated and remaining ones skipped. Leave empty for independent, best-effort delivery.</HelpTooltip>
                     }
 
                     @if (node.Stage == NodeStage.Deliver && node.Compensation is { } compensation && !string.IsNullOrWhiteSpace(compensation.Module))
@@ -935,33 +953,13 @@
                     }
                 </div>
             }
-    </FloatingPanel>
-    </div>
-
-    @if (_showMappingDesigner)
-    {
-        <FloatingPanel Title="Mapping Designer" Icon="🔗" X="420" Y="24" Width="560" ShowClose="true" OnClose="ToggleMappingDesigner">
-            <p class="panel-hint">Mappings belong to individual nodes and persist with the flow. XML maps use the same editor for scratch-built and imported drafts; automatic BizTalk map conversion is still pending.</p>
-            <button class="secondary-button" @onclick="AddXmlMappingRender">Add XML mapping render</button>
-            @foreach (var mapNode in _nodes.Where(node => node.Stage == NodeStage.Render && node.ModuleId == "xml-mapping-render"))
-            {
-                <details @key="mapNode.Id" open>
-                    <summary>@NodeHeading(mapNode)</summary>
-                    <XmlMappingEditor @key="mapNode.Id" Value="@(mapNode.Settings.GetValueOrDefault("mappingJson") ?? string.Empty)" ValueChanged='value => mapNode.Settings["mappingJson"] = value' />
-                </details>
-            }
-            @foreach (var join in AugmentNodes.Where(IsJoinNode))
-            {
-                <button class="secondary-button" @onclick="() => SelectNode(join)">Edit field mappings for @NodeHeading(join)</button>
-            }
-            <p class="field-hint">For existing XSLT renders, use Properties to configure the stylesheet path. Existing join field mappings are edited per join in Properties, not in a separate unsaved table.</p>
-        </FloatingPanel>
-    }
+        </div>
+    </aside>
 
     @if (_migration is not null || _bizTalkRequirements.Count > 0 || _bizTalkWarnings.Count > 0)
     {
         <FloatingPanel Title="BizTalk import follow-up" Icon="📋" X="420" Y="24" Width="520">
-            <p class="panel-hint">Config, secret, and review items reported for the draft flow currently on the canvas.</p>
+            <HelpTooltip Label="Import follow-up">Config, secret, and review items reported for the current draft. These reports do not approve execution.</HelpTooltip>
 
             @if (_migration is { } migration)
             {
@@ -1006,9 +1004,57 @@
             }
         </FloatingPanel>
     }
+        </div>
+        <section id="mapping-workspace" class="mapping-workspace" role="tabpanel" aria-labelledby="mapping-workspace-tab" hidden="@(!_showMappingDesigner)">
+            @if (_mappingDesignerOpened)
+            {
+                <div class="mapping-workspace-toolbar">
+                    <h2>Mapping Designer</h2>
+                    <HelpTooltip Label="Mapping workspace">Parsed-data maps run after parsing and before rendering. XML maps belong to XML render nodes. Both save with the flow. XSLT paths and join mappings remain in Flow Properties.</HelpTooltip>
+                    @if (MappingNodes.Count > 0)
+                    {
+                        <label for="active-xml-map">Mapping step</label>
+                        <select id="active-xml-map" class="selector" value="@ActiveMappingNodeId" @onchange="e => _selectedMappingNodeId = e.Value?.ToString()">
+                            @foreach (var mapNode in MappingNodes)
+                            {
+                                <option value="@mapNode.Id">@NodeHeading(mapNode)</option>
+                            }
+                        </select>
+                    }
+                    <button class="secondary-button" @onclick="AddParsedDataMapping">Add parsed-data map</button>
+                    <button class="secondary-button" @onclick="AddXmlMappingRender">Add XML mapping render</button>
+                </div>
+                @if (_migration is not null)
+                {
+                    <p class="status-banner error compact">@FlowMigrationReportViewModel.ExecutionBlockReason</p>
+                }
+                @if (MappingNodes.Count == 0)
+                {
+                    <p>Add a parsed-data map for any parser, or an XML mapping render for XML-to-XML mappings.</p>
+                }
+                @foreach (var mapNode in MappingNodes)
+                {
+                    <div @key="mapNode.Id" hidden="@(mapNode.Id != ActiveMappingNodeId)">
+                        @if (IsParsedMappingNode(mapNode))
+                        {
+                            <ParsedDataMappingEditor Settings="mapNode.Settings" Sources="ParsedMappingSources" />
+                        }
+                        else
+                        {
+                            <XmlMappingEditor Value="@(mapNode.Settings.GetValueOrDefault("mappingJson") ?? string.Empty)" ValueChanged='value => mapNode.Settings["mappingJson"] = value' />
+                        }
+                    </div>
+                }
+                @foreach (var join in AugmentNodes.Where(IsJoinNode))
+                {
+                    <button class="secondary-button" @onclick="() => { SelectNode(join); SetMappingWorkspace(false); }">Edit field mappings for @NodeHeading(join)</button>
+                }
+            }
+        </section>
+    </div>
 
     <footer class="designer-save-bar">
-        <p>Canvas changes are not saved automatically.</p>
+        <p>Flow and mapping changes are not saved automatically.</p>
         <button class="run-button designer-save-button" @onclick="SaveAsync" disabled="@(_isSaving || _isAnalyzingSample)">@(_isSaving ? "Saving..." : IsExistingFlow ? "Save flow" : "Create flow")</button>
     </footer>
 </div>

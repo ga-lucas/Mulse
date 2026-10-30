@@ -5,8 +5,8 @@
 @inject IMulseApiClient ApiClient
 
 <section aria-label="XML mapping editor">
-    <p class="field-hint">Saved with this render node when you save the flow. Scalar XML fields, text constants, explicit missing-source conditions/defaults, and optional persisted XSD validation; no scripts or repeating records. Unprefixed names mean no namespace.</p>
-    <XmlMappingSourceTools Applied="SetRawAsync" FieldAdded="AddSchemaFieldAsync" SchemasApplied="SetSchemasAsync" />
+    <HelpTooltip Label="XML mapping">Saved with this render node when you save the flow. Scalar XML fields, constants, missing-source conditions/defaults, ordered string operations and optional persisted XSD validation; no scripts or repeating records. Unprefixed names mean no namespace.</HelpTooltip>
+    <XmlMappingSourceTools Applied="SetRawAsync" FieldAdded="AddSchemaFieldAsync" SchemasApplied="SetSchemasAsync" TreesChanged="trees => { _sourceTree = trees.Source; _targetTree = trees.Target; }" />
     @if (_error is not null)
     {
         <p class="status-banner error" role="alert">@_error</p>
@@ -17,6 +17,9 @@
     }
     @if (_map is { } map)
     {
+        <XmlMappingVisualDesigner @key="map" Map="map" SourceTree="_sourceTree" TargetTree="_targetTree" SelectedField="_selectedField" Selected="SelectField" Connected="AddSchemaFieldAsync" AddOperation="AddOperationAsync" Removed="RemoveFieldAsync" />
+        <details>
+        <summary>Map settings - roots, namespaces and validation</summary>
         <p>Runtime XSD validation: @map.SourceSchemas.Count source / @map.TargetSchemas.Count target schema(s).</p>
         @if (map.SourceSchemas.Count > 0 || map.TargetSchemas.Count > 0)
         {
@@ -40,9 +43,11 @@
             <input class="mapping-input" aria-label="New namespace URI" @bind="_uri" placeholder="urn:source" />
             <button class="secondary-button" @onclick="AddNamespaceAsync">Add namespace</button>
         </div>
-        <h4>Field mappings</h4>
-        <p class="field-hint">Source: absolute named path, e.g. /s:Order/s:Id or /s:Order/@@id. Target: relative to the target root, e.g. t:Header/t:Id or @@id. Each source must select exactly one scalar value; missing or repeated values fail explicitly.</p>
-        @foreach (var field in map.Fields)
+        </details>
+        <details open="@_showFieldSettings">
+        <summary>Field settings@(_selectedField is null ? "" : " - " + _selectedField.TargetPath)</summary>
+        <HelpTooltip Label="Field paths">Source: absolute named path, e.g. /s:Order/s:Id or /s:Order/@@id. Target: relative to the target root, e.g. t:Header/t:Id or @@id. Sources are scalar; absence follows the explicit missing-value policy and repeated/complex values fail.</HelpTooltip>
+        @foreach (var field in map.Fields.Where(field => _selectedField is null || ReferenceEquals(field, _selectedField)))
         {
             <fieldset @key="field">
                 <legend>Field mapping</legend>
@@ -65,7 +70,7 @@
                     {
                         <input class="mapping-input" aria-label="Missing XML source default" value="@field.DefaultValue" @onchange="async e => { field.DefaultValue = e.Value?.ToString() ?? string.Empty; await WriteAsync(); }" />
                     }
-                    <p class="field-hint">Omit/default upgrades this definition to version 2. Empty present values are not missing; repeating or complex values still fail.</p>
+                    <HelpTooltip Label="Missing source behavior">Omit/default upgrades this definition to version 2. Empty present values are not missing; repeating or complex values still fail.</HelpTooltip>
                 }
                 else
                 {
@@ -74,25 +79,48 @@
                 }
                 <label class="field-label">Target path</label>
                 <input class="mapping-input" aria-label="XML target path" value="@field.TargetPath" @onchange="async e => { field.TargetPath = e.Value?.ToString() ?? string.Empty; await WriteAsync(); }" />
-                <button class="secondary-button" @onclick="async () => { map.Fields.Remove(field); await WriteAsync(); }">Remove field mapping</button>
+                <h5>Ordered string operations</h5>
+                <HelpTooltip Label="String operations">Applied top to bottom after selecting the source, constant or default. Omitted fields stay omitted. NormalizeWhitespace trims/collapses only XML spaces, tabs and line breaks. ASCII case conversion leaves non-ASCII letters unchanged. Prefix/Suffix arguments are literal text, not XPath. This does not translate BizTalk functoids automatically.</HelpTooltip>
+                @foreach (var operation in field.Operations)
+                {
+                    var position = field.Operations.IndexOf(operation);
+                    <div @key="operation">
+                        <select class="selector" aria-label="XML string operation" value="@operation.Kind" @onchange="e => SetOperationKindAsync(operation, e.Value?.ToString())">
+                            @foreach (var kind in OperationKinds) { <option value="@kind">@kind</option> }
+                        </select>
+                        @if (operation.Kind is "Prefix" or "Suffix")
+                        {
+                            <input class="mapping-input" aria-label="XML operation literal argument" maxlength="4096" value="@operation.Argument" @onchange="async e => { operation.Argument = e.Value?.ToString() ?? string.Empty; await WriteAsync(); }" />
+                        }
+                        <button class="secondary-button" disabled="@(position == 0)" @onclick="() => MoveOperationAsync(field, operation, -1)">Move operation up</button>
+                        <button class="secondary-button" disabled="@(position == field.Operations.Count - 1)" @onclick="() => MoveOperationAsync(field, operation, 1)">Move operation down</button>
+                        <button class="secondary-button" @onclick="async () => { field.Operations.Remove(operation); await WriteAsync(); }">Remove string operation</button>
+                    </div>
+                }
+                <button class="secondary-button" disabled="@(field.Operations.Count >= 16)" @onclick="() => AddOperationAsync(field)">Add string operation</button>
+                <button class="secondary-button" @onclick="() => RemoveFieldAsync(field)">Remove field mapping</button>
             </fieldset>
         }
+        </details>
         <button class="secondary-button" @onclick="AddFieldAsync">Add XML field mapping</button>
     }
     <details>
         <summary>Mapping definition JSON</summary>
         <textarea class="sample-textarea" aria-label="XML mapping definition JSON" value="@Value" @onchange="e => SetRawAsync(e.Value?.ToString() ?? string.Empty)"></textarea>
     </details>
+    <details>
+    <summary>Test mapping</summary>
     <label class="field-label">Sample XML (not saved)</label>
     <textarea class="sample-textarea" aria-label="XML mapping sample" value="@_sample" @onchange="e => { _sample = e.Value?.ToString() ?? string.Empty; _preview = null; _revision++; }"></textarea>
     <button class="secondary-button" @onclick="PreviewAsync" disabled="@(_busy || _map is null)">@(_busy ? "Previewing..." : "Preview XML mapping")</button>
-    <p class="field-hint">Preview uses the execution engine, without running a flow or delivering output. It does not approve an imported flow. Results are cleared after edits.</p>
+    <HelpTooltip Label="Mapping preview">Preview uses the execution engine, without running a flow or delivering output. It does not approve an imported flow. Results are cleared after edits.</HelpTooltip>
     @if (_preview is { } preview)
     {
         <h4>Sample output XML</h4>
         <pre>@preview.OutputXml</pre>
         <details><summary>Generated XSLT</summary><pre>@preview.Xslt</pre></details>
     }
+    </details>
 </section>
 
 @code {
@@ -111,10 +139,23 @@
     private XmlMappingPreviewViewModel? _preview;
     private bool _busy;
     private int _revision;
+    private XmlFieldMappingViewModel? _selectedField;
+    private bool _showFieldSettings;
+    private void SelectField(XmlFieldMappingViewModel? field)
+    {
+        _selectedField = field;
+        _showFieldSettings = true;
+    }
+    private XmlSchemaTreeViewModel? _sourceTree;
+    private XmlSchemaTreeViewModel? _targetTree;
+    private static readonly string[] OperationKinds = ["NormalizeWhitespace", "UppercaseAscii", "LowercaseAscii", "Prefix", "Suffix"];
 
     protected override void OnParametersSet()
     {
         if (_loadedValue == Value) return;
+        _selectedField = null;
+        _showFieldSettings = false;
+        _sourceTree = _targetTree = null;
         _loadedValue = Value;
         _preview = null;
         _error = null;
@@ -123,11 +164,15 @@
         try
         {
             _map = JsonSerializer.Deserialize<XmlMappingViewModel>(Value, Options);
-            if (_map is null || _map.Version is not (1 or 2) || _map.Namespaces is null || _map.Fields is null || _map.Fields.Any(field => field is null)
+            if (_map is null || _map.Version is not (1 or 2) || _map.Namespaces is null || _map.Fields is null
+                || _map.Fields.Any(field => field is null || field.Operations is null || field.Operations.Count > 16
+                    || (_map.Version == 1 && field.Operations.Count > 0)
+                    || field.Operations.Any(operation => operation is null || !OperationKinds.Contains(operation.Kind, StringComparer.Ordinal)
+                        || (operation.Kind is "Prefix" or "Suffix" ? operation.Argument is null || operation.Argument.Length > 4096 : operation.Argument is not null)))
                 || _map.SourceSchemas is null || _map.TargetSchemas is null)
             {
                 _map = null;
-                _error = "Mapping editor requires version 1 or 2 with namespace and field collections. Correct the JSON; the original definition is preserved.";
+                _error = "Mapping editor requires version 1 or 2 with valid namespace, field and operation collections. Correct the JSON; the original definition is preserved.";
             }
         }
         catch (JsonException exception)
@@ -190,7 +235,56 @@
 
     private async Task AddFieldAsync()
     {
-        _map!.Fields.Add(new());
+        if (_map!.Fields.Count >= 128) { _error = "Each mapping supports at most 128 fields."; return; }
+        var field = new XmlFieldMappingViewModel();
+        _map.Fields.Add(field);
+        SelectField(field);
+        await WriteAsync();
+    }
+
+    private async Task RemoveFieldAsync(XmlFieldMappingViewModel field)
+    {
+        _map!.Fields.Remove(field);
+        if (ReferenceEquals(_selectedField, field)) _selectedField = null;
+        await WriteAsync();
+    }
+
+    private async Task AddOperationAsync(XmlFieldMappingViewModel field)
+    {
+        if (field.Operations.Count >= 16)
+        {
+            _error = "Each field supports at most 16 string operations.";
+            return;
+        }
+        field.Operations.Add(new());
+        SelectField(field);
+        _map!.Version = 2;
+        await WriteAsync();
+    }
+
+    private async Task SetOperationKindAsync(XmlStringOperationViewModel operation, string? kind)
+    {
+        if (kind is null || !OperationKinds.Contains(kind, StringComparer.Ordinal))
+        {
+            _error = "Select a supported string operation.";
+            return;
+        }
+        operation.Kind = kind;
+        operation.Argument = kind is "Prefix" or "Suffix" ? operation.Argument ?? string.Empty : null;
+        await WriteAsync();
+    }
+
+    private async Task MoveOperationAsync(XmlFieldMappingViewModel field, XmlStringOperationViewModel operation, int direction)
+    {
+        var index = field.Operations.IndexOf(operation);
+        var destination = index + direction;
+        if (index < 0 || direction is not (-1 or 1) || destination < 0 || destination >= field.Operations.Count)
+        {
+            _error = "The string operation cannot be moved in that direction.";
+            return;
+        }
+        field.Operations.RemoveAt(index);
+        field.Operations.Insert(destination, operation);
         await WriteAsync();
     }
 
@@ -223,22 +317,51 @@
             _error = "Correct the existing definition before adding fields; it has been preserved.";
             return;
         }
-        static string Prefix(string path, string side) => string.Join("/", path.Split('/').Select(segment => segment.Contains(':')
-            ? segment.StartsWith('@') ? "@" + side + segment[1..] : side + segment : segment));
-        var targetRoot = Prefix(target.Root.Path[1..], "t");
-        var namespaces = source.Namespaces.ToDictionary(entry => "s" + entry.Key, entry => entry.Value, StringComparer.Ordinal);
-        foreach (var entry in target.Namespaces) namespaces.Add("t" + entry.Key, entry.Value);
         var map = _map ?? new XmlMappingViewModel();
-        if ((map.Fields.Count > 0 && map.TargetRoot != targetRoot)
-            || namespaces.Any(entry => map.Namespaces.TryGetValue(entry.Key, out var uri) && uri != entry.Value))
+        if (map.Fields.Count >= 128) { _error = "Each mapping supports at most 128 fields."; return; }
+        var namespaces = new Dictionary<string, string>(map.Namespaces, StringComparer.Ordinal);
+        var conflict = false;
+        string Translate(string path, IReadOnlyDictionary<string, string> schemaNamespaces, string side)
+            => string.Join("/", path.Split('/').Select(segment =>
+            {
+                var attribute = segment.StartsWith('@');
+                var name = attribute ? segment[1..] : segment;
+                var colon = name.IndexOf(':');
+                if (colon < 0) return segment;
+                var prefix = name[..colon];
+                if (!schemaNamespaces.TryGetValue(prefix, out var uri)) { conflict = true; return segment; }
+                var selectedPrefix = namespaces.FirstOrDefault(entry => entry.Value == uri).Key ?? side + prefix;
+                if (namespaces.TryGetValue(selectedPrefix, out var existing) && existing != uri) conflict = true;
+                else namespaces[selectedPrefix] = uri;
+                return (attribute ? "@" : "") + selectedPrefix + name[colon..];
+            }));
+        var targetRoot = Translate(target.Root.Path[1..], target.Namespaces, "t");
+        var sourceRoot = Translate(source.Root.Path, source.Namespaces, "s");
+        var sourcePath = Translate(source.Field.Path, source.Namespaces, "s");
+        var targetPath = Translate(target.Field.Path[(target.Root.Path.Length + 1)..], target.Namespaces, "t");
+        if (conflict || namespaces.Count > 32 || (map.Fields.Count > 0 && XmlMappingGraph.Key("/" + map.TargetRoot, namespaces) != XmlMappingGraph.Key("/" + targetRoot, namespaces))
+            || (map.SourceRoot is not null && XmlMappingGraph.Key("/" + map.SourceRoot, namespaces) != XmlMappingGraph.Key(sourceRoot, namespaces)))
         {
-            _error = "The selected schema root or namespace prefixes conflict with this map. Use a new mapping node or reconcile the existing names first; the definition is preserved.";
+            _error = "The selected schema root or namespace prefixes conflict with this map or exceed 32 prefixes. Use a new mapping node or reconcile the existing names first; the definition is preserved.";
+            return;
+        }
+        var targetKey = XmlMappingGraph.Key(targetPath, namespaces);
+        if (map.Fields.Any(field =>
+        {
+            var existing = XmlMappingGraph.Key(field.TargetPath, namespaces);
+            return existing == targetKey || existing.StartsWith(targetKey + "/", StringComparison.Ordinal) || targetKey.StartsWith(existing + "/", StringComparison.Ordinal);
+        }))
+        {
+            _error = "The selected target already has a connection or overlaps another scalar target. Remove or edit that connection first; the definition is preserved.";
             return;
         }
         _map = map;
         map.TargetRoot = targetRoot;
-        foreach (var entry in namespaces) map.Namespaces[entry.Key] = entry.Value;
-        map.Fields.Add(new() { SourcePath = Prefix(source.Field.Path, "s"), TargetPath = Prefix(target.Field.Path[(target.Root.Path.Length + 1)..], "t") });
+        map.Namespaces = namespaces;
+        var added = new XmlFieldMappingViewModel { SourcePath = sourcePath, TargetPath = targetPath };
+        if (!source.Field.Required && !target.Field.Required) { map.Version = 2; added.MissingValueBehavior = "Omit"; }
+        map.Fields.Add(added);
+        SelectField(added);
         await WriteAsync();
     }
 

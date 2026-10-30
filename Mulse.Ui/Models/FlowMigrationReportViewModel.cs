@@ -55,7 +55,13 @@ public sealed record MigrationArtifactReportViewModel(
     IReadOnlyList<MigrationDiagnosticViewModel> Diagnostics)
 {
     public OrchestrationMigrationInventoryViewModel? Orchestration { get; init; }
+    public PipelineMigrationInventoryViewModel? Pipeline { get; init; }
 }
+
+public sealed record PipelineMigrationInventoryViewModel(string Direction, int TotalStages, int OmittedStageCount, int TotalComponents,
+    int OmittedComponentCount, IReadOnlyList<PipelineStageEvidenceViewModel> Stages);
+public sealed record PipelineStageEvidenceViewModel(int Order, int SourceLine, string CategoryId, string StageName, IReadOnlyList<PipelineComponentEvidenceViewModel> Components);
+public sealed record PipelineComponentEvidenceViewModel(int Order, int SourceLine, string ClassName, string Version, int TotalProperties, int OmittedPropertyCount, IReadOnlyList<string> PropertyNames);
 
 public sealed record OrchestrationMigrationInventoryViewModel(
     IReadOnlyDictionary<string, int> ShapeCounts,

@@ -114,6 +114,12 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
         {
             ValidateModuleReference(augment.Module, ModuleKind.OrchestrationAugment, availableModules, pipeline.Id);
             ValidateConditions(augment, pipeline.Id);
+            if (string.Equals(augment.Module, "parsed-data-map-augment", StringComparison.OrdinalIgnoreCase))
+            {
+                var sourceId = augment.Settings.GetValueOrDefault("sourceId");
+                if (!string.IsNullOrWhiteSpace(sourceId) && !pipeline.Parses.Any(parse => string.Equals(parse.Id, sourceId, StringComparison.OrdinalIgnoreCase)))
+                    throw new ArgumentException($"Flow '{pipeline.Id}' parsed-data map references missing source '{sourceId}'.");
+            }
         }
 
         for (var routeIndex = 0; routeIndex < pipeline.Deliveries.Count; routeIndex++)

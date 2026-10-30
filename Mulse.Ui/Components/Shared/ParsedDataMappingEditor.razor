@@ -1,0 +1,256 @@
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using Mulse.Ui.Models
+@using Mulse.Ui.Services
+@inject IMulseApiClient ApiClient
+
+<section class="parsed-map" aria-label="Parsed-data mapping editor">
+    <div class="action-row">
+        <h3>Map parsed data</h3>
+        <HelpTooltip Label="Parsed-data mapping">Map fields after any parser, then choose a renderer for the output format. Paths use JSON Pointer: /customer/name, /0 for an array cell, ~1 for a slash and ~0 for a tilde in a name. An empty input path selects the whole record. Objects and arrays can be copied intact. Nested output paths create objects.</HelpTooltip>
+    </div>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (_notice is not null) { <p role="status">@_notice</p> }
+    <fieldset disabled="@(_busy || _loadFailed)">
+        <div class="map-options">
+            <label>Input source
+                <select class="selector" value="@Settings.GetValueOrDefault("sourceId", "")" @onchange="SourceChanged">
+                    <option value="">Current working batch</option>
+                    @if (Settings.GetValueOrDefault("sourceId") is { Length: > 0 } missing && !Sources.Any(source => source.Id == missing))
+                    { <option value="@missing">Missing source: @missing</option> }
+                    @foreach (var source in Sources) { <option value="@source.Id">@source.Id</option> }
+                </select>
+            </label>
+            <label>Parsed format
+                <select class="selector" value="@Format" @onchange="FormatChanged">
+                    <option value="Auto">JSON / XML (auto)</option><option value="Json">JSON</option><option value="Xml">XML</option><option value="Text">Text</option>
+                </select>
+            </label>
+            <label>Record path <input class="mapping-input" @bind="_map.RecordPath" @bind:after="Persist" placeholder="Root, or /Orders/Order" /></label>
+            <HelpTooltip Label="Record selection">The selected array is mapped once per item. An object, scalar or null is one record; an empty array produces []. For XML use the discovered root/element path; repeated sibling elements become arrays. Fields are relative to each selected record. Use Debatch first for more complex nested record selection. Other sources pass through unchanged.</HelpTooltip>
+        </div>
+        <div class="map-board">
+            <section aria-label="Input fields">
+                <h4>Input fields</h4>
+                <div class="action-row"><input aria-label="New input field" class="mapping-input" @bind="_newInput" placeholder="Column name or /field/path" /><button class="secondary-button" @onclick="AddInput">Add input</button></div>
+                <button class="secondary-button" @onclick='() => SelectInput("")'>Whole record</button>
+                <ul class="field-tree">
+                    @foreach (var path in _map.InputFields.Distinct(StringComparer.Ordinal))
+                    {
+                        <li><button class="field-node" aria-pressed="@(_selectedInput == path)" @onclick="() => SelectInput(path)">@Display(path)</button>
+                            <button class="secondary-button" aria-label="@($"Remove input {Display(path)}")" @onclick="() => { _map.InputFields.RemoveAll(value => value == path); Persist(); }">Remove field</button></li>
+                    }
+                </ul>
+            </section>
+            <section aria-label="Field connections">
+                <h4>Connections</h4>
+                <p class="connection-selection">@(_selectedInput is null ? "Select an input" : Display(_selectedInput)) &#8594; @(_selectedOutput ?? "Select an output")</p>
+                <div class="action-row">
+                    <button class="secondary-button" @onclick="Connect" disabled="@(_selectedInput is null || _selectedOutput is null)">Connect fields</button>
+                    <button class="secondary-button" @onclick="AddMapping">Add mapping</button>
+                    <button class="secondary-button" @onclick="AddConstant">Add constant</button>
+                </div>
+                @foreach (var field in _map.Fields)
+                {
+                    <div class="connection" @key="field">
+                        <label>Reads from <select class="selector" @bind="field.Kind" @bind:after="Persist"><option value="Field">Input field</option><option value="Constant">JSON constant</option></select></label>
+                        @if (field.Kind == "Constant")
+                        { <input class="mapping-input" aria-label="Mapping JSON constant" @bind="field.ConstantJson" @bind:after="Persist" placeholder="&quot;text&quot;, 123, true or null" /> }
+                        else
+                        { <input class="mapping-input" aria-label="Mapping input path" @bind="field.SourcePath" @bind:after="Persist" placeholder="/input" /> }
+                        <span aria-hidden="true">&#8594;</span>
+                        <input class="mapping-input" aria-label="Mapping output path" @bind="field.TargetPath" @bind:after="Persist" placeholder="/output" />
+                        <label>Missing input <select class="selector" @bind="field.Missing" @bind:after="Persist"><option>Error</option><option>Omit</option><option>Null</option></select></label>
+                        <button class="secondary-button" @onclick="() => Remove(field)">Remove mapping</button>
+                    </div>
+                }
+            </section>
+            <section aria-label="Output fields">
+                <h4>Output fields</h4>
+                <div class="action-row"><input aria-label="New output field" class="mapping-input" @bind="_newOutput" placeholder="Column name or /field/path" /><button class="secondary-button" @onclick="AddOutput">Add output</button></div>
+                <ul class="field-tree">
+                    @foreach (var path in _map.OutputFields.Concat(_map.Fields.Select(field => field.TargetPath)).Where(path => path.Length > 0).Distinct(StringComparer.Ordinal))
+                    {
+                        <li><button class="field-node" aria-pressed="@(_selectedOutput == path)" @onclick="() => _selectedOutput = path">@path</button></li>
+                    }
+                </ul>
+                <details><summary>Discover from target sample</summary>
+                    <textarea aria-label="Target structured sample" class="mapping-input" rows="6" @bind="_targetSample"></textarea>
+                    <button class="secondary-button" @onclick="InspectTargetAsync">Discover output fields</button>
+                </details>
+            </section>
+        </div>
+        <details>
+            <summary>Sample / parsed data and preview</summary>
+            <div class="map-options">
+                <label>Sample content
+                    <select class="selector" @bind="_sampleMode" @bind:after="ClearBinary"><option value="Parsed">Already parsed data</option><option value="Source">Raw sample through source parser</option></select>
+                </label>
+                @if (_sampleMode == "Source")
+                {
+                    <label>Sample parser
+                        <select class="selector" @bind="_sampleSource" @bind:after="InvalidateSample">
+                            <option value="">Choose a source parser</option>
+                            @foreach (var source in Sources) { <option value="@source.Id">@source.Id (@source.Module)</option> }
+                        </select>
+                    </label>
+                    <HelpTooltip Label="Sample parser execution">Runs the selected installed parser with its current settings on supplied sample bytes. No fetch, augment, renderer or delivery runs. Parsers are trusted plugin code and may access resources required by their settings (for example XSD files). Config/secret references are not resolved here. Use non-sensitive test data. Binary samples are limited to 10 MiB.</HelpTooltip>
+                }
+            </div>
+            <InputFile OnChange="ReadFileAsync" aria-label="Mapping sample file" />
+            <textarea class="mapping-input" aria-label="Mapping sample data" rows="7" @bind="_sample" @bind:after="ClearBinary" placeholder="Paste sample or parsed data"></textarea>
+            <button class="secondary-button" @onclick="InspectAsync">Discover input fields</button>
+            @if (_samples.Count > 1)
+            {
+                <label>Parsed sample payload <select class="selector" value="@_sampleIndex" @onchange="SelectSample">
+                    @for (var index = 0; index < _samples.Count; index++) { <option value="@index">Payload @(index + 1)</option> }
+                </select></label>
+            }
+            @if (_parsed is not null)
+            {
+                <details><summary>Parsed sample</summary><pre>@_parsed</pre></details>
+                <button class="secondary-button" @onclick="PreviewAsync">Preview parsed-data mapping</button>
+            }
+            @if (_preview is not null) { <pre aria-label="Mapped preview">@_preview</pre> }
+        </details>
+            </fieldset>
+            <details><summary>Mapping JSON</summary><textarea class="mapping-input" aria-label="Parsed-data mapping JSON" rows="10" disabled="@_busy" value="@Settings.GetValueOrDefault("mappingJson", "")" @onchange="ReplaceJson"></textarea></details>
+        </section>
+
+@code {
+    [Parameter, EditorRequired] public Dictionary<string, string> Settings { get; set; } = [];
+    [Parameter] public IReadOnlyList<ParsedMappingSourceViewModel> Sources { get; set; } = [];
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow };
+    private ParsedDataMapViewModel _map = new();
+    private string? _loaded;
+    private string? _error, _notice, _selectedInput, _selectedOutput, _parsed, _preview, _binary, _fileName, _sampleContentType;
+    private string _newInput = "", _newOutput = "", _sample = "", _targetSample = "", _sampleMode = "Parsed", _sampleSource = "";
+    private IReadOnlyList<string> _samples = [];
+    private int _sampleIndex;
+    private bool _busy, _loadFailed;
+    private string Format => Settings.GetValueOrDefault("inputFormat", "Auto");
+
+    protected override void OnParametersSet()
+    {
+        var json = Settings.GetValueOrDefault("mappingJson", "{}");
+        if (json == _loaded) return;
+        _loaded = json;
+        try
+        {
+            var map = JsonSerializer.Deserialize<ParsedDataMapViewModel>(json, Options) ?? throw new JsonException("Mapping must be an object.");
+            if (map.Version != 1 || map.RecordPath is null || map.Fields is null || map.InputFields is null || map.OutputFields is null
+                || map.InputFields.Any(path => path is null) || map.OutputFields.Any(path => path is null)
+                || map.Fields.Any(field => field is null || field.SourcePath is null || field.TargetPath is null))
+                throw new JsonException("Unsupported or invalid mapping document.");
+            _map = map;
+            _loadFailed = false;
+            _error = null;
+            _preview = null;
+        }
+        catch (JsonException ex) { _loadFailed = true; _error = $"Unable to load mapping: {ex.Message}"; }
+    }
+
+    private void Persist()
+    {
+        _loaded = JsonSerializer.Serialize(_map, Options);
+        Settings["mappingJson"] = _loaded;
+        _preview = null;
+    }
+    private static string Display(string path) => path.Length == 0 ? "(whole record)" : path;
+    private static string PathFor(string value) => value.StartsWith('/') ? value : "/" + value.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal);
+    private void SelectInput(string path) => _selectedInput = path;
+    private void AddInput() { if (string.IsNullOrWhiteSpace(_newInput)) { _error = "Enter an input field name or path; use Whole record for the root."; return; } if (!CanAdd(_map.InputFields.Count)) return; _map.InputFields.Add(PathFor(_newInput)); _newInput = ""; _error = null; Persist(); }
+    private void AddOutput() { if (string.IsNullOrWhiteSpace(_newOutput)) { _error = "Enter an output field name or path."; return; } if (!CanAdd(_map.OutputFields.Count)) return; _map.OutputFields.Add(PathFor(_newOutput)); _newOutput = ""; _error = null; Persist(); }
+    private bool CanAdd(int count) { if (count < 256) return true; _error = "Each mapping list supports at most 256 fields."; return false; }
+    private void Connect()
+    {
+        if (_selectedInput is null || _selectedOutput is null) { _error = "Select an input and output field first."; return; }
+        if (!CanAdd(_map.Fields.Count)) return;
+        if (_map.Fields.Any(field => field.TargetPath == _selectedOutput)) { _error = "That output is already mapped. Edit or remove its connection first."; return; }
+        _map.Fields.Add(new() { SourcePath = _selectedInput, TargetPath = _selectedOutput });
+        _error = null;
+        Persist();
+    }
+    private void AddMapping() { if (!CanAdd(_map.Fields.Count)) return; _map.Fields.Add(new() { SourcePath = _selectedInput ?? "", TargetPath = _selectedOutput ?? "/output" }); Persist(); }
+    private void AddConstant() { if (!CanAdd(_map.Fields.Count)) return; _map.Fields.Add(new() { Kind = "Constant", TargetPath = _selectedOutput ?? "/constant" }); Persist(); }
+    private void Remove(ParsedDataFieldViewModel field) { _map.Fields.Remove(field); Persist(); }
+    private void SourceChanged(ChangeEventArgs args) { Settings["sourceId"] = args.Value?.ToString() ?? ""; _sampleSource = Settings["sourceId"]; InvalidateSample(); }
+    private void FormatChanged(ChangeEventArgs args) { Settings["inputFormat"] = args.Value?.ToString() ?? "Auto"; InvalidateSample(); }
+    private void InvalidateSample() { _parsed = _preview = null; _samples = []; _notice = null; }
+    private void ClearBinary() { _binary = _fileName = _sampleContentType = null; InvalidateSample(); }
+    private void SelectSample(ChangeEventArgs args) { if (int.TryParse(args.Value?.ToString(), out var index) && index >= 0 && index < _samples.Count) { _sampleIndex = index; _parsed = _samples[index]; _preview = null; } }
+    private void ReplaceJson(ChangeEventArgs args) { Settings["mappingJson"] = args.Value?.ToString() ?? ""; OnParametersSet(); }
+
+    private async Task ReadFileAsync(InputFileChangeEventArgs args)
+    {
+        _busy = true;
+        _error = null;
+        _binary = null;
+        _sample = "";
+        InvalidateSample();
+        try
+        {
+            _fileName = args.File.Name;
+            _sampleContentType = args.File.ContentType;
+            await using var stream = args.File.OpenReadStream(_sampleMode == "Source" ? 10 * 1024 * 1024 : 1_000_000);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            if (_sampleMode == "Source") { _binary = Convert.ToBase64String(buffer.ToArray()); _sample = ""; }
+            else { _sample = new System.Text.UTF8Encoding(false, true).GetString(buffer.ToArray()).TrimStart('\uFEFF'); _binary = null; }
+            await InspectAsync();
+        }
+        catch (Exception ex) { _error = $"Unable to read mapping sample: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private async Task InspectAsync()
+    {
+        _busy = true; _error = _notice = null; InvalidateSample();
+        var signature = JsonSerializer.Serialize(new { Settings, Sources });
+        try
+        {
+            var source = _sampleMode == "Source" ? Sources.FirstOrDefault(source => source.Id == _sampleSource) : null;
+            if (_sampleMode == "Source" && source is null) throw new InvalidOperationException("Choose a source parser for this raw sample.");
+            var inspection = await ApiClient.InspectParsedDataAsync(new(_sample, Format, _map.RecordPath, source?.Module,
+                source is null ? null : new(source.Settings), source is null ? null : _binary, _fileName, _sampleContentType), default);
+            if (signature != JsonSerializer.Serialize(new { Settings, Sources })) { _notice = "Source or parser settings changed. Discover the sample again."; return; }
+            var fields = _map.InputFields.Concat(inspection.Fields).Distinct(StringComparer.Ordinal).ToList();
+            if (fields.Count > 256) throw new InvalidOperationException("Combined manual and discovered inputs exceed 256 paths. Remove unused fields or use a smaller sample.");
+            _map.InputFields = fields;
+            _parsed = inspection.ParsedData;
+            _samples = inspection.Samples ?? [inspection.ParsedData]; _sampleIndex = 0;
+            _notice = $"Discovered {inspection.Fields.Count} paths across {inspection.RecordCount} sample record(s). Sample values are not saved with the flow.";
+            Persist();
+        }
+        catch (Exception ex) { _error = $"Unable to discover input fields: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+    private async Task InspectTargetAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var result = await ApiClient.InspectParsedDataAsync(new(_targetSample), default);
+            var fields = _map.OutputFields.Concat(result.Fields.Where(path => path.Length > 0)).Distinct(StringComparer.Ordinal).ToList();
+            if (fields.Count > 256) throw new InvalidOperationException("Combined output fields exceed 256 paths.");
+            _map.OutputFields = fields;
+            Persist();
+        }
+        catch (Exception ex) { _error = $"Unable to discover output fields: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+    private async Task PreviewAsync()
+    {
+        _busy = true; _error = null; _preview = null;
+        var mapping = Settings.GetValueOrDefault("mappingJson", "{}");
+        var sample = _parsed;
+        try
+        {
+            if (sample is null) throw new InvalidOperationException("Discover a sample before previewing.");
+            var result = await ApiClient.PreviewParsedDataMappingAsync(new(mapping, sample, "Json"), default);
+            if (mapping == Settings.GetValueOrDefault("mappingJson") && sample == _parsed) _preview = result.OutputJson;
+        }
+        catch (Exception ex) { _error = $"Unable to preview mapping: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+}

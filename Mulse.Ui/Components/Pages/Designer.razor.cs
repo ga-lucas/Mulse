@@ -64,8 +64,12 @@ public partial class Designer : IAsyncDisposable
 
     private ElementReference _canvasElement;
     private ElementReference _toolboxElement;
+    private ElementReference _leftDock;
+    private ElementReference _dockSplitter;
+    private double _toolboxShare = 45;
     private Microsoft.AspNetCore.Components.Forms.InputFile? _canvasFileInput;
     private IJSObjectReference? _canvasModule;
+    private IJSObjectReference? _splitterModule;
     private DotNetObjectReference<Designer>? _selfReference;
     private bool _canvasInitialized;
 
@@ -103,6 +107,10 @@ public partial class Designer : IAsyncDisposable
 
     private bool _showSamplePanel;
     private bool _showMappingDesigner;
+    private bool _mappingDesignerOpened;
+    private string? _selectedMappingNodeId;
+    private ElementReference _flowTab;
+    private ElementReference _mappingTab;
     private bool _isAnalyzingSample;
     private string _sampleText = string.Empty;
     private string? _fileName;
@@ -118,7 +126,34 @@ public partial class Designer : IAsyncDisposable
 
     private bool IsExistingFlow => !string.IsNullOrWhiteSpace(FlowId);
 
-    private void ToggleMappingDesigner() => _showMappingDesigner = !_showMappingDesigner;
+    private List<FlowNode> MappingNodes => _nodes.Where(node => (node.Stage == NodeStage.Render && node.ModuleId == "xml-mapping-render") || IsParsedMappingNode(node)).ToList();
+    private string? ActiveMappingNodeId => MappingNodes.FirstOrDefault(node => node.Id == _selectedMappingNodeId)?.Id ?? MappingNodes.FirstOrDefault()?.Id;
+
+    private void SetMappingWorkspace(bool mapping)
+    {
+        _showMappingDesigner = mapping;
+        _mappingDesignerOpened |= mapping;
+    }
+
+    private void OpenMappingDesigner(FlowNode node)
+    {
+        _selectedMappingNodeId = node.Id;
+        SetMappingWorkspace(true);
+    }
+
+    private async Task HandleWorkspaceKeyAsync(KeyboardEventArgs args, bool mapping)
+    {
+        var next = args.Key switch
+        {
+            "ArrowLeft" or "ArrowRight" => !mapping,
+            "Home" => false,
+            "End" => true,
+            _ => (bool?)null
+        };
+        if (next is not { } target) return;
+        SetMappingWorkspace(target);
+        await (target ? _mappingTab : _flowTab).FocusAsync();
+    }
 
     private void AddXmlMappingRender()
     {
@@ -132,6 +167,7 @@ public partial class Designer : IAsyncDisposable
             new Dictionary<string, string> { ["mappingJson"] = JsonSerializer.Serialize(new XmlMappingViewModel(), JsonOptions) },
             order: route?.Order ?? Routes.Count, routeId: route?.RouteId ?? Guid.NewGuid().ToString("n"));
         _selectedNodeId = render.Id;
+        OpenMappingDesigner(render);
         AutoLayout();
         _statusMessage = "Added XML mapping render. Edit its fields in Mapping Designer and add a deliver node before saving.";
     }
@@ -204,10 +240,44 @@ public partial class Designer : IAsyncDisposable
         await _canvasModule.InvokeVoidAsync("initialize", _canvasElement, _selfReference);
         await _canvasModule.InvokeVoidAsync("initializeToolbox", _toolboxElement, _canvasElement, _selfReference);
         await _canvasModule.InvokeVoidAsync("initializeFileDrop", _canvasElement, _canvasFileInput!.Element, _selfReference);
+        _splitterModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/dock-splitter.js");
+        await _splitterModule.InvokeVoidAsync("initialize", _leftDock, _dockSplitter, _selfReference);
+    }
+
+    [JSInvokable]
+    public void OnDockSplitChanged(double share)
+    {
+        if (!double.IsFinite(share)) throw new ArgumentOutOfRangeException(nameof(share));
+        _toolboxShare = Math.Clamp(share, 20, 80);
+        StateHasChanged();
+    }
+
+    private void ResizeDockByKey(KeyboardEventArgs args)
+    {
+        _toolboxShare = args.Key switch
+        {
+            "ArrowUp" => Math.Max(20, _toolboxShare - 5),
+            "ArrowDown" => Math.Min(80, _toolboxShare + 5),
+            "Home" => 20,
+            "End" => 80,
+            _ => _toolboxShare
+        };
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (_splitterModule is not null)
+        {
+            try
+            {
+                await _splitterModule.InvokeVoidAsync("dispose", _dockSplitter);
+                await _splitterModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // The circuit has already disconnected.
+            }
+        }
         if (_canvasModule is not null)
         {
             try
@@ -289,6 +359,9 @@ public partial class Designer : IAsyncDisposable
                 break;
             case "join":
                 AddJoinAugmentNodeAt(x, y);
+                break;
+            case "parsed-map":
+                AddParsedDataMappingAt(x, y);
                 break;
             case "route":
                 AddDeliveryRouteAt(x, y);
@@ -654,6 +727,12 @@ public partial class Designer : IAsyncDisposable
             if (augments.Any(static node => string.IsNullOrWhiteSpace(node.ModuleId)))
             {
                 throw new InvalidOperationException("Select a module for every augment node.");
+            }
+            foreach (var map in augments.Where(IsParsedMappingNode))
+            {
+                var sourceId = map.Settings.GetValueOrDefault("sourceId");
+                if (!string.IsNullOrWhiteSpace(sourceId) && FindParse(sourceId) is null)
+                    throw new InvalidOperationException($"Map parsed data references missing source '{sourceId}'. Select an existing source or the current working batch.");
             }
 
             if (_enabled && _migration is not null)

@@ -18,6 +18,10 @@ public interface IMulseApiClient
 
     Task<FlowDesignAnalysisViewModel> AnalyzeFlowDesignAsync(FlowDesignAnalysisRequestViewModel request, CancellationToken cancellationToken);
 
+    Task<ParsedDataInspectionViewModel> InspectParsedDataAsync(ParsedDataSampleRequestViewModel request, CancellationToken cancellationToken);
+
+    Task<ParsedDataPreviewViewModel> PreviewParsedDataMappingAsync(ParsedDataPreviewRequestViewModel request, CancellationToken cancellationToken);
+
     Task<XmlMappingPreviewViewModel> PreviewXmlMappingAsync(XmlMappingPreviewRequestViewModel request, CancellationToken cancellationToken);
 
     Task<XmlSchemaTreeViewModel> AnalyzeXmlMappingSchemasAsync(XmlSchemaAnalysisRequestViewModel request, CancellationToken cancellationToken);

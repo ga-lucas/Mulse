@@ -527,12 +527,88 @@ The [BillingServiceProcess migration guide](BillingServiceProcess-Migration-Guid
 currently available disabled import from implementation prerequisites, BizTalk-team evidence, validation
 and eventual cutover. Billing is not currently an executable equivalent merely by importing it.
 
+### Mapping parsed data (Excel, JSON, flat files, HL7, XML and plugin output)
+
+Add **Map parsed data** from the Toolbox or **Add parsed-data map** in the Mapping workspace.
+This standalone `parsed-data-map-augment` runs after parsing, in augment order, before rendering;
+it needs no join or second source. Choose a parse-node source or the current working batch.
+Unselected sources pass through unchanged, so review route conditions when several sources exist.
+Renaming a parse node updates its map reference; removing one requires choosing a replacement before saving.
+
+1. Enter input fields manually with **Add input**, or open **Sample / parsed data and preview**.
+   Paste/upload already parsed JSON/XML (choose Text for plain parsed text), or select **Raw sample through
+   source parser**, choose the source parser, and supply a sample file. Excel samples use the selected
+   parser's sheet/header settings; headerless worksheets expose numeric cell paths such as `/0`.
+   Raw sample parsing explicitly executes that installed parser with its current settings, including any
+   resources it requires; it does not fetch live input, run augments, render or deliver. Config/secret
+   references are not resolved for sample parsing. Use trusted parsers and non-sensitive sample data.
+2. Choose **Discover input fields**. Fields are unioned across sample records/payloads, not just the first
+   row. For nested records, set **Record path** (for example `/data/rows`) and discover again. Mulse's
+   `flat-file-parse` wraps its rows in `/records`; Excel/JSON root arrays use an empty record path.
+   The selected array yields one output record per item; an object/scalar/null yields one. Empty arrays
+   remain empty. Samples with several parsed payloads offer a payload selector for preview.
+3. Add output fields manually or discover them from a structured target sample.
+   then **Connect fields**, or use **Add mapping / Add constant**. JSON constants preserve their types;
+   text constants require quotes. Each connection supports missing-input Error (default), Omit or Null.
+   Present null/empty values are not missing. Nested output paths create objects; duplicate/overlapping
+   assignments fail explicitly. Objects/arrays can be copied intact; arbitrary nested record reshaping
+   is not inferred. Use Debatch first for complex nested record selection.
+4. **Preview parsed-data mapping**, review its JSON result, then select an output renderer (Excel, JSON,
+   XML or a compatible plugin) and delivery route in Flow. Mapping emits a JSON array per input payload.
+   Renderer-specific shape restrictions still apply: Excel requires flat cell values; for a renderer
+   expecting one object per payload (such as HL7), add **Debatch** after the map with JSON array mode and
+   an empty array path. **Save flow / Create flow** persists fields and connections, not sample values or
+   previews. Imported-flow execution blocks remain unchanged.
+
+Paths are exact, case-sensitive JSON Pointers: `/customer/name` traverses an object; `/0` selects an array
+cell; `~1` escapes a slash and `~0` a tilde inside a property name. Dots/spaces in Excel column names are
+literal (for example `/Order.Id`). Empty input path means the whole selected record. Numeric target
+segments are object property names, not array constructors. XML is normalized into a structured object:
+expanded names `{namespace-uri}name` avoid prefix ambiguity, attributes use `@name`, repeated sibling
+names form arrays, leaf values are strings and text alongside children/attributes uses `#text`.
+Escape slashes in namespace URIs in pointer segments. This is data mapping, not lossless XML round-tripping
+(comments, processing instructions and mixed-content ordering are not preserved); use the native XML
+mapper below when XML-specific output contracts are required. Binary formats need a parser that emits
+JSON, XML or text; raw binary is not treated as fields.
+
+Mapping definitions are versioned in the augment's `mappingJson`. Limits are 256 fields per list,
+32 path segments, 262144 mapping characters, 1000000 parsed-input characters and 4000000 output characters.
+Raw binary sample uploads are limited to 10 MiB. Discovery rejects oversized schemas rather than silently
+truncating them; use a smaller sample or manual paths. Preview and execution use the same mapping engine.
+API clients can POST `/api/flow-designer/parsed-mapping/inspect` and
+`/api/flow-designer/parsed-mapping/preview` without executing a flow.
+
 ### Native XML Mapping Designer
 
-In **Flow Designer > Mapping Designer**, choose **Add XML mapping render**. This adds a render-only
-route (or fills a route missing a render); add a deliver node before saving. It works for scratch-built
-flows and disabled imported drafts. Existing native map nodes also offer **Edit XML mapping** in Properties.
-Existing join field mappings are still edited per join in Properties, linked from Mapping Designer.
+In **Flow Designer > Mapping**, choose **Add XML mapping render**. The builder has **Flow / Mapping**
+workspace tabs: Mapping uses the full work area instead of floating over the flow canvas. Choose the mapping
+step from the selector to work on one map at a time. This adds a render-only route (or fills a route missing
+a render); add a deliver node before saving. It works for scratch-built flows and disabled imported drafts.
+Existing native map nodes also offer **Edit XML mapping** in Properties, opening that map in Mapping.
+Existing join field mappings remain in Flow Properties, linked from the Mapping workspace.
+Switching tabs or map selection preserves transient schema inputs, sample XML, previews and toolbox
+positions during the editing session; only **Create flow / Save flow** persists flow/mapping definitions.
+Use Left/Right or Home/End on the workspace tabs to navigate by keyboard.
+
+Explanatory guidance is behind **?** help controls: hover, focus with Tab, or click/tap to keep help open;
+press Escape or click again to dismiss. Errors, import-execution blocks and unsaved status remain visible.
+**Map settings**, **Field settings**, **Mapping definition JSON** and **Test mapping** are collapsible.
+Selecting a visual connection/operation or adding a field opens its field settings automatically.
+
+The **Visual mapping designer** shows hierarchical source paths on the left, target paths on the right,
+connection lines and ordered operation nodes in the middle. Inspect source/target XSDs in the section above
+it, select a supported scalar field on each side, then choose **Connect fields**. Repeating/unsupported
+fields remain visible but disabled. Duplicate/overlapping targets, incompatible roots and namespace limits
+are rejected without changing the saved map; matching namespace URIs reuse existing prefixes.
+Optional-source to optional-target links start with Omit; review that policy in field settings.
+Select a connection or operation node to show that field's settings below the canvas; use **Add operation**
+to extend its chain, **Remove connection** to delete its assignment, or **Show all field settings** to return
+to the full editor. Constants and manually entered paths also appear visually. Connections are created by
+click selection (keyboard-accessible buttons), not by dragging; canvas layout is automatic, not freeform.
+Attached validation XSDs reload on reopen, with visible errors and an explicit retry action. Inspected
+schemas are labeled separately and are not attached automatically. Without XSDs, existing saved paths
+still appear, but inspect schemas before adding visual links. The scrollable canvas and field forms edit
+the same definition; there is no separate unsaved graph or execution-approval switch.
 
 Configure the target root, namespace prefixes and field mappings, then **Create flow / Save flow**.
 The versioned model is saved in that node's `mappingJson` setting and survives reopen and duplication.
@@ -564,6 +640,16 @@ field; Default inserts the supplied literal only when absent. Present empty valu
 Repeated/complex values, duplicate/overlapping targets, unknown versions, undeclared prefixes,
 XPath functions/predicates/wildcards and DTDs fail explicitly. These are presence conditions, not
 arbitrary expressions or record loops.
+
+Version 2 also supports ordered **Add string operation / Move up / Move down / Remove** controls on
+source fields and constants. NormalizeWhitespace trims/collapses XML spaces, tabs and line breaks only;
+UppercaseAscii/LowercaseAscii leave non-ASCII letters unchanged. Prefix/Suffix take literal text, never
+executable XPath. Operations run top to bottom after selecting the source, constant or default; omitted
+fields stay omitted. Adding an operation upgrades to version 2. Each field permits at most 16 operations;
+prefix/suffix arguments allow at most 4,096 characters. Unknown/null/invalid operations fail explicitly.
+For example, `"operations": [{ "kind": "UppercaseAscii" }, { "kind": "Prefix", "argument": "id:" }]`
+produces `id:ABC` from `abc`. Chains persist through normal flow save/reopen and schema attach/remove.
+These are explicitly authored native operations, not automatic BizTalk functoid translation.
 
 Every native editor exposes **XSD schema trees and BizTalk map import**:
 
@@ -598,6 +684,17 @@ file presence are retained. Missing, ambiguous, conditional/dynamic and incomple
 explicit; disk filenames alone never establish class ownership. Inspection is capped at 4,096 schema
 declarations, 32 saved candidates per reference and 32 shared warning details. Reanalyze source for
 fresh evidence; existing saved reports remain original snapshots.
+
+Pipeline artifacts expose **Pipeline source inventory** with declared stage/component order, category,
+class/version, source lines and property names only. Values, descriptions and cached display metadata
+are excluded. Saved evidence is capped at 64 stages, 256 components, 64 property names per component
+and 512 characters per identity/name, with explicit omitted counts and blocking limits/errors.
+Unknown/mixed categories remain unknown; direction is parsed from stage categories, not raw text GUIDs.
+Fresh import candidates' **Scaffolded modules > Download / Download all (.zip)** includes deterministic
+pipeline C# placeholders, alongside orchestration stubs and partial map stylesheets. Pipeline placeholders
+contain names-only evidence, compile against the SDK, honor cancellation and throw `NotSupportedException`.
+They are not automatically installed/wired; choose and implement the correct native parse/augment/render
+stages and configuration/context effects first. Inventory, builds and downloads never approve execution.
 
 Repeated-record mapping, arbitrary functions/conditions, functoid/script translation,
 evaluated/deployed schema ownership and automatic orchestration wiring remain unfinished. Existing
@@ -889,15 +986,23 @@ API clients can `PATCH /api/module-packages/{packageId}/enabled` with `{ "enable
 
 ### Appearance and designer panels
 
+Use **Collapse menu** beneath the Mulse logo to reduce the desktop navigation to an icon rail.
+Hover an icon for its label; all destinations and the dark-mode toggle remain available. **Expand main
+menu** restores the labels. The page and Flow Designer reclaim the freed width. On smaller screens,
+collapsing hides the navigation below the header instead. The choice lasts while navigating in the
+current UI session; reloading the page restores the expanded menu.
+
 Appearance follows your system's light/dark preference until you use **Dark mode** in the navigation.
 Your selection is saved in this browser and applies to all pages, including the designer canvas.
 No external fonts, styles, or theme services are required.
 
-On smaller screens, designer tools stack around the canvas instead of floating over it. Tables keep
-their column headers and scroll horizontally inside their panels. Desktop designer panels remain
-draggable and collapsible, retaining their dragged positions during canvas interactions for as long
-as each panel remains open on the page. Properties starts aligned to the right edge of the designer
-viewport, then stays where you drag it.
+Toolbox and Flow overview share one pinned left column with matching widths and typography.
+Drag their horizontal divider to change the height split (20-80%), or focus it and use Up/Down in
+5% steps, Home for 20%, or End for 80%. Each panel scrolls independently; the split survives canvas
+interaction and Flow/Mapping tab switches during the editing session. Properties is pinned on the
+right, with the canvas occupying the space between the columns instead of being covered by them.
+On smaller screens, the left dock, canvas and Properties stack vertically. Sample/import dialogs
+remain floating. Tables keep their column headers and scroll horizontally inside their panels.
 
 The initial view and **Fit** use an 80% scale (20% smaller than the original fitted view); zoom controls
 and wheel zoom remain available. The workspace is unbounded in every direction: nodes, source groups

@@ -92,6 +92,11 @@ public sealed class XmlMappingEngine
         foreach (var field in map.Fields)
         {
             if (field is null) throw new ArgumentException("XML mapping fields cannot be null.");
+            if (field.Operations is null || field.Operations.Count > 16 || (map.Version == 1 && field.Operations.Count > 0)
+                || field.Operations.Any(operation => operation is null || !Enum.IsDefined(operation.Kind)
+                    || (operation.Kind is XmlStringOperationKind.Prefix or XmlStringOperationKind.Suffix
+                        ? operation.Argument is null || operation.Argument.Length > 4096 : operation.Argument is not null)))
+                throw new ArgumentException($"Mapping '{field.TargetPath}' has invalid string operations. Up to 16 operations require version 2; only Prefix/Suffix take a literal argument (at most 4,096 characters).");
             var segments = ParsePath(field.TargetPath, absolute: false, map);
             if (field.Constant is not null && !string.IsNullOrEmpty(field.SourcePath))
                 throw new ArgumentException($"Mapping '{field.TargetPath}' must specify either a source path or a constant, not both.");
@@ -140,11 +145,34 @@ public sealed class XmlMappingEngine
             var value = field.Constant is null
                 ? new XElement(Xsl + "value-of", new XAttribute("select", field.SourcePath))
                 : new XElement(Xsl + "text", field.Constant);
-            element.Add(field.MissingValueBehavior == MissingXmlValueBehavior.Default
+            var initial = field.MissingValueBehavior == MissingXmlValueBehavior.Default
                 ? new XElement(Xsl + "choose",
                     new XElement(Xsl + "when", new XAttribute("test", $"count({field.SourcePath}) = 0"), new XElement(Xsl + "text", field.DefaultValue)),
                     new XElement(Xsl + "otherwise", value))
-                : value);
+                : value;
+            if (field.Operations.Count == 0) element.Add(initial);
+            else
+            {
+                element.Add(new XElement(Xsl + "variable", new XAttribute("name", "value0"), initial));
+                for (var index = 0; index < field.Operations.Count; index++)
+                {
+                    var operation = field.Operations[index];
+                    var input = $"string($value{index})";
+                    if (operation.Argument is not null)
+                        element.Add(new XElement(Xsl + "variable", new XAttribute("name", $"argument{index}"), new XElement(Xsl + "text", operation.Argument)));
+                    var expression = operation.Kind switch
+                    {
+                        XmlStringOperationKind.NormalizeWhitespace => $"normalize-space({input})",
+                        XmlStringOperationKind.UppercaseAscii => $"translate({input}, 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')",
+                        XmlStringOperationKind.LowercaseAscii => $"translate({input}, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')",
+                        XmlStringOperationKind.Prefix => $"concat(string($argument{index}), {input})",
+                        XmlStringOperationKind.Suffix => $"concat({input}, string($argument{index}))",
+                        _ => throw new ArgumentException("Unsupported XML string operation.")
+                    };
+                    element.Add(new XElement(Xsl + "variable", new XAttribute("name", $"value{index + 1}"), new XAttribute("select", expression)));
+                }
+                element.Add(new XElement(Xsl + "value-of", new XAttribute("select", $"$value{field.Operations.Count}")));
+            }
         }
         foreach (var child in node.Children.OrderByDescending(static child => child.IsAttribute))
             element.Add(Emit(child));

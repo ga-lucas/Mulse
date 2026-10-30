@@ -113,6 +113,7 @@ public sealed partial class BizTalkImportService
             var status = MigrationTranslationStatus.ReviewRequired;
             var issues = new List<MigrationDiagnostic>();
             OrchestrationMigrationInventory? inventory = null;
+            PipelineMigrationInventory? pipelineInventory = null;
             if (!File.Exists(path))
             {
                 return new(artifact.Kind, path, MigrationTranslationStatus.Unsupported,
@@ -177,8 +178,11 @@ public sealed partial class BizTalkImportService
                     break;
                 case "Pipeline":
                     status = MigrationTranslationStatus.Unsupported;
+                    var pipelineEvidence = BizTalkPipelineInventoryAnalyzer.Analyze(path);
+                    pipelineInventory = pipelineEvidence.Inventory;
+                    issues.AddRange(pipelineEvidence.Diagnostics);
                     issues.Add(Diagnostic("BT-PIPELINE-UNTRANSLATED", MigrationDiagnosticSeverity.Blocking, path,
-                        "Pipeline direction and module-selection hints were analyzed, not the complete pipeline component behavior.",
+                        "Pipeline stages, component identities and property names are source evidence only; component behavior and property values were not translated.",
                         "Implement equivalent decoding, parsing, context promotion, preprocessing, and multipart behavior using native Mulse modules."));
                     break;
                 case "Schema":
@@ -192,7 +196,7 @@ public sealed partial class BizTalkImportService
                         "This artifact kind has no verified translator.", "Implement equivalent behavior and verify it before execution."));
                     break;
             }
-            return new(artifact.Kind, path, status, issues) { Orchestration = inventory };
+            return new(artifact.Kind, path, status, issues) { Orchestration = inventory, Pipeline = pipelineInventory };
         }
     }
 

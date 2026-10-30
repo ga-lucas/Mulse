@@ -42,6 +42,15 @@ public sealed class XmlMappingApiTests
                 new ModuleStepDefinition { Module = module.Descriptor.Id, Settings = new() { ["mappingJson"] = XmlMappingTests.Json() } }, default);
             Assert.Equal(Assert.Single(rendered.Payloads).GetText(), preview.OutputXml);
             Assert.Equal(new XmlMappingEngine(XmlMappingTests.Json()).Xslt, preview.Xslt);
+            var operations = XmlMappingTests.Json(new Mulse.Modules.Mapping.XmlMappingDefinition
+            {
+                Version = 2, Fields = [new() { SourcePath = "/Input/Value", TargetPath = "Value", Operations = [new() { Kind = Mulse.Modules.Mapping.XmlStringOperationKind.UppercaseAscii }] }]
+            });
+            var operationPreview = await client.PreviewXmlMappingAsync(new(operations, "<Input><Value>abc</Value></Input>"), default);
+            Assert.Equal(new XmlMappingEngine(operations).Transform("<Input><Value>abc</Value></Input>"), operationPreview.OutputXml);
+            Assert.Contains("ABC", operationPreview.OutputXml);
+            var invalidOperations = operations.Replace("UppercaseAscii", "UnknownOperation", StringComparison.Ordinal);
+            Assert.Contains("Invalid XML mapping JSON", (await Assert.ThrowsAsync<InvalidOperationException>(() => client.PreviewXmlMappingAsync(new(invalidOperations, "<Input/>"), default))).Message);
             var tree = await client.AnalyzeXmlMappingSchemasAsync(new([NativeMapImportTests.SourceXsd]), default);
             Assert.Contains(tree.Roots.Single().Fields, field => field.Path == "/n1:Order/n1:Id");
             var proposal = await client.ImportNativeXmlMappingAsync(new(NativeMapImportTests.Map(), [NativeMapImportTests.SourceXsd], [NativeMapImportTests.TargetXsd]), default);

@@ -18,6 +18,13 @@ public sealed class XmlFieldMappingViewModel
     public string? Constant { get; set; }
     public string MissingValueBehavior { get; set; } = "Error";
     public string? DefaultValue { get; set; }
+    public List<XmlStringOperationViewModel> Operations { get; set; } = [];
+}
+
+public sealed class XmlStringOperationViewModel
+{
+    public string Kind { get; set; } = "NormalizeWhitespace";
+    public string? Argument { get; set; }
 }
 
 public sealed record XmlMappingPreviewRequestViewModel(string MappingJson, string SampleXml);
@@ -31,3 +38,4 @@ public sealed record XmlSchemaFieldViewModel(string Path, string LocalPath, bool
 public sealed record XmlSchemaSelectionViewModel(XmlSchemaRootViewModel Root, XmlSchemaFieldViewModel Field, IReadOnlyDictionary<string, string> Namespaces);
 public sealed record XmlSchemaFieldPairViewModel(XmlSchemaSelectionViewModel Source, XmlSchemaSelectionViewModel Target);
 public sealed record XmlMappingSchemasViewModel(IReadOnlyList<string> SourceSchemas, IReadOnlyList<string> TargetSchemas);
+public sealed record XmlMappingTreesViewModel(XmlSchemaTreeViewModel? Source, XmlSchemaTreeViewModel? Target);

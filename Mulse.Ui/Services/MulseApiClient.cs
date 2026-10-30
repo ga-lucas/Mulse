@@ -39,6 +39,18 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<FlowDesignAnalysisViewModel>(response, cancellationToken, "flow design analysis response").ConfigureAwait(false);
     }
 
+    public async Task<ParsedDataInspectionViewModel> InspectParsedDataAsync(ParsedDataSampleRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/flow-designer/parsed-mapping/inspect", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<ParsedDataInspectionViewModel>(response, cancellationToken, "parsed-data fields").ConfigureAwait(false);
+    }
+
+    public async Task<ParsedDataPreviewViewModel> PreviewParsedDataMappingAsync(ParsedDataPreviewRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/flow-designer/parsed-mapping/preview", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<ParsedDataPreviewViewModel>(response, cancellationToken, "parsed-data mapping preview").ConfigureAwait(false);
+    }
+
     public async Task<XmlMappingPreviewViewModel> PreviewXmlMappingAsync(XmlMappingPreviewRequestViewModel request, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PostAsJsonAsync("/api/flow-designer/xml-mapping/preview", request, cancellationToken).ConfigureAwait(false);
