@@ -187,10 +187,6 @@
     font-size: 1rem;
 }
 
-.canvas-background {
-    fill: transparent;
-}
-
 .flow-edge {
     fill: none;
     stroke: var(--accent);

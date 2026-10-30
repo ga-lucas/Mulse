@@ -304,8 +304,8 @@ public partial class Designer : IAsyncDisposable
 
     private void FitView()
     {
-        _viewX = 0;
-        _viewY = 0;
+        _viewX = CanvasX;
+        _viewY = CanvasY;
         _viewW = CanvasWidth / 0.8;
         _viewH = CanvasHeight / 0.8;
     }

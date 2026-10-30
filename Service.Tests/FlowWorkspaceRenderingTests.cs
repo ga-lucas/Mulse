@@ -258,10 +258,12 @@ public sealed class FlowWorkspaceRenderingTests
 
             var fetchId = Value(Find("Fetch"), "Id");
             var parseId = Value(Find("Parse"), "Id");
-            await designer.OnNodesMoved([new(fetchId, 120, 160), new(parseId, 390, 160)]);
+            await designer.OnNodesMoved([new(fetchId, -120, -160), new(parseId, 150, -160)]);
             await Refresh();
-            Assert.Contains("transform=\"translate(120, 160)\"", rendered.ToHtmlString());
-            Assert.Contains("transform=\"translate(390, 160)\"", rendered.ToHtmlString());
+            Assert.Contains("transform=\"translate(-120, -160)\"", rendered.ToHtmlString());
+            Assert.Contains("transform=\"translate(150, -160)\"", rendered.ToHtmlString());
+            Assert.Contains("class=\"source-lane-body\" x=\"-138\" y=\"-198\"", rendered.ToHtmlString());
+            Assert.DoesNotContain("canvas-background", rendered.ToHtmlString());
 
             var join = Find("Augment");
             var render = Find("Render");
@@ -285,7 +287,7 @@ public sealed class FlowWorkspaceRenderingTests
             Assert.DoesNotContain("Add render to this route", rendered.ToHtmlString());
             Assert.Equal(Value(deliver, "RouteId"), Value(Find("Render"), "RouteId"));
             Assert.Contains(deliver, nodes.Cast<object>());
-            Assert.Contains("transform=\"translate(120, 160)\"", rendered.ToHtmlString());
+            Assert.Contains("transform=\"translate(-120, -160)\"", rendered.ToHtmlString());
 
             var fetch = Find("Fetch");
             var removedParser = Find("Parse");

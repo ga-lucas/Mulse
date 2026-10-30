@@ -773,7 +773,10 @@ as each panel remains open on the page. Properties starts aligned to the right e
 viewport, then stays where you drag it.
 
 The initial view and **Fit** use an 80% scale (20% smaller than the original fitted view); zoom controls
-and wheel zoom remain available. Drag a source group's header to move its parse and fetch nodes together,
+and wheel zoom remain available. The workspace is unbounded in every direction: nodes, source groups
+and toolbox drops can use negative coordinates without hitting a top/left wall. Pan by dragging empty
+canvas space to reach more room, and use **Fit** to bring all nodes and group headers back into view.
+Drag a source group's header to move its parse and fetch nodes together,
 keeping their relative spacing. Shared fetch nodes move once and other groups containing them resize;
 dependent lookup groups are not moved automatically. Individual nodes remain draggable. Group/node
 positions are retained during this editing session; saving still stores the flow definition, not custom

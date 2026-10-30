@@ -19,7 +19,7 @@ function element(dataset = {}, attributes = {}) {
     };
 }
 
-function setup(scale = 1) {
+function setup(scale = 1, origin = { x: 0, y: 0 }) {
     const events = {};
     const clickEvents = {};
     const calls = [];
@@ -43,8 +43,8 @@ function setup(scale = 1) {
     const svg = {
         ...element(),
         viewBox: { baseVal: { x: 0, y: 0, width: 1350, height: 650 } },
-        getScreenCTM: () => ({ inverse: () => scale }),
-        getBoundingClientRect: () => ({ width: 1080, height: 520 }),
+        getScreenCTM: () => ({ inverse: () => ({ scale, ...origin }) }),
+        getBoundingClientRect: () => ({ left: 0, top: 0, right: 1080, bottom: 520, width: 1080, height: 520 }),
         querySelector: selector => nodes[/data-node-id="([^"]+)"/.exec(selector)?.[1]] ?? null,
         querySelectorAll: selector => selector === '.source-lane' ? lanes
             : edges.filter(edge => selector.includes(`="${edge.dataset.edgeFrom}"`) || selector.includes(`="${edge.dataset.edgeTo}"`)),
@@ -54,7 +54,7 @@ function setup(scale = 1) {
     const context = vm.createContext({
         DOMPoint: class {
             constructor(x, y) { this.x = x; this.y = y; }
-            matrixTransform(factor) { return { x: this.x * factor, y: this.y * factor }; }
+            matrixTransform(matrix) { return { x: this.x * matrix.scale + matrix.x, y: this.y * matrix.scale + matrix.y }; }
         },
         window: { addEventListener: (name, handler) => { clickEvents[name] = handler; }, removeEventListener: name => { delete clickEvents[name]; } }
     });
@@ -99,14 +99,66 @@ test('header drag moves members once at 80% scale, updates both lanes and all co
     assert.equal(typeof app.clickEvents.click, 'function');
 });
 
-test('clamping uses a common delta, preserving member spacing at the top-left boundary', async () => {
+test('groups move past the origin without compressing spacing or clipping headers', async () => {
     const app = setup();
     app.events.pointerdown(app.pointer(100, 100));
     app.events.pointermove(app.pointer(-1000, -1000));
     await app.events.pointerup(app.pointer(-1000, -1000));
-    assert.equal(position(app.nodes.shared), 'translate(0, 0)');
-    assert.equal(position(app.nodes.first), 'translate(270, 0)');
-    assert.deepEqual(app.calls[0][1], [{ id: 'shared', x: 0, y: 0 }, { id: 'first', x: 270, y: 0 }]);
+    assert.equal(position(app.nodes.shared), 'translate(-1060, -1000)');
+    assert.equal(position(app.nodes.first), 'translate(-790, -1000)');
+    assert.equal(app.lanes[0].parts['.source-lane-body'].attributes.x, '-1078');
+    assert.equal(app.lanes[0].parts['.source-lane-handle'].attributes.y, '-1038');
+    assert.equal(app.lanes[0].parts['.source-lane-body'].attributes.width, '516');
+    assert.deepEqual(app.calls[0][1], [{ id: 'shared', x: -1060, y: -1000 }, { id: 'first', x: -790, y: -1000 }]);
+});
+
+test('individual nodes cross both origin boundaries at zoom without squashing the group', async () => {
+    const app = setup(1.25);
+    app.events.pointerdown(app.pointer(100, 100, { target: 'node' }));
+    app.events.pointermove(app.pointer(-100, -100, { target: 'node' }));
+    await app.events.pointerup(app.pointer(-100, -100, { target: 'node' }));
+    assert.equal(position(app.nodes.shared), 'translate(-210, -150)');
+    assert.equal(app.lanes[0].parts['.source-lane-body'].attributes.x, '-228');
+    assert.equal(app.lanes[0].parts['.source-lane-body'].attributes.y, '-188');
+    assert.equal(position(app.nodes.first), 'translate(310, 100)');
+    assert.deepEqual(app.calls, [['OnNodeMoved', 'shared', -210, -150]]);
+});
+
+test('panning reaches negative world coordinates and reports the signed view unchanged', async () => {
+    const app = setup();
+    let scheduled;
+    app.context.setTimeout = callback => { scheduled = callback; };
+    app.context.clearTimeout = () => {};
+    app.events.pointerdown(app.pointer(100, 100, { target: 'body' }));
+    app.events.pointermove(app.pointer(900, 500, { target: 'body' }));
+    await app.events.pointerup(app.pointer(900, 500, { target: 'body' }));
+    assert.equal(app.svg.viewBox.baseVal.x, -1000);
+    assert.equal(app.svg.viewBox.baseVal.y, -500);
+    scheduled();
+    assert.deepEqual(app.calls, [['OnViewChanged', -1000, -500, 1350, 650]]);
+});
+
+test('toolbox drops in a panned zoomed viewport send signed world coordinates', async () => {
+    const app = setup(1.25, { x: -2000, y: -1000 });
+    const toolboxEvents = {};
+    const toolbox = {
+        addEventListener: (name, handler) => { toolboxEvents[name] = handler; }
+    };
+    const item = { dataset: { nodeType: 'source' }, setPointerCapture() {} };
+    app.context.document = {
+        createElement: () => ({ style: {}, remove() {} }),
+        body: { appendChild() {} }
+    };
+    app.svg.classList.toggle = () => {};
+    app.context.initializeToolbox(toolbox, app.svg, { invokeMethodAsync: (...args) => app.calls.push(args) });
+    const event = (x, y) => ({
+        button: 0, pointerId: 7, clientX: x, clientY: y,
+        target: { closest: () => item }, preventDefault() {}
+    });
+    toolboxEvents.pointerdown(event(10, 10));
+    toolboxEvents.pointermove(event(100, 200));
+    await toolboxEvents.pointerup(event(100, 200));
+    assert.deepEqual(app.calls, [['OnToolboxDrop', 'source', -1875, -750]]);
 });
 
 test('a click or sub-threshold jitter does not move members or send a callback', async () => {

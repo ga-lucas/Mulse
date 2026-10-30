@@ -28,9 +28,13 @@ public partial class Designer
         _ => "Manual"
     };
 
-    private double CanvasWidth => Math.Max(1080, (_nodes.Count == 0 ? 0 : _nodes.Max(static node => node.X)) + NodeWidth + CanvasPadding + LanePaddingX);
+    private double CanvasX => _nodes.Count == 0 ? 0 : Math.Min(0, _nodes.Min(static node => node.X) - CanvasPadding - LanePaddingX);
 
-    private double CanvasHeight => Math.Max(520, (_nodes.Count == 0 ? 0 : _nodes.Max(static node => node.Y)) + NodeHeight + CanvasPadding + LanePaddingX);
+    private double CanvasY => _nodes.Count == 0 ? 0 : Math.Min(0, _nodes.Min(static node => node.Y) - CanvasPadding - LaneHeaderHeight);
+
+    private double CanvasWidth => Math.Max(1080, (_nodes.Count == 0 ? 0 : _nodes.Max(static node => node.X)) + NodeWidth + CanvasPadding + LanePaddingX - CanvasX);
+
+    private double CanvasHeight => Math.Max(520, (_nodes.Count == 0 ? 0 : _nodes.Max(static node => node.Y)) + NodeHeight + CanvasPadding + LanePaddingX - CanvasY);
 
     private string? SourceGraphError => DescribeSourceGraphError();
 
@@ -567,7 +571,7 @@ public partial class Designer
         }
         else if (route is not null)
         {
-            render.X = Math.Max(0, route.Delivers.Min(node => node.X) - ColumnSpacing);
+            render.X = route.Delivers.Min(node => node.X) - ColumnSpacing;
             render.Y = route.Delivers.Average(node => node.Y);
         }
         else
@@ -926,8 +930,8 @@ public partial class Designer
     private (double X, double Y, double Width, double Height) LaneBounds(FlowNode parse)
     {
         var members = LaneMembers(parse);
-        var minX = Math.Max(0, members.Min(static node => node.X) - LanePaddingX);
-        var minY = Math.Max(0, members.Min(static node => node.Y) - LaneHeaderHeight);
+        var minX = members.Min(static node => node.X) - LanePaddingX;
+        var minY = members.Min(static node => node.Y) - LaneHeaderHeight;
         var maxX = members.Max(static node => node.X) + NodeWidth + LanePaddingX;
         var maxY = members.Max(static node => node.Y) + NodeHeight + LanePaddingX;
         return (minX, minY, maxX - minX, maxY - minY);

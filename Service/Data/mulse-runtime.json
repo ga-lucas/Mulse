@@ -29,7 +29,7 @@
       "id": "excel-workflow",
       "name": null,
       "category": null,
-      "enabled": true,
+      "enabled": false,
       "trigger": {
         "mode": "OnDemand",
         "interval": null,

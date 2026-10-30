@@ -42,8 +42,8 @@ function updateSourceLanes(svg) {
     svg.querySelectorAll('.source-lane').forEach(lane => {
         const positions = laneNodes(svg, lane).map(readTranslate);
         if (!positions.length) return;
-        const x = Math.max(0, Math.min(...positions.map(point => point.x)) - 18);
-        const y = Math.max(0, Math.min(...positions.map(point => point.y)) - 38);
+        const x = Math.min(...positions.map(point => point.x)) - 18;
+        const y = Math.min(...positions.map(point => point.y)) - 38;
         const width = Math.max(...positions.map(point => point.x)) + NODE_WIDTH + 18 - x;
         const height = Math.max(...positions.map(point => point.y)) + NODE_HEIGHT + 18 - y;
         for (const selector of ['.source-lane-body', '.source-lane-handle']) {
@@ -199,8 +199,8 @@ export function initialize(svg, dotNetRef) {
 
         if (drag.kind === 'lane') {
             const pointer = toSvgPoint(svg, event);
-            drag.dx = Math.max(-Math.min(...drag.members.map(member => member.x)), Math.round(pointer.x - drag.startX));
-            drag.dy = Math.max(-Math.min(...drag.members.map(member => member.y)), Math.round(pointer.y - drag.startY));
+            drag.dx = Math.round(pointer.x - drag.startX);
+            drag.dy = Math.round(pointer.y - drag.startY);
             if (Math.abs(drag.dx) > 2 || Math.abs(drag.dy) > 2) drag.moved = true;
             if (!drag.moved) return;
             for (const member of drag.members) {
@@ -210,8 +210,8 @@ export function initialize(svg, dotNetRef) {
             updateSourceLanes(svg);
         } else if (drag.kind === 'node') {
             const pointer = toSvgPoint(svg, event);
-            const x = Math.max(0, drag.originX + (pointer.x - drag.startX));
-            const y = Math.max(0, drag.originY + (pointer.y - drag.startY));
+            const x = drag.originX + (pointer.x - drag.startX);
+            const y = drag.originY + (pointer.y - drag.startY);
             drag.x = x;
             drag.y = y;
             if (Math.abs(x - drag.originX) > 2 || Math.abs(y - drag.originY) > 2) {

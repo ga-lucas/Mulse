@@ -253,6 +253,74 @@ public sealed class DesignerNodeRemovalTests
         Assert.Contains("will not automatically start", (string)Invoke(designer, "FetchTriggerGuidance", first)!);
     }
 
+    [Theory]
+    [InlineData(-4000d, -3000d, -2500d, -1800d)]
+    [InlineData(-4000d, -3000d, 6000d, 5000d)]
+    [InlineData(0d, 0d, 100d, 100d)]
+    public void FitView_IncludesWholeGroupsInAnyQuadrant(double fetchX, double fetchY, double parseX, double parseY)
+    {
+        var designer = new Designer();
+        var fetch = AddNode(designer, "Fetch", "fetch");
+        var parse = AddNode(designer, "Parse", "parse");
+        Property<List<string>>(parse, "FetchNodeIds").Add("fetch");
+        foreach (var (node, x, y) in new[] { (fetch, fetchX, fetchY), (parse, parseX, parseY) })
+        {
+            node.GetType().GetProperty("X")!.SetValue(node, x);
+            node.GetType().GetProperty("Y")!.SetValue(node, y);
+        }
+        var bounds = ((double X, double Y, double Width, double Height))Invoke(designer, "LaneBounds", parse)!;
+        Assert.Equal(Math.Min(fetchX, parseX) - 18, bounds.X);
+        Assert.Equal(Math.Min(fetchY, parseY) - 38, bounds.Y);
+        Invoke(designer, "FitView");
+        var viewX = (double)Field("_viewX").GetValue(designer)!;
+        var viewY = (double)Field("_viewY").GetValue(designer)!;
+        var viewW = (double)Field("_viewW").GetValue(designer)!;
+        var viewH = (double)Field("_viewH").GetValue(designer)!;
+        Assert.True(viewX < bounds.X);
+        Assert.True(viewY < bounds.Y);
+        Assert.True(viewX + viewW > bounds.X + bounds.Width);
+        Assert.True(viewY + viewH > bounds.Y + bounds.Height);
+    }
+
+    [Theory]
+    [InlineData("source", 2)]
+    [InlineData("fetch", 1)]
+    [InlineData("parse", 1)]
+    [InlineData("augment", 1)]
+    [InlineData("render", 1)]
+    [InlineData("route", 2)]
+    public void ToolboxCreation_PreservesNegativeDropCoordinates(string type, int expectedCount)
+    {
+        var designer = new Designer();
+        var method = type switch
+        {
+            "source" => "AddSourceLaneAt",
+            "fetch" => "AddFetchNodeAt",
+            "parse" => "AddParseNodeAt",
+            "augment" => "AddAugmentNodeAt",
+            "render" => "AddRenderNodeAt",
+            _ => "AddDeliveryRouteAt"
+        };
+        Invoke(designer, method, -1200d, -800d);
+        Assert.Equal(expectedCount, Nodes(designer).Count);
+        var first = Nodes(designer)[0]!;
+        Assert.Equal(-1200d, Property<double>(first, "X"));
+        Assert.Equal(-800d, Property<double>(first, "Y"));
+    }
+
+    [Fact]
+    public void RestoringRender_PlacesItBesideNegativeCoordinateDelivery()
+    {
+        var designer = new Designer();
+        var deliver = AddNode(designer, "Deliver", "deliver");
+        deliver.GetType().GetProperty("X")!.SetValue(deliver, -500d);
+        deliver.GetType().GetProperty("Y")!.SetValue(deliver, -300d);
+        Invoke(designer, "AddRenderNode");
+        var render = Nodes(designer).Cast<object>().Single(node => Property<object>(node, "Stage").ToString() == "Render");
+        Assert.Equal(-770d, Property<double>(render, "X"));
+        Assert.Equal(-300d, Property<double>(render, "Y"));
+    }
+
     private static object AddNode(Designer designer, string stage, string graphId)
     {
         var stageType = typeof(Designer).GetNestedType("NodeStage", BindingFlags.NonPublic)!;
