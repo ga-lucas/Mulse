@@ -35,7 +35,11 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
             throw new ArgumentException("The flow id in the route must match the payload.", nameof(flowId));
         }
 
-        _ = GetById(flowId);
+        var existing = GetById(flowId);
+        if (pipeline.Migration is null && existing.Migration is not null)
+        {
+            pipeline = FlowMappings.CopyPipeline(pipeline, pipeline.Id, pipeline.Enabled, pipeline.Category, existing.Migration);
+        }
         ValidatePipeline(pipeline, allowExisting: true);
         using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
         await runtimeConfigurationStore.UpsertFlowAsync(pipeline, cancellationToken).ConfigureAwait(false);

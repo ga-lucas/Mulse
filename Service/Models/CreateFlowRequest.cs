@@ -13,6 +13,8 @@ public sealed record CreateFlowRequest : IFlowPipelineRequest
 
     public string? Category { get; init; }
 
+    public Mulse.Modules.Pipeline.FlowMigrationReport? Migration { get; init; }
+
     /// <summary>Whether the flow is enabled.</summary>
     public bool Enabled { get; init; } = true;
 

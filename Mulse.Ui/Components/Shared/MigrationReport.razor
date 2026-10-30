@@ -1,0 +1,61 @@
+<details class="migration-report">
+    <summary>Migration report - @Report.SourceSystem (@BlockingCount blocking diagnostic(s))</summary>
+    <p class="field-hint">Import-time snapshot, not execution approval. Changes to modules, mappings, or configuration do not automatically clear these diagnostics. Enable/run enforcement is not implemented yet.</p>
+    <p><strong>Source project:</strong> <code>@Report.SourceProjectPath</code></p>
+    @if (!string.IsNullOrWhiteSpace(Report.SourceOrchestration))
+    {
+        <p><strong>Source orchestration:</strong> @Report.SourceOrchestration</p>
+    }
+    <p>Report version: @Report.Version</p>
+    @foreach (var diagnostic in Report.Diagnostics)
+    {
+        <div class="warning-panel">
+            <p><strong>@diagnostic.Severity - @diagnostic.Code</strong></p>
+            <p class="path-value">@diagnostic.SourcePath</p>
+            <p>@diagnostic.Message</p>
+            <p><strong>Next action:</strong> @diagnostic.Remediation</p>
+        </div>
+    }
+    @foreach (var artifact in Report.Artifacts)
+    {
+        <details>
+            <summary>@artifact.Kind - @StatusLabel(artifact.Status)</summary>
+            <p class="path-value">@artifact.SourcePath</p>
+            @foreach (var diagnostic in artifact.Diagnostics)
+            {
+                <p><strong>@diagnostic.Severity - @diagnostic.Code:</strong> @diagnostic.Message</p>
+                <p><strong>Next action:</strong> @diagnostic.Remediation</p>
+            }
+        </details>
+    }
+    @if (Report.Warnings.Count > 0)
+    {
+        <details>
+            <summary>Original import warnings (@Report.Warnings.Count)</summary>
+            <ul>
+                @foreach (var warning in Report.Warnings)
+                {
+                    <li>@warning</li>
+                }
+            </ul>
+        </details>
+    }
+</details>
+
+@code {
+    [Microsoft.AspNetCore.Components.Parameter, Microsoft.AspNetCore.Components.EditorRequired]
+    public FlowMigrationReportViewModel Report { get; set; } = default!;
+
+    private int BlockingCount => Report.Diagnostics.Concat(Report.Artifacts.SelectMany(artifact => artifact.Diagnostics))
+        .Count(diagnostic => diagnostic.Severity == "Blocking");
+
+    private static string StatusLabel(string status) => status switch
+    {
+        "FullyTranslated" => "Fully translated",
+        "ReviewRequired" => "Review required (not verified)",
+        "StubGenerated" => "Stub generated",
+        "Unsupported" => "Unsupported",
+        "ConfigurationRequired" => "Configuration required",
+        _ => status
+    };
+}

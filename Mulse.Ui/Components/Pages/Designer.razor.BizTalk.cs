@@ -127,6 +127,7 @@ public partial class Designer
 
         _bizTalkRequirements = draft.ConfigurationRequirements;
         _bizTalkWarnings = draft.Warnings;
+        _migration = draft.Migration;
         _seedSource = SeedSource.BizTalk;
         _showBizTalkPanel = false;
         AutoLayout();

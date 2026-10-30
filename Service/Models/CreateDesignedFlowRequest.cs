@@ -11,6 +11,8 @@ public sealed record CreateDesignedFlowRequest
 
     public string? Name { get; init; }
 
+    public Mulse.Modules.Pipeline.FlowMigrationReport? Migration { get; init; }
+
     /// <summary>Whether the flow is enabled.</summary>
     public bool Enabled { get; init; } = true;
 

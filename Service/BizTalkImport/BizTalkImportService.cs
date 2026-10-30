@@ -197,6 +197,10 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
                 DependencyWarnings = dependenciesByPath[project.Response.ProjectPath].Prepend(project.Response.ProjectPath)
                     .Where(referencesByPath.ContainsKey)
                     .SelectMany(path => DescribeReferenceIssues(path, referencesByPath[path])).ToArray(),
+                ReferencedMapAnalyses = dependenciesByPath[project.Response.ProjectPath]
+                    .Where(projectsByPath.ContainsKey)
+                    .SelectMany(path => projectsByPath[path].Response.MapAnalyses)
+                    .DistinctBy(static map => map.MapFilePath, StringComparer.OrdinalIgnoreCase).ToArray(),
                 Response = project.Response with
                 {
                     ReferencedCustomAssemblies = customAssemblies

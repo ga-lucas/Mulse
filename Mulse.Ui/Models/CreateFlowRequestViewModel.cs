@@ -9,4 +9,5 @@ public sealed record CreateFlowRequestViewModel(
     IReadOnlyList<FlowStepRequestViewModel> Augments,
     IReadOnlyList<DeliveryRouteRequestViewModel> Deliveries,
     RetryPolicyRequestViewModel? Retry = null,
-    string? Name = null);
+    string? Name = null,
+    FlowMigrationReportViewModel? Migration = null);

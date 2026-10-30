@@ -10,4 +10,5 @@ public sealed record UpdateFlowRequestViewModel(
     IReadOnlyList<DeliveryRouteRequestViewModel> Deliveries,
     RetryPolicyRequestViewModel? Retry = null,
     string? Category = null,
-    string? Name = null);
+    string? Name = null,
+    FlowMigrationReportViewModel? Migration = null);

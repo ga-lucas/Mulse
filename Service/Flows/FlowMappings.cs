@@ -27,7 +27,8 @@ internal static class FlowMappings
             MapRetry(flow.Retry),
             new FlowTriggerResponse(flow.Trigger.Mode, flow.Trigger.Interval, flow.Trigger.RunOnStartup),
             flow.Category,
-            Name: flow.Name);
+            Name: flow.Name,
+            Migration: flow.Migration);
     }
 
     /// <summary>
@@ -42,6 +43,7 @@ internal static class FlowMappings
             Id = request.Id,
             Name = string.IsNullOrWhiteSpace(request.Name) ? null : request.Name.Trim(),
             Category = NormalizeCategory(request.Category),
+            Migration = request.Migration,
             Enabled = request.Enabled,
             Trigger = new PipelineTriggerOptions
             {
@@ -67,13 +69,15 @@ internal static class FlowMappings
         return CopyPipeline(pipeline, pipeline.Id, enabled, pipeline.Category);
     }
 
-    public static PipelineDefinition CopyPipeline(PipelineDefinition pipeline, string id, bool enabled, string? category)
+    public static PipelineDefinition CopyPipeline(PipelineDefinition pipeline, string id, bool enabled, string? category,
+        Mulse.Modules.Pipeline.FlowMigrationReport? migration = null)
     {
         return new PipelineDefinition
         {
             Id = id,
             Name = pipeline.Name,
             Category = NormalizeCategory(category),
+            Migration = migration ?? pipeline.Migration,
             Enabled = enabled,
             Trigger = pipeline.Trigger,
             Fetches = pipeline.Fetches,
@@ -92,6 +96,7 @@ internal static class FlowMappings
         return new PipelineDefinition
         {
             Id = draft.Id,
+            Migration = draft.Migration,
             Enabled = draft.Enabled,
             Trigger = new PipelineTriggerOptions
             {

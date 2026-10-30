@@ -9,7 +9,8 @@ public sealed record BizTalkDraftFlowViewModel(
     IReadOnlyList<BizTalkDraftStepViewModel> Augments,
     IReadOnlyList<BizTalkDraftDeliveryRouteViewModel> Deliveries,
     IReadOnlyList<BizTalkSettingRequirementViewModel> ConfigurationRequirements,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    FlowMigrationReportViewModel? Migration = null);
 
 public sealed record BizTalkDraftFetchViewModel(
     string Id,

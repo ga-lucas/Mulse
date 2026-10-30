@@ -8,6 +8,8 @@ public sealed class PipelineDefinition
 
     public string? Category { get; init; }
 
+    public FlowMigrationReport? Migration { get; init; }
+
     public bool Enabled { get; init; } = true;
 
     public PipelineTriggerOptions Trigger { get; init; } = new();

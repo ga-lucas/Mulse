@@ -43,7 +43,7 @@ Raw XSLT is an output/runtime representation, not the primary editing format.
 
 1. **Canonical migration model and diagnostics**
    - Preserve source paths, project identity, artifact ownership, translation status, dependencies, warnings, and confidence.
-   - Use statuses: Fully translated, Translated with review required, Stub generated, Unsupported, Configuration required.
+   - Use statuses: Fully translated, Review required (not verified), Stub generated, Unsupported, Configuration required. Inventory or partial translation must never imply complete translation.
 
 2. **Project and dependency discovery**
    - Use path-based project identity and resolve project references and HintPath values.
@@ -114,7 +114,7 @@ Raw XSLT is an output/runtime representation, not the primary editing format.
 
 | Workstream | Status | Current evidence / remaining work |
 |---|---|---|
-| Canonical migration model and diagnostics | Partial foundation | Structured project-reference resolution and candidate source-project paths are exposed through the API and UI. Canonical migration/mapping models, artifact-level translation statuses, confidence, and persistent provenance remain pending. |
+| Canonical migration model and diagnostics | Report increment verified; workstream partial | Versioned import-time reports now persist source-project/orchestration/artifact paths, artifact statuses, coded blocking/review diagnostics, remediation, and warnings through save/reopen, legacy updates, copies, and backups. Reports are visible in the import panel and saved-flow designer. Canonical editable mappings, exact artifact ownership, confidence evidence, and authoritative/live readiness remain pending. |
 | Project and dependency discovery | Partial; first increment verified | Full-path identity replaces name-keyed lookup. Explicit project paths, conservative HintPath ownership inference, unique-name fallback, cycles, and colliding draft IDs are handled. Automatic out-of-scope discovery, evaluated MSBuild output paths, custom-project dependency chains, and exact orchestration/artifact/binding ownership remain pending. |
 | Mulse message abstractions | Pending | Body/parts/context/promotions/correlation model still to be designed and implemented. |
 | Script and custom-code modules | Pending | No new script execution or custom-code runtime added. Existing generated stubs are not completed translations. |
@@ -137,7 +137,7 @@ Raw XSLT is an output/runtime representation, not the primary editing format.
 - Expose **Project dependencies** in the existing **Import from BizTalk** panel. Each flow candidate shows its source-project path. Direct/transitive unresolved-reference warnings remain visible in the draft's follow-up panel after loading it onto the canvas.
 - Update the README with the implemented behavior and its limits.
 
-### Verification results
+### Verification results: dependency-resolution increment
 
 - **53 targeted tests passed**, including **16 new dependency/provenance/UI regression cases** plus existing BizTalk analyzer and Flow Designer rendering tests.
 - **Full solution build succeeded** after the implementation and documentation updates; `git diff --check` reported no patch whitespace errors.
@@ -146,9 +146,27 @@ Raw XSLT is an output/runtime representation, not the primary editing format.
 - Reference results for that analysis: **7 ProjectPath**, **10 HintPath**, **126 Unresolved**, **441 External**. These counts describe source-project resolution, not translation readiness. Unresolved references need review; External means no matching source project exists in the analyzed workspace, not that an assembly is supported or executable.
 - No imported flow was executed, no BizTalk assembly was loaded, no production endpoint was contacted, and the external source repository was not modified. The temporary verification harness was kept outside the repository and removed after use.
 
+### Completed increment: persistent migration reports and artifact diagnostics
+
+- Add a versioned, portable `FlowMigrationReport` to the saved pipeline and API/UI contracts. Preserve source system, source-project path, selected orchestration, artifact paths/statuses, coded diagnostics with severity/remediation, and original import warnings.
+- Classify missing/unreadable/unrecognized maps and unsupported functoids explicitly instead of dropping them from the report. Referenced maps use their owning project's analysis. Direct-link starter XSLT remains **review required**, with a blocking **not wired** diagnostic; it is not installed or made executable by this increment.
+- Identify generated orchestration modules as **stub generated**, never completed translations. Split candidates retain only their own orchestration report plus shared artifact inventory. Pipeline/custom assembly behavior remains unsupported; schemas and inferred bindings require review.
+- Include unresolved dependencies, missing bindings, configuration references, and a mandatory unverified-semantics diagnostic. No generated artifact is classified fully translated. `FullyTranslated` and `ConfigurationRequired` remain available contract statuses; configuration requirements currently appear as report diagnostics.
+- Expose an expandable **Migration report** on every candidate in **Import from BizTalk**, and in **BizTalk import follow-up** after loading, saving, or reopening the flow in the designer. Show source evidence, blocking counts, artifact details, and next actions. Clearing/editing the canvas does not silently erase the snapshot.
+- Preserve the report through ordinary and designed-flow creation, updates, category/enable copies, duplication, configuration resolution, disk reload, and encrypted workspace backup/restore. Older clients omitting the new property retain the existing report; old/manual flows without it remain compatible.
+- Reports are import-time snapshots, not live validation or execution approvals. Resolving config or editing a map does not clear a diagnostic. Report metadata is client-editable and is **not** an authoritative gate; the next readiness increment must not trust a submitted status as approval.
+- Scratch-created flows keep the same existing designer and save paths without requiring import metadata. This increment adds no import-only transformation engine and does not complete the shared Mapping Designer or script tooling.
+
+### Verification results: migration-report increment
+
+- **154 targeted tests passed**, including **14 new migration-report cases**, extended backup coverage, and existing BizTalk, mapping/API, storage, configuration, flow-management, workspace API, and designer rendering regressions.
+- New coverage verifies direct/partial/functoid/malformed/missing maps, referenced-map analysis, custom code, unresolved dependencies, schema/pipeline classification, orchestration split/stub isolation, string-enum API/UI round trips, real disk reload, metadata-omitting updates, copies/categories, designed creation, configuration resolution without report secret substitution, designer apply/save/update/reopen/clear, rendered remediation, and old flows without metadata. Encrypted workspace backup/restore also retains the snapshot.
+- **Full solution Debug build succeeded** with no compilation errors. Build output includes ImageSharp licensing and test-project validation-source-generator warnings, plus the installed preview SDK notice. Visual Studio's build/error tools were unavailable, so validation used `dotnet build .\Mulse.slnx --no-restore` and targeted `dotnet test` commands.
+- Verification used synthetic local fixtures; no BizTalk assembly or imported business workflow was executed, no production endpoint was contacted, and SpaceTRAX source was not modified. The whole-root SpaceTRAX counts above belong to the previous increment, not a new equivalence test.
+
 ### Known limits / next increments
 
-1. Introduce canonical artifact translation statuses and structured blocking/review diagnostics; persist source provenance through save/load instead of only analysis responses.
+1. Extend import snapshots into authoritative readiness evidence with explicit resolution/revalidation, rather than treating client-editable reports as approvals. Exact artifact ownership and confidence evidence remain pending.
 2. Add readiness enforcement across UI, enable/update APIs, and runtime execution. Existing scaffolds may contain pass-through placeholders; this increment does not make them safe to run or enforce their completion.
 3. Turn the Mapping Designer foundation into a real saved mapping model, shared by imported and manually-created flows. Wire imported direct-link maps into executable transformations and verify sample output.
 4. Extend discovery/resolution to projects outside the supplied scopes, C# project dependency chains, MSBuild property/configuration evaluation, and shared/deployment output directories. HintPath ownership remains a labeled inference, not proof of assembly equivalence.

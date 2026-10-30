@@ -12,7 +12,8 @@ public sealed record BizTalkDraftFlowResponse(
     IReadOnlyList<BizTalkDraftStepResponse> Augments,
     IReadOnlyList<BizTalkDraftDeliveryRouteResponse> Deliveries,
     IReadOnlyList<BizTalkSettingRequirementResponse> ConfigurationRequirements,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    Mulse.Modules.Pipeline.FlowMigrationReport? Migration = null);
 
 /// <summary>Represents one generated fetch node in a draft flow's source graph.</summary>
 public sealed record BizTalkDraftFetchResponse(

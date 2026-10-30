@@ -206,6 +206,10 @@
                                     <button class="run-button" @onclick="() => ApplyBizTalkCandidate(candidate)">Load onto canvas</button>
                                 </div>
                                 <p>@candidate.Summary</p>
+                                @if (candidate.DraftFlow.Migration is { } migration)
+                                {
+                                    <MigrationReport Report="migration" />
+                                }
                                 <p><strong>Fetch:</strong> @candidate.FetchGuidance</p>
                                 <p><strong>Parse:</strong> @candidate.ParseGuidance</p>
                                 <p><strong>Augments:</strong> @FormatList(candidate.AugmentGuidance)</p>
@@ -974,11 +978,15 @@
         </FloatingPanel>
     }
 
-    @if (_bizTalkRequirements.Count > 0 || _bizTalkWarnings.Count > 0)
+    @if (_migration is not null || _bizTalkRequirements.Count > 0 || _bizTalkWarnings.Count > 0)
     {
         <FloatingPanel Title="BizTalk import follow-up" Icon="📋" X="420" Y="24" Width="520">
             <p class="panel-hint">Config, secret, and review items reported for the draft flow currently on the canvas.</p>
 
+            @if (_migration is { } migration)
+            {
+                <MigrationReport Report="migration" />
+            }
             @if (_bizTalkRequirements.Count > 0)
             {
                 <table class="module-table">

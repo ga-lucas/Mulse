@@ -480,6 +480,17 @@ The implementation in `Service\BizTalkImport` can:
   `context.Promote(...)`/`context.Write(...)` calls) to pre-populate metadata-promotion routing.
 - Produce a draft, disabled Mulse flow plus a list of settings/requirements and warnings that a user must
   review before enabling and running it.
+- Show a **Migration report** in each import candidate and the designer's **BizTalk import follow-up**
+  panel, including after saving and reopening. The versioned report preserves source paths, artifact
+  statuses, coded blocking/review diagnostics, original warnings, and suggested next actions through
+  edits, duplication, disk reload, and workspace backup/restore. Older updates omitting the report do
+  not erase existing provenance; manually-created flows need no report.
+
+Reports are **import-time snapshots, not execution approval**. Configuration or canvas edits do not
+clear diagnostics automatically. Starter XSLT is not installed/wired, generated C# stubs are not completed
+translations, and no artifact is marked fully translated. Semantic enable/run enforcement remains
+pending: blocking diagnostics are currently advisory, and client-editable report metadata must not be
+used as proof of readiness.
 
 Apply a candidate to the canvas, review its transport paths/credentials, mappings, retry/compensation
 settings and warnings, then explicitly save it. Download the suggested scaffolded modules individually

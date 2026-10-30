@@ -65,6 +65,7 @@ public partial class Designer : IAsyncDisposable
     private IReadOnlyList<ConfigReferenceUsageViewModel> _configUsages = [];
     private IReadOnlyList<BizTalkSettingRequirementViewModel> _bizTalkRequirements = [];
     private IReadOnlyList<string> _bizTalkWarnings = [];
+    private FlowMigrationReportViewModel? _migration;
 
     private ElementReference _canvasElement;
     private ElementReference _toolboxElement;
@@ -381,6 +382,7 @@ public partial class Designer : IAsyncDisposable
         _mappingRows.Clear();
         _bizTalkRequirements = [];
         _bizTalkWarnings = [];
+        _migration = null;
         _selectedNodeId = null;
         _seedSource = SeedSource.Manual;
         _flowId = string.Empty;
@@ -401,9 +403,11 @@ public partial class Designer : IAsyncDisposable
     {
         var flowId = _flowId;
         var flowName = _flowName;
+        var migration = _migration;
         ResetGraph();
         _flowId = flowId;
         _flowName = flowName;
+        _migration = migration;
         _seedSource = IsExistingFlow ? SeedSource.ExistingFlow : SeedSource.Manual;
         _statusMessage = "Canvas cleared.";
     }
@@ -415,6 +419,7 @@ public partial class Designer : IAsyncDisposable
         _mappingRows.Clear();
         _bizTalkRequirements = [];
         _bizTalkWarnings = [];
+        _migration = flow.Migration;
         _selectedNodeId = null;
 
         _flowId = flow.Id;
@@ -696,7 +701,7 @@ public partial class Designer : IAsyncDisposable
             {
                 var existing = await ApiClient.GetFlowAsync(flowId, CancellationToken.None);
                 saved = await ApiClient.UpdateFlowAsync(
-                    new UpdateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, existing.Category, _flowName),
+                    new UpdateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, existing.Category, _flowName, _migration),
                     CancellationToken.None);
                 _statusMessage = $"Saved flow '{saved.Id}' with {parseSteps.Length} parse node(s) fed by {fetchSteps.Length} fetch node(s).";
             }
@@ -711,20 +716,20 @@ public partial class Designer : IAsyncDisposable
                 if (mappings.Length > 0 && hasJoinAugment)
                 {
                     saved = await ApiClient.CreateDesignedFlowAsync(
-                        new CreateDesignedFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, mappings, _flowName),
+                        new CreateDesignedFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, mappings, _flowName, _migration),
                         CancellationToken.None);
 
                     if (retry is not null)
                     {
                         saved = await ApiClient.UpdateFlowAsync(
-                            new UpdateFlowRequestViewModel(saved.Id, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, Name: _flowName),
+                            new UpdateFlowRequestViewModel(saved.Id, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, Name: _flowName, Migration: _migration),
                             CancellationToken.None);
                     }
                 }
                 else
                 {
                     saved = await ApiClient.CreateFlowAsync(
-                        new CreateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, _flowName),
+                        new CreateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, _flowName, _migration),
                         CancellationToken.None);
                 }
 
@@ -738,6 +743,7 @@ public partial class Designer : IAsyncDisposable
 
             _enabled = saved.Enabled;
             _flowName = saved.Name ?? string.Empty;
+            _migration = saved.Migration;
             await RefreshConfigUsagesAsync();
         }
         catch (Exception exception)

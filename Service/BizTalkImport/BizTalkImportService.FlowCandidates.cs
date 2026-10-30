@@ -275,7 +275,8 @@ public sealed partial class BizTalkImportService
             augments,
             deliveries,
             requirements,
-            draftWarnings);
+            draftWarnings,
+            CreateMigrationReport(project, split, relatedAssemblies, relatedBindings, requirements, draftWarnings));
 
         var summary = $"{effectiveProject.OrchestrationCount} orchestration(s), {effectiveProject.MapCount} map(s), {effectiveProject.SchemaCount} schema(s), {effectiveProject.PipelineCount} pipeline(s), {relatedBindings.Sum(static binding => binding.SendPorts.Count)} send port(s).";
         if (split is not null)

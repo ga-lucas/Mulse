@@ -31,6 +31,9 @@ public sealed class WorkspaceBackupTests : IDisposable
         await store.UpsertFlowAsync(new PipelineDefinition
         {
             Id = id, Name = "Financial import", Category = "Finance", Enabled = true,
+            Migration = new Mulse.Modules.Pipeline.FlowMigrationReport("BizTalk", @"C:\migration\Finance.btproj", "Import", [],
+                [new("BT-SEMANTICS-UNVERIFIED", Mulse.Modules.Pipeline.MigrationDiagnosticSeverity.Blocking, @"C:\migration\Finance.btproj",
+                    "Behavior is unverified.", "Compare synthetic expected output.")], ["Import warning"]),
             Fetches = [new FetchNodeDefinition { Id = "f", Fetch = new ModuleStepDefinition { Module = "fetch", Settings = new() { ["path"] = "{{secret:password}}" } } }],
             Parses = [new ParseNodeDefinition { Id = "p", FetchNodeIds = ["f"], Parse = new ModuleStepDefinition { Module = "parse" } }],
             Deliveries = [new DeliveryRouteDefinition { Render = new ModuleStepDefinition { Module = "render" }, Delivers = [new DeliveryActionDefinition { Deliver = new ModuleStepDefinition { Module = "deliver" } }] }]
@@ -64,6 +67,8 @@ public sealed class WorkspaceBackupTests : IDisposable
         Assert.False(Assert.Single(restored.Pipelines).Enabled);
         Assert.Equal("Finance", restored.Pipelines[0].Category);
         Assert.Equal("Financial import", restored.Pipelines[0].Name);
+        Assert.Equal(System.Text.Json.JsonSerializer.Serialize(source.GetState().Pipelines.Single().Migration),
+            System.Text.Json.JsonSerializer.Serialize(restored.Pipelines[0].Migration));
         Assert.Equal("{{secret:password}}", restored.Pipelines[0].Fetches[0].Fetch.Settings["path"]);
         Assert.Equal("super-secret-value", restored.ConfigValues["password"]);
         Assert.False(Assert.Single(restored.ManagedPackages).Enabled);

@@ -116,6 +116,7 @@ public sealed class FlowDesignService(IModuleCatalog moduleCatalog, IFlowDefinit
         {
             Id = request.Id,
             Name = string.IsNullOrWhiteSpace(request.Name) ? null : request.Name.Trim(),
+            Migration = request.Migration,
             Enabled = request.Enabled,
             Trigger = new PipelineTriggerOptions
             {

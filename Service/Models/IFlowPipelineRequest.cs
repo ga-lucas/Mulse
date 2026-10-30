@@ -15,6 +15,8 @@ public interface IFlowPipelineRequest
 
     string? Category { get; }
 
+    Mulse.Modules.Pipeline.FlowMigrationReport? Migration { get; }
+
     /// <summary>Whether the flow is enabled.</summary>
     bool Enabled { get; }
 

@@ -49,6 +49,7 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
             Id = pipeline.Id,
             Name = pipeline.Name,
             Category = pipeline.Category,
+            Migration = pipeline.Migration,
             Enabled = pipeline.Enabled,
             Trigger = pipeline.Trigger,
             Fetches = pipeline.Fetches.Select(fetch => ResolveFetchNode(fetch, configValues, missingReferences)).ToList(),

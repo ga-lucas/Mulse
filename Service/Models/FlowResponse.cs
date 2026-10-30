@@ -33,7 +33,8 @@ public sealed record FlowResponse(
     FlowTriggerResponse Trigger,
     string? Category = null,
     IReadOnlyList<string>? MissingModules = null,
-    string? Name = null);
+    string? Name = null,
+    Mulse.Modules.Pipeline.FlowMigrationReport? Migration = null);
 
 /// <summary>
 /// Round-trippable trigger shape matching <see cref="FlowTriggerRequest"/>. Kept as a distinct type

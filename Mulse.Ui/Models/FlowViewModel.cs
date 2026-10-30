@@ -20,7 +20,8 @@ public sealed record FlowViewModel(
     RetryPolicyViewModel? Retry = null,
     string? Category = null,
     IReadOnlyList<string>? MissingModules = null,
-    string? Name = null)
+    string? Name = null,
+    FlowMigrationReportViewModel? Migration = null)
 {
     public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Id : Name;
 }

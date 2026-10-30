@@ -9,4 +9,5 @@ public sealed record CreateDesignedFlowRequestViewModel(
     IReadOnlyList<FlowStepRequestViewModel> Augments,
     IReadOnlyList<DeliveryRouteRequestViewModel> Deliveries,
     IReadOnlyList<FlowDesignFieldMappingRequestViewModel> Mappings,
-    string? Name = null);
+    string? Name = null,
+    FlowMigrationReportViewModel? Migration = null);
