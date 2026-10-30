@@ -24,7 +24,8 @@ public static class ModuleEndpoints
                         MapSettings(module.Descriptor.Settings),
                         MapFormats(module.Descriptor.Recommendation),
                         MapProtocols(module.Descriptor.Recommendation),
-                        MapCapabilities(module.Descriptor.Recommendation)))
+                        MapCapabilities(module.Descriptor.Recommendation),
+                        module.SupportsPushTrigger))
                     .ToArray();
 
                 return TypedResults.Ok(response);

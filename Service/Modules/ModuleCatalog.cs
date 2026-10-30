@@ -625,7 +625,8 @@ public sealed class ModuleCatalog : IModuleCatalog
                     packageId,
                     sourceKind,
                     sourceAssemblyPath,
-                    module.Descriptor);
+                    module.Descriptor,
+                    module is IPushTriggeredFetchModule);
 
                 package.Modules.Add(entry.Descriptor.Id, new RegisteredModule(entry, registration.ImplementationType, package));
             }

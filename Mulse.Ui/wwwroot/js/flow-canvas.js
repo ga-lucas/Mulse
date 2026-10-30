@@ -34,6 +34,31 @@ function nodePosition(svg, nodeId) {
     return group ? readTranslate(group) : null;
 }
 
+function laneNodes(svg, lane) {
+    return lane.dataset.laneMembers.split(' ').map(id => svg.querySelector(`.flow-node[data-node-id="${id}"]`)).filter(Boolean);
+}
+
+function updateSourceLanes(svg) {
+    svg.querySelectorAll('.source-lane').forEach(lane => {
+        const positions = laneNodes(svg, lane).map(readTranslate);
+        if (!positions.length) return;
+        const x = Math.max(0, Math.min(...positions.map(point => point.x)) - 18);
+        const y = Math.max(0, Math.min(...positions.map(point => point.y)) - 38);
+        const width = Math.max(...positions.map(point => point.x)) + NODE_WIDTH + 18 - x;
+        const height = Math.max(...positions.map(point => point.y)) + NODE_HEIGHT + 18 - y;
+        for (const selector of ['.source-lane-body', '.source-lane-handle']) {
+            const element = lane.querySelector(selector);
+            element.setAttribute('x', x);
+            element.setAttribute('y', y);
+            element.setAttribute('width', width);
+            if (selector === '.source-lane-body') element.setAttribute('height', height);
+        }
+        const label = lane.querySelector('.source-lane-label');
+        label.setAttribute('x', x + 18);
+        label.setAttribute('y', y + 24);
+    });
+}
+
 function updateEdges(svg, nodeId) {
     const edges = svg.querySelectorAll(`.flow-edge[data-edge-from="${nodeId}"], .flow-edge[data-edge-to="${nodeId}"]`);
     edges.forEach(edge => {
@@ -108,7 +133,20 @@ export function initialize(svg, dotNetRef) {
     };
 
     const onPointerDown = event => {
-        if (event.button !== 0) {
+        if (state.drag || event.button !== 0 || event.target.closest('.node-remove')) {
+            return;
+        }
+
+        const handle = event.target.closest('.source-lane-handle');
+        if (handle) {
+            const lane = handle.closest('.source-lane');
+            const members = laneNodes(svg, lane).map(group => ({ group, ...readTranslate(group) }));
+            const pointer = toSvgPoint(svg, event);
+            state.drag = { kind: 'lane', lane, members, pointerId: event.pointerId,
+                startX: pointer.x, startY: pointer.y, dx: 0, dy: 0, moved: false };
+            lane.classList.add('dragging');
+            lane.setPointerCapture(event.pointerId);
+            event.preventDefault();
             return;
         }
 
@@ -159,7 +197,18 @@ export function initialize(svg, dotNetRef) {
             return;
         }
 
-        if (drag.kind === 'node') {
+        if (drag.kind === 'lane') {
+            const pointer = toSvgPoint(svg, event);
+            drag.dx = Math.max(-Math.min(...drag.members.map(member => member.x)), Math.round(pointer.x - drag.startX));
+            drag.dy = Math.max(-Math.min(...drag.members.map(member => member.y)), Math.round(pointer.y - drag.startY));
+            if (Math.abs(drag.dx) > 2 || Math.abs(drag.dy) > 2) drag.moved = true;
+            if (!drag.moved) return;
+            for (const member of drag.members) {
+                member.group.setAttribute('transform', `translate(${member.x + drag.dx}, ${member.y + drag.dy})`);
+            }
+            for (const member of drag.members) updateEdges(svg, member.group.dataset.nodeId);
+            updateSourceLanes(svg);
+        } else if (drag.kind === 'node') {
             const pointer = toSvgPoint(svg, event);
             const x = Math.max(0, drag.originX + (pointer.x - drag.startX));
             const y = Math.max(0, drag.originY + (pointer.y - drag.startY));
@@ -171,6 +220,7 @@ export function initialize(svg, dotNetRef) {
 
             drag.group.setAttribute('transform', `translate(${x}, ${y})`);
             updateEdges(svg, drag.id);
+            updateSourceLanes(svg);
         } else {
             const dxScreen = event.clientX - drag.startClientX;
             const dyScreen = event.clientY - drag.startClientY;
@@ -193,7 +243,15 @@ export function initialize(svg, dotNetRef) {
 
         state.drag = null;
 
-        if (drag.kind === 'node') {
+        if (drag.kind === 'lane') {
+            drag.lane.classList.remove('dragging');
+            if (drag.lane.hasPointerCapture(event.pointerId)) drag.lane.releasePointerCapture(event.pointerId);
+            if (!drag.moved) return;
+            suppressNextClick();
+            await dotNetRef.invokeMethodAsync('OnNodesMoved', drag.members.map(member => ({
+                id: member.group.dataset.nodeId, x: member.x + drag.dx, y: member.y + drag.dy
+            })));
+        } else if (drag.kind === 'node') {
             drag.group.classList.remove('dragging');
             if (drag.group.hasPointerCapture(event.pointerId)) {
                 drag.group.releasePointerCapture(event.pointerId);
@@ -240,6 +298,15 @@ export function dispose(svg) {
     }
 
     const handlers = svg.__flowCanvas;
+    const drag = handlers.state.drag;
+    if (drag?.kind === 'lane') {
+        drag.lane.classList.remove('dragging');
+        if (drag.lane.hasPointerCapture(drag.pointerId)) drag.lane.releasePointerCapture(drag.pointerId);
+        for (const member of drag.members) member.group.setAttribute('transform', `translate(${member.x}, ${member.y})`);
+        for (const member of drag.members) updateEdges(svg, member.group.dataset.nodeId);
+        updateSourceLanes(svg);
+        handlers.state.drag = null;
+    }
     svg.removeEventListener('pointerdown', handlers.onPointerDown);
     svg.removeEventListener('pointermove', handlers.onPointerMove);
     svg.removeEventListener('pointerup', handlers.endDrag);

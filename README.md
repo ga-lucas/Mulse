@@ -1,46 +1,81 @@
 # Mulse
 
-Mulse is a code-first, extensible integration platform for building data pipelines ("flows") that fetch,
-parse, transform, and deliver data across systems - conceptually similar to BizTalk Server, but built on
-.NET 10 with a modular, hot-loadable plugin architecture and a browser-based visual designer.
+Mulse is an extensible integration platform for building data pipelines ("flows") that fetch, parse,
+transform, and deliver data across systems. Author flows in a browser-based visual designer or through
+the API, and extend them with .NET modules. It is conceptually similar to BizTalk Server, built on
+.NET 10 with an ASP.NET Core runtime, Blazor Server administration, and hot-loadable plugin packages.
 
 Mulse also includes an importer that can analyze real BizTalk Server solutions (`.btproj`/`.odx`/`.btm`/`.btp`)
 and turn them into draft Mulse flows, auto-translating what can be translated safely and clearly flagging
 what needs human review - to make BizTalk migrations less painful.
 
+## Contents
+
+- [Running locally](#running-locally)
+- [Core concepts](#core-concepts)
+- [Solution layout](#solution-layout)
+- [Module extensibility](#module-extensibility)
+- [Execution, triggers and retries](#execution-triggers-and-retries)
+- [Stored values in module parameters](#stored-values-in-module-parameters)
+- [Source acknowledgement and cleanup](#source-acknowledgement-and-cleanup)
+- [File system delivery](#file-system-delivery)
+- [Excel files](#excel-files)
+- [BizTalk migration](#biztalk-migration)
+- [UI workspace](#ui-workspace)
+- [API reference](#api-reference)
+- [Troubleshooting and limitations](#troubleshooting-and-limitations)
+
 ## Core concepts
 
-A **flow** is a pipeline made of ordered steps:
+A **flow** contains a source graph, an ordered augment chain, and delivery routes:
 
-1. **Fetch** - pull data in from one or more sources (file system, SFTP, HTTP inbound, SQL lookup, document
-   repository, file watcher, etc.). Multiple fetch steps can run and be combined/joined.
-2. **Parse** - turn raw bytes into a structured payload (JSON, XML/XSD, flat-file, HL7, envelope debatching).
-3. **Augment** - orchestration-style processing: join/merge multiple sources, apply declarative decision
-   rules (including regex-based conditions), promote metadata, route selection, stateful/correlated
-   processing, debatching.
-4. **Render** - turn the processed payload back into an output format (JSON, XML, flat-file, HL7, SOAP
-   envelope, XSLT-based transforms).
-5. **Deliver** - send the result somewhere (file system, HTTP, SFTP, SQL execute, SMTP, document repository) -
-   optionally capturing a synchronous response for request/response (two-way) integrations.
+1. **Fetch** acquires raw or already-structured data from files, SFTP, inbound HTTP, a document repository,
+   a file watcher, SQL lookup, or another flow.
+2. **Parse** interprets one or more fetch outputs as JSON, XML/XSD, delimited/flat-file data, HL7 or Excel,
+   depending on the selected module. Fetch and parse are separate nodes, not a fixed one-to-one pair.
+3. **Augment** joins/maps sources, applies decisions, promotes metadata, selects routes, debatches
+   documents, or suspends/resumes correlated work. Augments run in their configured order.
+4. **Render** produces the destination representation. Each delivery route renders once.
+5. **Deliver** sends that rendered batch to one or more actions in the route: files, HTTP, SQL commands,
+   email, a document repository, logging, or an in-process flow link. There is currently SFTP **fetch**,
+   but no shipped SFTP deliver module.
 
-Flows can also be **push-triggered** (e.g. an inbound HTTP request) instead of running on a fetch/schedule
-loop, and can synchronously reply to the original caller for two-way (request/response) integrations.
+Fetch nodes optionally consume upstream **parse node IDs** through `inputParseIds`; parse nodes name
+fetch nodes through `fetchNodeIds`. The combined graph is acyclic and executes in dependency order.
+Node IDs must be unique across both lists, every fetch must be parsed, and each parse must reference at
+least one fetch. This supports several same-format fetches feeding one parser, or a parsed order feeding
+a dependent SQL lookup followed by its own parser. Each parser's output is tagged with `sourceId` equal
+to that **parse node's ID**; merged parse outputs become the augment input.
+
+`IntegrationBatch` holds payloads, each with a name, binary content, content type and string metadata.
+Mapping/decision modules generally operate on normalized JSON. Transform modules are reusable scalar
+operations inside field mappings, not separate top-level pipeline stages.
+
+Flows can run on demand, on an interval, or from a push-capable source. Optional request/response modules
+support synchronous replies; the platform is not an exactly-once message broker or a distributed
+transaction coordinator.
+
+Fetchers can opt into a final **source acknowledgement** after processing: success when every applicable
+delivery succeeds (including zero deliveries), or failure after retries are exhausted. Source cleanup
+happens at this boundary, not during Fetch. Notification retries do not resend deliveries; see
+[Source acknowledgement and cleanup](#source-acknowledgement-and-cleanup).
 
 ## Solution layout
 
 | Project | Purpose |
 |---|---|
-| `Mulse.Modules` | Core abstractions (`IFetchModule`, `IParseModule`, `IOrchestrationAugmentModule`, `IRenderModule`, `IDeliverModule`), the typed module SDK, the decision-rule engine, and the built-in module set. |
+| `Mulse.Modules` | Core abstractions (`IFetchModule`, optional `IFetchOutcomeModule`, `IParseModule`, `IOrchestrationAugmentModule`, `IRenderModule`, `IDeliverModule`), the typed module SDK, the decision-rule engine, and the built-in module set. |
 | `Service` | The ASP.NET Core API/runtime: flow execution engine (`FlowRuntime`), module catalog/plugin loader, flow CRUD + run endpoints, config/secret value store, BizTalk import service, and the hot-reloadable module system. |
-| `Mulse.Ui` | Blazor Server admin UI: a canvas/SVG flow designer (supports dragging in a BizTalk project to seed a draft flow, or building one from scratch), a home/administrative page (enable/disable, run, view config gaps), and a config-values page. |
-| `Mulse.CompatibilityPack` | Additional built-in modules that round out BizTalk-style migration scenarios (XSD/flat-file/HL7-adjacent parsing, XSLT/SOAP rendering, metadata promotion, route selection, SMTP, document repository, HTTP inbound reply). |
+| `Mulse.Ui` | Blazor Server dashboard, visual flow designer with sample-file drops and path-based BizTalk import, config values/encryption, module/package administration, and workspace backup/restore. |
+| `Mulse.CompatibilityPack` | Additional built-in XML/XSD, flat-file and envelope parsing; XSLT/SOAP rendering; metadata promotion, route selection, SMTP, document repository, file watcher and HTTP inbound/reply modules. |
 | `Mulse.Hl7` | Hot-loadable plugin providing HL7 parse/render modules. |
 | `Mulse.Dbms.SqlServer` | Hot-loadable plugin providing SQL Server lookup (fetch) and execute (deliver) modules. |
 | `Mulse.Excel` | Hot-loadable XLS/XLSX worksheet-to-JSON parser and JSON-to-workbook renderer; no installed Excel required. |
 | `Mulse.SamplePlugin` | Reference/example hot-loadable plugin project - the template to follow when authoring a new module package. |
 | `Mulse.AppHost` | .NET Aspire orchestration host for local multi-project run/debug. |
 | `Mulse.ServiceDefaults` | Shared Aspire service-defaults (telemetry, health checks, service discovery). |
-| `Service.Tests` | xUnit tests for the service and flow-list filtering (runtime, persistence, module catalog, BizTalk import/analyzers, etc.). |
+| `Service.Tests` | xUnit coverage for runtime/retries/source outcomes, persistence, API/UI interactions, module packages, sample analysis, Excel, and BizTalk migration; also contains the reference-input JavaScript test. |
+| `Mulse.Ui.Tests` | Dependency-free Node.js tests for browser theme, floating panels, and file-drop behavior. |
 
 ## Module extensibility
 
@@ -49,11 +84,121 @@ Two ways to ship a module:
 
 - **Built-in**: referenced directly by `Service` (compiled into the host process). Simple, but can't be
   reloaded/unloaded at runtime.
-- **Hot-loadable plugin**: built into `Service/plugins/<PackageName>/` (see `Mulse.SamplePlugin`,
-  `Mulse.Hl7`, `Mulse.Dbms.SqlServer` for the pattern) and picked up automatically by `ModuleCatalog`'s
-  plugin discovery at startup and every five seconds. New compatible packages appear **unloaded**;
-  activate them from **Configuration > Module Packages**. Loading uses a collectible `AssemblyLoadContext`
-  so packages can later be reloaded or unloaded without restarting the service.
+- **Hot-loadable plugin**: built into `Service\plugins\<PackageName>\` (see `Mulse.SamplePlugin`,
+  `Mulse.Hl7`, `Mulse.Dbms.SqlServer`, and `Mulse.Excel` for the pattern) and discovered by `ModuleCatalog`
+  at startup and every five seconds. New compatible packages appear **unloaded**; activate them from
+  **Configuration > Module Packages**. Loading uses a collectible `AssemblyLoadContext` so packages can
+  later be reloaded or unloaded without restarting the service, subject to dependency/active-use guards.
+
+### Shipped module families
+
+| Package | Modules and purpose | Availability |
+|---|---|---|
+| Core (`builtin.core`) | `file-system-fetch`, `sftp-fetch`, `flow-link-fetch`; `json-parse`; JSON envelope, decision, multi-source join/map, stateful orchestration and debatch augments; `json-render`, `xml-render`; `logging-deliver`, `file-system-deliver`, `http-deliver`, `flow-link-deliver`. | Built in. |
+| Core transforms | Concat, add/subtract/multiply/divide, coalesce, substring, upper/lower case, trim, round and date formatting, selected within join/map fields. | Built in. |
+| Compatibility (`builtin.compatibility`) | `document-repository-fetch`, `file-system-watcher-fetch`, `http-inbound-fetch`; `xml-xsd-parse`, `flat-file-parse`, `xml-envelope-debatch-parse`; metadata-promotion and route-selection augments; `flat-file-render`, `xslt-render`, `soap-envelope-render`; `document-repository-store`, `smtp-email-deliver`, `http-inbound-reply-deliver`. | Built in. |
+| `Mulse.Dbms.SqlServer` | `sql-server-lookup-fetch` uses upstream parsed IDs for a parameterized lookup; `sql-server-execute-deliver` executes SQL text/stored procedures with JSON-to-parameter binding per payload. | Build and load plugin. |
+| `Mulse.Hl7` | `hl7-parse` and `hl7-render` for HL7 v2 ER7 text/normalized JSON. | Build and load plugin. |
+| `Mulse.Excel` | `excel-parse` and `excel-render` for XLS/XLSX worksheets. | Build and load plugin. |
+| `Mulse.SamplePlugin` | Reference raw/typed modules illustrating custom fetch, parse, augment, render and deliver implementations. | Build and load plugin; examples, not required for normal flows. |
+
+The **Modules** page and `GET /api/modules` expose the loaded catalog, setting descriptors, defaults,
+formats/protocols/capabilities and package ownership. They are the reference for each module's accepted
+settings; unloaded packages do not provide their module catalog until loaded.
+
+For custom modules, reference `Mulse.Modules`, implement the relevant contract, and register it in an
+`IModuleInstaller` using `AddFetch`, `AddParse`, `AddOrchestrationAugment`, `AddRender`, `AddDeliver` or
+`AddTransform`. Optional SDK base classes (`TypedFetchModule<TOut>`, `TypedParseModule<TOut>`,
+`TypedAugmentModule<TIn,TOut>`, `TypedRenderModule<TIn>`, `TypedDeliverModule<TIn>`) handle the structured
+JSON payload convention. Publish all plugin dependencies beside its DLL and keep SDK/host contracts
+compatible. Modules execute with the Service process's permissions; loading is not sandboxing.
+
+## Execution, triggers and retries
+
+### Trigger modes
+
+| Mode | Behavior |
+|---|---|
+| `OnDemand` | Runs when an enabled flow is invoked from the dashboard or `POST /api/flows/{flowId}/run`. |
+| `Interval` | Polls on a positive `trigger.interval` such as `00:05:00`; scheduler checks every five seconds. `runOnStartup` controls the initial interval run, not all trigger modes. |
+| `Push` | Registers the first fetch node implementing `IPushTriggeredFetchModule`; other fetches still execute normally. Registrations reconcile about every five seconds. |
+
+Manual Run also works for enabled Interval/Push flows. It does not enable a disabled flow. Execution is
+serialized per flow inside one Service instance; this is not a cross-process lock. Interval scheduling
+is in-memory and recalculated after restart rather than a durable calendar scheduler.
+
+**The flow owns scheduling; fetch modules own acquisition.** `sftp-fetch` scans once per execution;
+it has no internal timer and cannot initiate Push runs. Set the flow to **Interval** for repeated SFTP
+polling, or **OnDemand** for manual scans. `maxFiles` limits files per execution, not frequency. An SFTP
+fetch can participate in a Push flow triggered by another fetch, but it does not watch the server itself.
+
+For `file-system-watcher-fetch`, save and enable a **Push** flow. The push registration creates the
+watcher before the first execution, so no manual bootstrap run is needed. Settled file events (and
+existing files when `includeExistingOnFirstRun` is enabled) signal the flow; fetching then drains queued
+files rather than rescanning the directory. In OnDemand/Interval modes, the watcher is created only
+on the first execution; later executions drain its events, and the settle window can make the first
+run empty. Prefer **file-system-fetch + Interval** for periodic directory scans. Only the **first** push-capable
+fetch in a flow registers as its event source; multiple watchers are not independent triggers. Other
+fetches still execute as part of the source graph. The designer identifies this first source and warns
+when Push has no compatible loaded fetch. `/api/modules` exposes `supportsPushTrigger`, derived from
+`IPushTriggeredFetchModule` rather than a module's informational `Polling` recommendation label.
+
+For HTTP ingress, select `http-inbound-fetch`, configure `route`, save and enable a **Push** flow, and
+allow registration to complete. `POST`/`PUT /api/inbound/{route}` queues requests and returns `202` (not a
+promise that downstream processing succeeded). `?awaitResponseSeconds=N`, capped at 120 seconds, waits
+for a paired `http-inbound-reply-deliver`; no reply within that window returns `504`. These are hosted
+HTTP endpoints, not a full WCF runtime. Outbound `http-deliver` can capture replies when its deliver
+settings include `"expectsResponse": "true"`; captured payloads are included in the run API response.
+
+`flow-link-deliver` and `flow-link-fetch` share a named `channel` within the same process. They provide
+an in-memory hand-off, not durable messaging or broadcast delivery: consumers drain a shared queue.
+Inbound HTTP queues and watcher queues are also process-local; pending retry/checkpoint persistence
+does not make queued-but-not-yet-fetched input durable.
+
+### Delivery behavior and retry policy
+
+Each route renders once, then executes its deliver actions sequentially. Without an `atomicScope`, a
+permanent **deliver action** failure is recorded while other actions continue; the final result may be
+`Completed` with failure details. A render failure without an atomic scope terminates processing.
+Always inspect `outcome` **and** `detail`, not just the HTTP status or `Completed` label.
+
+An optional shared `atomicScope` compensates already committed deliveries in reverse order when that
+scope fails, skips its remaining actions, and lets unrelated routes proceed before reporting failure.
+Configure an explicit `compensation` deliver step per action through the API. Missing/failed
+compensation is logged; it is best effort, not an actual rollback of arbitrary external side effects.
+
+Steps inherit the flow retry policy unless they have an override; no policy means one attempt.
+`maxAttempts` includes the first attempt; `null` means unlimited. Backoff is `Fixed`, `Linear` or
+`Exponential`, with an optional maximum delay. For API create/update requests, use seconds:
+
+```json
+{
+  "retry": {
+    "maxAttempts": 3,
+    "delaySeconds": 5,
+    "backoff": "Exponential",
+    "maxDelaySeconds": 60
+  }
+}
+```
+
+This is a request fragment, not a complete flow. Persisted/runtime definitions instead use TimeSpan
+fields `delay` and `maxDelay`; do not copy the state file directly into an API request. The designer
+exposes the flow default; the API supports per-step overrides and compensation configuration.
+
+Retryable failures persist the failed stage/input and return `Retrying` with `nextAttemptAt`. The retry
+driver checks every two seconds and resumes from that stage, preserving prior resolved source batches
+and committed delivery state. Ordinary processing retries use the currently saved flow definition;
+avoid editing an executing/retrying flow. A stage can partially affect an external system before it
+throws, so retries can repeat those side effects: design destination operations for idempotency.
+
+`Suspended` means a stateful augment stored a checkpoint for a correlated follow-up. Configure
+`stateful-orchestration-augment` with `ResumeOrWait`, `Suspend` or `Complete`, a correlation source/key,
+and bookmark as appropriate. Completion is explicitly marked by `Complete`; resuming alone does not
+remove the checkpoint. This is focused persisted correlation, not general-purpose durable orchestration.
+A crash during ordinary processing is not automatically recoverable unless an appropriate retry or
+checkpoint snapshot was persisted. Source-notification recovery has its own durable continuation,
+described below.
 
 ## Stored values in module parameters
 
@@ -116,7 +261,7 @@ This remains a PoC without application access control. Use only in a trusted env
 encryption are not authentication or authorization. Add access control and HTTPS before exposing it
 to untrusted users or networks.
 
-Run the reference autocomplete interaction tests with `node --test Service.Tests\reference-input.test.mjs`.
+The reference autocomplete interaction test is included in the [validation commands](#validation).
 
 ## Source acknowledgement and cleanup
 
@@ -153,17 +298,48 @@ processing/delivery. Defaults still leave sources in place.
   quarantines failed files in an **existing remote directory**, using an execution-specific filename;
   blank keeps the original. No live SFTP-server integration test is included.
 
-Built-in fetchers skip unchanged files held by that flow's suspended checkpoints, while still accepting
-new files. An idle poll does not count as a follow-up message for `ResumeOrWait`. Custom source modules
+The filesystem, document-repository and SFTP polling fetchers skip unchanged files held by that flow's
+suspended checkpoints, while still accepting new files. The separate `file-system-watcher-fetch` does
+not implement source-outcome cleanup. An idle poll does not count as a follow-up message for
+`ResumeOrWait`. Custom source modules
 can consult `FlowExecutionContext.PendingSourceReceipts` to provide the same reservation behavior;
 custom orchestration stores must implement `GetPendingSourceReceiptsAsync`.
 
-Receipts identify exact paths, sizes, timestamps and SHA-256 content hashes.
+Receipts identify exact paths, sizes, timestamps and SHA-256 content hashes. Cleanup does not re-scan
 the source directory or trust payload metadata paths, does not overwrite archive files, and refuses
 changed/replacement sources. Actions tolerate retries after partial cleanup. These checks are not a
 filesystem transaction or a distributed source lock: do not let other flows/processes concurrently
 replace files being consumed. Sources remain present during delivery retries. Choosing `None` deliberately
 allows a later, fresh run to read them again.
+
+### Example: archive successful files and quarantine failures
+
+In the designer, select the **File system fetch** node and set **After successful processing** and
+**After permanent failure** to `MoveToArchive`. Set separate archive directories outside the source
+folder, then save the flow. Equivalent API fetch-step configuration (not a complete flow):
+
+```json
+{
+  "module": "file-system-fetch",
+  "settings": {
+    "path": "C:\\MulseData\\incoming",
+    "searchPattern": "*.json",
+    "afterProcessing": "MoveToArchive",
+    "archivePath": "C:\\MulseData\\processed",
+    "onFailure": "MoveToArchive",
+    "failureArchivePath": "C:\\MulseData\\failed"
+  },
+  "retry": {
+    "maxAttempts": 3,
+    "delaySeconds": 5
+  }
+}
+```
+
+The file remains in `incoming` while processing/delivery retries are pending. It moves to `processed`
+only after all applicable deliveries succeed, or to `failed` after permanent processing/delivery failure.
+The fetch-step retry policy above also governs its outcome notification; configure delivery-step or
+flow-level retries separately. Refresh the designer's module catalog if the new settings are not visible.
 
 ### Notification retries and recovery
 
@@ -181,6 +357,21 @@ disabled, and gives failed callbacks a fresh attempt budget. A processing failur
 notification recovery does not turn it into success. Callback errors and the original processing error
 are both reported. Source packages cannot be unloaded while receipts still need them.
 
+For example, after correcting filesystem permissions, retry an exhausted notification from PowerShell
+using your Service base URL and URL-encoded flow ID (the ID, not its display name):
+
+```powershell
+$serviceUrl = 'http://localhost:5210' # Local Service launch profile; use HTTPS remotely.
+$flowId = [Uri]::EscapeDataString('orders')
+Invoke-RestMethod -Method Post -Uri "$serviceUrl/api/flows/$flowId/source-outcomes/retry"
+```
+
+No request body is required. `Completed` means notifications finished; inspect `detail` for any original
+independent-delivery failures. `Retrying` means another notification attempt was scheduled. An original
+processing exception is still reported after its failure notification succeeds. Calling this endpoint
+when there are no exhausted notifications returns a conflict. Recovery is currently API/OpenAPI-based;
+there is no dedicated recovery button in the UI. Do not use the normal **Run** action to retry cleanup.
+
 Successful orchestration checkpoints are removed only after successful notifications. Deleting a flow,
 replacing the workspace or discarding its runtime state also discards its pending work: reconcile source
 files and partial deliveries before doing so. Receipts contain resolved settings (potentially credentials)
@@ -188,7 +379,7 @@ and share the runtime state's optional at-rest encryption; protect backups and A
 
 ## File system delivery
 
-The **File system deliver** module
+The **File system deliver** module (`file-system-deliver`) supports these output naming modes:
 
 | `namingMode` | Example output | Behavior |
 |---|---|---|
@@ -219,12 +410,12 @@ Build `Mulse.Excel` (or the solution). Its DLL and dependencies are copied into
 newly discovered packages start unloaded. No Service project reference or installed Excel is needed.
 Deploy the entire plugin output folder, not just `Mulse.Excel.dll`.
 
-Use existing `file-fetch` / `file-deliver` modules for filesystem access:
+Use existing `file-system-fetch` / `file-system-deliver` modules for filesystem access:
 
-- Read: `file-fetch` -> `excel-parse` -> downstream processing.
-- Write: JSON rows -> `excel-render` -> `file-deliver`.
+- Read: `file-system-fetch` -> `excel-parse` -> downstream processing.
+- Write: JSON rows -> `excel-render` -> `file-system-deliver`.
 
-Both modules accept `sheetName` or a **1-based** `sheetNumber` (1-256, default `1`). A supplied name
+Both Excel modules accept `sheetName` or a **1-based** `sheetNumber` (1-256, default `1`). A supplied name
 wins over the number. Reading selects that sheet and fails explicitly if it does not exist. Writing
 creates a **new workbook per input payload**, naming its sheet or creating preceding empty sheets to
 reach the selected number; it does not edit/append an existing workbook or preserve formatting/macros.
@@ -262,7 +453,12 @@ Newer NPOI versions have different commercial maintenance terms; review licensin
 
 ## BizTalk migration
 
-`Service/BizTalkImport` can point at a BizTalk `.sln`/`.btproj`/folder and:
+In the designer, choose **Import from BizTalk** and supply a `.sln`, `.btproj`, custom project, or folder
+path **accessible to the Service host**. This is path-based analysis, not a browser project upload. Add
+semicolon-separated additional solution/project/folder paths to resolve cross-solution references, and
+binding file/directory paths when deployment bindings live outside the source tree.
+
+The implementation in `Service\BizTalkImport` can:
 
 - Enumerate orchestrations, maps, schemas, pipelines, and custom assemblies.
 - Auto-translate simple orchestration `Decision` branches (including `Regex.IsMatch(...)` conditions) into
@@ -276,36 +472,184 @@ Newer NPOI versions have different commercial maintenance terms; review licensin
 - Produce a draft, disabled Mulse flow plus a list of settings/requirements and warnings that a user must
   review before enabling and running it.
 
+Apply a candidate to the canvas, review its transport paths/credentials, mappings, retry/compensation
+settings and warnings, then explicitly save it. Download the suggested scaffolded modules individually
+or as a bundle, implement their business behavior, build/load them, and resolve configuration gaps
+before enabling. A scaffold is a migration starting point, not a completed translation or a guarantee of
+BizTalk-equivalent behavior. Existing flow edits still require deliberate review before saving.
+
 ## Running locally
 
-Prerequisites: .NET 10 SDK.
+Prerequisites: **.NET 10 SDK**; **Node.js** only for the browser JavaScript tests. SQL Server and SFTP/SMTP
+servers are required only for flows using them. Excel does not require Microsoft Excel to be installed.
+
+From the repository root, build the solution (including plugins into `Service\plugins\`):
 
 ```powershell
-# Run the API/runtime service directly
-dotnet run --project Service
-
-# Run the Blazor admin/designer UI (separately, or via the Aspire AppHost below)
-dotnet run --project Mulse.Ui
-
-# Or run everything together via .NET Aspire
-dotnet run --project Mulse.AppHost
+dotnet build .\Mulse.slnx
 ```
 
-Run the test suite:
+Start the runtime in one terminal, using the Service directory so relative module/sample paths are
+unambiguous:
 
 ```powershell
-dotnet test Service.Tests
+Set-Location .\Service
+dotnet run --launch-profile Service
 ```
+
+In another terminal starting at the repository root, run the UI:
+
+```powershell
+Set-Location .\Mulse.Ui
+$env:MulseApi__BaseUrl = 'http://localhost:5210'
+dotnet run --launch-profile http
+```
+
+Open **http://localhost:5203**. The Service profile listens on **http://localhost:5210** and exposes its
+Development OpenAPI JSON at **http://localhost:5210/openapi/v1.json**. There is no bundled Swagger UI.
+The UI's `https` launch profile also exposes **https://localhost:7021** and needs a trusted development
+certificate. `MulseApi:BaseUrl` in the UI configuration defaults to the local Service URL; override it
+with `MulseApi__BaseUrl` when the runtime is hosted elsewhere. It is a **UI-server-to-Service** address,
+not the browser's URL.
+
+Alternatively, from the repository root, use the Aspire AppHost to launch both projects:
+
+```powershell
+dotnet run --project .\Mulse.AppHost\Mulse.AppHost.csproj
+```
+
+Use the launch endpoints shown by Aspire and ensure `MulseApi:BaseUrl` still resolves to the actual
+Service endpoint. For a single optional plugin, `dotnet build .\Mulse.Excel\Mulse.Excel.csproj` (or its
+SQL Server/HL7/sample equivalent) is enough; then load it in **Module Packages**.
+
+### First run and persistence
+
+`Mulse:RuntimeStatePath` defaults to `Data\mulse-runtime.json` relative to the **Service content root**.
+On first creation, `Mulse:Pipelines` and `Mulse:PluginDirectories` in `Service\appsettings.json` seed the
+runtime state. Once that file exists it is authoritative: changing those seed sections does **not**
+update existing flows or the saved plugin directory list. Use the UI/API for flow/package changes.
+The state stores definitions, config/secrets, package registrations, retries and orchestration
+checkpoints; it is not just a disposable flow cache and may be encrypted rather than plain JSON.
+
+The Service account needs read access to source/plugin paths and write access to its state directory,
+`Runtime\PluginCache` shadow-copy directory, output folders, and any archive/quarantine paths it uses.
+Cleanup additionally requires delete/move permissions on input files. Module filesystem paths and
+BizTalk source paths refer to the **Service machine**, not the browser machine. For deployment, prefer
+explicit absolute paths and preserve the state file and external encryption key separately. Do not
+delete the state file to refresh examples without backing up/reconciling pending work.
+
+A fresh workspace includes `sample-file-pipeline` and `sample-multi-source-join-pipeline`, both on-demand.
+For a basic smoke test, open the first sample in the dashboard, inspect its source/output paths, and
+choose **Run**. With the shipped data it reads `Service\SampleData\Inbox\customer-order.json`, parses JSON,
+adds an envelope, logs the output and writes to `Service\SampleData\Outbox`. Existing workspaces may not
+contain these seed flows. The sample leaves input in place, so running it again produces another output;
+it does not demonstrate source cleanup until you configure an after-processing action.
+
+### Validation
+
+From the repository root:
+
+```powershell
+dotnet test .\Service.Tests\Service.Tests.csproj
+node --test .\Mulse.Ui.Tests\theme.test.cjs .\Mulse.Ui.Tests\floating-panel.test.cjs .\Mulse.Ui.Tests\file-drop.test.cjs .\Mulse.Ui.Tests\node-remove.test.cjs .\Service.Tests\reference-input.test.mjs
+```
+
+The JavaScript suites need no npm dependencies.
+end-to-end behavior against your live SQL, SFTP, SMTP or HTTP systems; validate those separately before
+letting a flow modify source data.
 
 ## UI workspace
 
-The admin UI menu links to the dashboard and groups Config values, Modules, and Module Packages
-under Configuration. Open the flow designer using create/configure links from the dashboard rather
-than a menu entry. `/modules` hosts the searchable module catalog with kind and source-package filters.
+The admin UI menu links to the dashboard and groups **Config values**, **Modules**, **Module Packages**,
+and **Backup & Restore** under Configuration. Open the flow designer using create/configure links from
+the dashboard rather than a menu entry. `/modules` hosts the searchable module catalog with kind and source-package filters.
 Each module links to its owning package and shows its source kind and assembly path. `/module-packages`
 lists the available modules in each loaded package, collapsed by default under **Show/hide modules**,
 with links back to a package-filtered catalog and load/unload/reload controls. Unloaded packages do not
 execute code to enumerate module details; load one explicitly to inspect its modules.
+
+### Authoring a flow
+
+1. Choose **Create flow** from the dashboard, give it a stable ID and optional display name, and keep it
+   disabled while authoring. IDs are technical references; names are for people.
+2. Add **Source** for a linked fetch/parse pair, or add fetch/parse nodes separately. Choose modules and
+   configure real input locations. Link dependencies in node properties; moving a node is visual layout,
+   not a change to execution order or source wiring.
+3. Add augments as needed. For `multi-source-join-map-augment`, choose inputs by **parse ID**, join keys,
+   `Inner`/`Left`/`Right`/`Full` semantics and `FanOut` or `Nested` output. `*` selects the accumulated
+   working document for chained joins. Map Left/Right/Literal values or transform results into targets.
+4. Add a render node and at least one deliver node per route; configure paths/endpoints and any
+   conditions, default retries or atomic scope. Source graph errors, missing modules and incomplete
+   routes must be resolved before saving. Create/update validation requires at least one source and
+   one delivery route; "zero deliveries" in lifecycle semantics means none applicable at execution time.
+5. Choose **Create flow** or **Save flow** in the bottom bar. There is no automatic save. Resolve missing
+   config/secret references on **Config values**, load dependencies, review settings, then enable and
+   manually run from the dashboard before switching to automatic triggers.
+
+Sample analysis and canvas editing do not connect to live sources. **Run** does: even a logging-only
+output can still execute configured fetch/augment behavior or source cleanup. Use safe test data and
+separate input/output locations; don't point a poller back at its own output/archive directory.
+
+Solid arrows carry batches; dashed arrows supply parsed input to a dependent fetch (for example a SQL
+lookup). **BATCH xN** means multiple inputs feed one batch, not a row-by-row join. **JOIN BY KEY** marks
+an actual join/map augment. **USES** counts consumers, including lookup dependencies: the original data
+remains available to downstream processing; the lookup arrow does not consume it.
+
+### Adding or replacing a parser
+
+Use **Parser** in the toolbox to add just a parse node, without another fetch. Click while a fetch is
+selected, drop onto a fetch, or use its Properties **Add parser for this fetch** action to link it. A
+click with no selected fetch also repairs the sole unparsed fetch automatically; if several fetches
+are unparsed, choose one explicitly. Dropping elsewhere creates an unlinked parser: select its inputs
+under **Parses raw output of**. Existing fetch settings, other parsers and node positions are retained.
+Replacing a deleted parser does not restore its former module/settings or references: reselect the
+new parse ID in downstream lookup inputs and join settings before saving.
+
+A parser describes the **fetch's output format**, not the source transport. Excel files use Excel
+parse; SFTP can contain different file formats, so choose the matching parser. SQL Server lookup already
+returns a JSON array of column/value objects, so use **JSON parse**: it validates/normalizes JSON,
+preserves the row array, and the runtime tags it with the parse node's source ID for joins/lookups.
+It neither reruns SQL nor joins rows. A parser remains required by the source-graph model even for
+already-structured JSON. Adding a parser to a JSON-only fetch preselects `json-parse` when loaded;
+otherwise choose the appropriate module explicitly. Changing an existing fetch module does not
+silently replace its parser or settings.
+
+### Example: Excel rows enriched from SQL, written to one JSON file
+
+1. Fetch the workbook with a filesystem fetcher and parse it with `excel-parse`; call the parse node
+   `primary`. Select the correct worksheet and use headers so `OrgId` is a named column.
+2. Add another source. Choose `sql-server-lookup-fetch` and **Input from: primary**. Keep **Parsed by**
+   pointing to this second source's parser, not the Excel parser. Change the second parser to
+   **`json-parse`**, because the lookup returns JSON, and call that parse node `lookup`.
+3. Set SQL `connectionString` (for example `{{secret:sql-connection}}`), `idPaths` to `OrgId`, and a query
+   returning the key plus enrichment fields. For example, with string-valued organization IDs:
+
+   ```sql
+   SELECT OrgId, OrgName
+   FROM dbo.Organizations
+   WHERE OrgId IN (SELECT value FROM STRING_SPLIT(@ids, ','));
+   ```
+
+   The module extracts distinct IDs across input rows and sends one comma-separated `@ids` parameter
+   for a batched query, not one SQL call per Excel row. IDs must be suitable for that comma-separated
+   representation; this is not an arbitrary per-row stored-procedure adapter.
+4. Add **Join sources** with left `primary`, right `lookup`, and the key pair `OrgId` / `OrgId`.
+   Use **Left** to keep unmatched spreadsheet rows, or **Inner** to discard them. Map spreadsheet
+   fields from Left and enrichment fields from Right into the output. Duplicate Excel IDs still
+   produce their own rows; multiple matching SQL rows fan out unless you choose Nested cardinality.
+5. In **JSON render**, enable **Combine into one JSON array** (`combinePayloads: "true"`). In **File system
+   deliver**, configure the output directory and optionally Fixed naming with `fileName: "enriched.json"`.
+   Review overwrite behavior before repeating runs. Save and test with safe data.
+
+By default JSON render still emits one payload per input payload. Combining emits one `combined.json`
+payload per route invocation, so filesystem delivery writes one file containing all joined rows in that
+batch (potentially spanning several input workbooks). It does not collect across runs or perform the
+join itself. Root arrays contribute their items in order; objects/scalars contribute one item, while
+nested arrays/objects remain unchanged. Empty input emits no payload/file; an input containing only
+empty arrays emits `[]`. Only metadata shared identically by all inputs is retained, plus render metadata,
+so a combined file is not incorrectly tagged as belonging to just the first source. Set `indented` for
+readable formatting. Invalid JSON fails rather than producing a partial output. Refresh the designer's
+module catalog after updating the Service to see the new setting.
 
 ### Draft flows from samples
 
@@ -334,6 +678,8 @@ is unloaded, the draft retains an explicit Excel parser node and shows loading i
 of substituting a text parser. Load the package in another tab, then choose **Refresh modules** in
 the designer to update availability without discarding the draft. Other unsupported formats leave a
 parser selection that needs operator attention.
+
+### Managing flows
 
 Flows have an optional editable **Flow name**, separate from the unique **Flow ID** used in URLs,
 API calls and execution references. Set or rename it in the designer's Flow overview and save; the ID
@@ -404,6 +750,8 @@ Unloading is rejected if any saved flow references
 its modules, including disabled flows, compensation steps, and join/map transforms. The API lists the
 dependent flow IDs; disabling those flows is not enough: remove or replace their references first.
 Active executions also block unloading/removal, even if their saved flow has since been deleted.
+Pending source receipts in retries or orchestration checkpoints also block unloading/removal, even if
+the flow was edited to use a different fetcher. Complete their source notifications before unloading.
 These checks apply to PATCH, PUT/POST with `enabled: false`, and package DELETE, without changing
 registrations on rejection. Its disabled registration survives restarts and prevents auto-discovery
 from reloading the same package ID. **Load** re-enables it; **Reload** refreshes a loaded package after
@@ -411,6 +759,8 @@ its DLL changes. Built-in packages cannot be unloaded or replaced.
 
 API clients can `PATCH /api/module-packages/{packageId}/enabled` with `{ "enabled": true }`, or
 `{ "enabled": false, "confirmation": "UNLOAD PACKAGE" }` to unload.
+
+### Appearance and designer panels
 
 Appearance follows your system's light/dark preference until you use **Dark mode** in the navigation.
 Your selection is saved in this browser and applies to all pages, including the designer canvas.
@@ -422,13 +772,98 @@ draggable and collapsible, retaining their dragged positions during canvas inter
 as each panel remains open on the page. Properties starts aligned to the right edge of the designer
 viewport, then stays where you drag it.
 
-UI regression tests can be run with Node.js (no npm dependencies):
+The initial view and **Fit** use an 80% scale (20% smaller than the original fitted view); zoom controls
+and wheel zoom remain available. Drag a source group's header to move its parse and fetch nodes together,
+keeping their relative spacing. Shared fetch nodes move once and other groups containing them resize;
+dependent lookup groups are not moved automatically. Individual nodes remain draggable. Group/node
+positions are retained during this editing session; saving still stores the flow definition, not custom
+canvas layout, and Auto layout deliberately repositions nodes.
+
+Actual key-based joins appear as **Join sources** nodes. The toolbox's **Join steps** list offers
+**Configure join** and **Remove join**, and selecting a join opens its keys/mappings in Properties.
+Removing a join leaves all sources and delivery routes intact. A **BATCH** badge is automatic wiring,
+not another join; render Properties explains this and links to the real joins.
+
+Use the toolbox's **Render** action to add a standalone render. Selecting an orphaned deliver node also
+offers **Add render to this route**, preserving its settings and other deliver nodes. Clicking/dropping
+Render targets a selected/nearby route missing its render, or the sole incomplete route; otherwise it
+creates a new render-only route. Existing renders are not duplicated. Use **Extra deliver** to finish a
+new render-only route, or **Delivery route** to create a complete render/deliver pair. Incomplete routes
+cannot be saved. **Remove render only** keeps that route's deliver nodes for later repair.
+
+Every canvas node has a top-right **X** button (also keyboard accessible) to remove just that node.
+Connected nodes remain; fetch/parse references are detached, and incomplete sources/routes must be
+repaired before saving. Use the Properties panel's **Remove route** or **Remove source (with its fetches)**
+when you intentionally want grouped removal. Deletions affect the draft until you **Save flow**.
+
+## API reference
+
+Use the Development-only `/openapi/v1.json` document for complete request/response schemas. API bodies
+use camelCase property names and string enum values. The configured Service URL is independent of the
+UI URL. Main surfaces:
+
+| Area | Endpoints |
+|---|---|
+| Flow definitions | `GET`/`POST /api/flows`; `GET`/`PUT`/`DELETE /api/flows/{flowId}`. |
+| Flow actions | `PATCH /api/flows/{flowId}/enabled`, `PATCH /api/flows/{flowId}/category`, `POST /api/flows/{flowId}/duplicate`, `POST /api/flows/{flowId}/run`. |
+| Source recovery | `POST /api/flows/{flowId}/source-outcomes/retry` (no body; exhausted callback recovery only). |
+| Catalog/packages | `GET /api/modules`; `GET`/`POST /api/module-packages`; `GET`/`PUT`/`DELETE /api/module-packages/{packageId}`; `PATCH .../enabled`, `POST .../reload`. |
+| Sample design | `POST /api/flow-designer/analyze`, `POST /api/flow-designer/flows`. |
+| BizTalk import | `POST /api/biztalk-import/analyze`, `POST /api/biztalk-import/flows`, and scaffolded-module download endpoints. |
+| Config values | `GET /api/config-values`, `GET /api/config-values/references`, `GET /api/config-values/usages`; `PUT`/`DELETE /api/config-values/{reference}`. |
+| Workspace | `GET`/`PUT /api/workspace/encryption`; `POST /api/workspace/backup`, `/api/workspace/restore/preview`, `/api/workspace/restore`, `/api/workspace/flows/delete-all`. |
+| Inbound HTTP | `POST`/`PUT /api/inbound/{route}` for a registered HTTP push source. |
+
+For example, from PowerShell while the local Service is running:
 
 ```powershell
-node --test Mulse.Ui.Tests\theme.test.cjs Mulse.Ui.Tests\floating-panel.test.cjs
+$serviceUrl = 'http://localhost:5210'
+Invoke-RestMethod "$serviceUrl/api/modules"
+Invoke-RestMethod "$serviceUrl/api/flows"
+# This executes a real enabled flow, not a dry run:
+$flowId = [Uri]::EscapeDataString('sample-file-pipeline')
+$result = Invoke-RestMethod -Method Post -Uri "$serviceUrl/api/flows/$flowId/run"
+$result | Format-List
 ```
+
+Inspect `outcome`, `detail`, `nextAttemptAt` and captured `responsePayloads`, not just `payloadCount`.
+Request/response payload content is base64-encoded in `contentBase64`. API failures use Problem Details;
+validation/bad arguments normally return `400`, missing resources `404`, conflicting state `409`, and
+unhandled execution failures `500`.
+
+## Troubleshooting and limitations
+
+- **UI cannot reach the runtime:** check the Service launch URL and the UI server's `MulseApi:BaseUrl`.
+  A different browser URL does not change the UI server's backend address.
+- **Edits to appsettings appear ignored:** existing runtime state overrides seed flow/plugin-directory
+  settings. Edit the saved definitions through the UI/API rather than deleting pending state.
+- **A module is missing:** build/deploy its complete plugin output, wait for discovery, explicitly load
+  the package, then refresh modules in the designer. Check package initialization errors and saved paths.
+- **Enable/Run is blocked:** resolve missing module dependencies and config/secret references. Disabled
+  flows still protect their referenced packages from unload.
+- **Input is fetched again:** default filesystem cleanup is `None`. Configure source acknowledgement,
+  narrow the search pattern, and keep outputs/archives outside the watched input. The watcher is a
+  separate event-based fetcher without the polling fetcher's cleanup settings.
+- **A flow is held after delivery:** inspect logs and pending retry/notification details. Exhausted source
+  callbacks require the notification-only recovery endpoint; running the flow again is not recovery.
+- **Inbound route returns 404:** check that a Push flow using `http-inbound-fetch` is enabled and registered;
+  allow about five seconds after changes. A queued `202` does not mean delivery has finished.
+- **Runtime state cannot be decrypted:** verify the configured environment key and encoding before
+  changing anything. Losing that key loses access to encrypted state; the UI cannot recover it.
+
+Mulse is a **single-process proof of concept**, not a production-hardened integration service. There is
+currently no application authentication/authorization layer: protect **both** UI and Service endpoints
+with network/access controls before exposing them beyond a trusted development machine. Masking and
+at-rest encryption do not restrict API access, plugin code, logs, network traffic, or external files.
+
+There is no distributed locking, shared-state multi-instance coordination, exactly-once guarantee,
+transactional message broker, or general rollback across external systems. Persisted retries/checkpoints
+and idempotent callbacks cover specific continuations, not every crash window. Built-in polling modules
+read batches into memory; apply sensible input/workbook limits and test external-system behavior before
+using destructive cleanup. Workspace backups omit live work and binaries as described above; retain a
+separate operational recovery plan for state, keys, plugin files and source/destination data.
 
 ## Status
 
 This is an in-development project (not yet deployed to production). Expect breaking changes as the
-architecture evolves.
+architecture evolves. Review imported/generated flows and module behavior before using real data.

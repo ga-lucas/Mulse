@@ -225,6 +225,25 @@ public partial class Designer : IAsyncDisposable
         return Task.CompletedTask;
     }
 
+    public sealed record NodeMove(string Id, double X, double Y);
+
+    [JSInvokable]
+    public Task OnNodesMoved(NodeMove[] moves)
+    {
+        foreach (var move in moves)
+        {
+            var node = _nodes.FirstOrDefault(candidate => string.Equals(candidate.Id, move.Id, StringComparison.Ordinal));
+            if (node is not null)
+            {
+                node.X = move.X;
+                node.Y = move.Y;
+            }
+        }
+
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
     [JSInvokable]
     public Task OnViewChanged(double x, double y, double w, double h)
     {
@@ -247,6 +266,9 @@ public partial class Designer : IAsyncDisposable
             case "fetch":
                 AddFetchNodeAt(x, y);
                 break;
+            case "parse":
+                AddParseNodeAt(x, y);
+                break;
             case "augment":
                 AddAugmentNodeAt(x, y);
                 break;
@@ -255,6 +277,9 @@ public partial class Designer : IAsyncDisposable
                 break;
             case "route":
                 AddDeliveryRouteAt(x, y);
+                break;
+            case "render":
+                AddRenderNodeAt(x, y);
                 break;
             case "deliver":
                 AddDeliverNodeAt(x, y);
@@ -281,8 +306,8 @@ public partial class Designer : IAsyncDisposable
     {
         _viewX = 0;
         _viewY = 0;
-        _viewW = CanvasWidth;
-        _viewH = CanvasHeight;
+        _viewW = CanvasWidth / 0.8;
+        _viewH = CanvasHeight / 0.8;
     }
 
     private string ZoomPercentLabel
@@ -767,10 +792,40 @@ public partial class Designer : IAsyncDisposable
         _ => "Deliver"
     };
 
+    private FlowNode? PushTriggerFetch => FetchNodes.FirstOrDefault(fetch => FindCatalogModule(fetch.ModuleId)?.SupportsPushTrigger == true);
+
+    private string TriggerGuidance => _triggerMode switch
+    {
+        "Interval" => "The flow owns the schedule: each run executes the source graph once, including one SFTP scan. There is no separate per-module polling timer. Run on startup controls the initial interval run.",
+        "Push" => PushTriggerFetch is { } fetch
+            ? $"Fetch '{fetch.GraphId}' ({fetch.ModuleId}) is the first push-capable fetch and will register before the first run when the flow is saved and enabled (allow about five seconds). Its events initiate the whole flow; other fetches run normally, not as additional triggers."
+            : "No currently loaded fetch in this flow supports Push. It will not start automatically from source events. Add a push-capable fetch such as File system watcher, or use Interval for SFTP polling.",
+        "OnDemand" => "Runs only when explicitly invoked. SFTP scans once per run; watcher events do not start an OnDemand flow. Run on startup applies only to Interval.",
+        _ => "Automatic triggering is disabled. Run on startup applies only to Interval."
+    };
+
+    private string FetchTriggerGuidance(FlowNode fetch)
+    {
+        if (string.Equals(fetch.ModuleId, "sftp-fetch", StringComparison.OrdinalIgnoreCase))
+            return "SFTP scans once when this fetch executes. Use Flow overview > Interval to poll repeatedly, or OnDemand for manual runs. SFTP has no internal timer and cannot itself initiate Push runs.";
+        if (FindCatalogModule(fetch.ModuleId)?.SupportsPushTrigger == true)
+        {
+            var guidance = string.Equals(_triggerMode, "Push", StringComparison.OrdinalIgnoreCase)
+                ? ReferenceEquals(fetch, PushTriggerFetch)
+                    ? "This fetch is the flow's Push event source. Saving and enabling the flow registers it before any execution; no manual bootstrap run is needed."
+                    : "Only the first push-capable fetch registers as this flow's trigger. This fetch executes when the flow runs, but its own events will not independently start this flow."
+                : "This fetch can initiate Push flows, but this flow is not in Push mode. Its events will not automatically start this flow; choose Push in Flow overview for event-driven execution.";
+            if (string.Equals(fetch.ModuleId, "file-system-watcher-fetch", StringComparison.OrdinalIgnoreCase))
+                guidance += " FileSystemWatcher queues events and drains settled files, rather than rescanning the directory each run. In OnDemand/Interval the first execution initializes the watcher and later executions drain it; settleSeconds can make the first run empty. Use file-system-fetch with Interval for periodic directory scans.";
+            return guidance;
+        }
+        return "This fetch executes when the flow runs; it does not register a Push event source. Scheduling belongs to the flow, not this module.";
+    }
+
     private static string StageDescription(NodeStage stage) => stage switch
     {
-        NodeStage.Fetch => "Acquires raw content. One or more parse nodes parse its output, and it can consume other parse nodes' finished output as its input.",
-        NodeStage.Parse => "Parses the raw output of every linked fetch node with the same module and settings, then merges the results into one working batch.",
+        NodeStage.Fetch => "Acquires raw or already-structured content once per execution. Parse nodes interpret its output; it can also consume other parse nodes' finished output as lookup input.",
+        NodeStage.Parse => "Interprets or validates fetched content and establishes a named source for joins/lookups. Choose the parser for the fetch's output format, not its transport: SQL lookup emits JSON, so use JSON parse. Each linked fetch is parsed separately, then its results are merged.",
         NodeStage.Augment => "Join, decision, and mapping steps executed once every source has been fetched and parsed.",
         NodeStage.Render => "Prepares outbound content for one delivery route, once; every deliver node of the route receives the same rendered output.",
         _ => "Dispatches the rendered payload of its delivery route. A route can have several deliver nodes, each running independently."
@@ -783,7 +838,7 @@ public partial class Designer : IAsyncDisposable
     {
         NodeStage.Fetch => string.IsNullOrWhiteSpace(node.GraphId) ? "Fetch" : $"Fetch - {node.GraphId}",
         NodeStage.Parse => string.IsNullOrWhiteSpace(node.GraphId) ? "Parse" : $"Parse - {node.GraphId}",
-        NodeStage.Augment => $"Augment {AugmentNodes.IndexOf(node) + 1}",
+        NodeStage.Augment => IsJoinNode(node) ? $"Join sources {AugmentNodes.IndexOf(node) + 1}" : $"Augment {AugmentNodes.IndexOf(node) + 1}",
         NodeStage.Render => $"Render {RouteNumber(node)}",
         _ => DeliverHeading(node)
     };

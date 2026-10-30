@@ -238,6 +238,7 @@
 
     <FloatingPanel Title="Toolbox" Icon="🧰" X="24" Y="24" Width="220" Class="toolbox-panel">
         <p class="toolbox-hint">Click or drag onto the canvas.</p>
+        <p class="toolbox-hint">Solid arrows carry batches. Dashed arrows supply lookup inputs. BATCH combines payloads, not matching rows; use Join sources to join by key.</p>
         <div class="toolbox-list" @ref="_toolboxElement">
             <button class="toolbox-item" data-node-type="source" data-node-label="Source" @onclick="AddSourceLane" title="Adds a new source: a fetch node plus a parse node that parses it, pre-linked. Join augments and other fetch nodes reference the parse node's id.">
                 <span class="toolbox-icon">⭘→</span> Source
@@ -245,11 +246,17 @@
             <button class="toolbox-item" data-node-type="fetch" data-node-label="Extra fetch" @onclick="AddFetchNode" title="Adds a standalone fetch node. Drop it onto an existing source lane (or click it while a parse node is selected) to have that parse node also parse this fetch's raw output.">
                 <span class="toolbox-icon">⭘+</span> Extra fetch
             </button>
+            <button class="toolbox-item" data-node-type="parse" data-node-label="Parser" @onclick="AddParseNode" title="Adds a parser without another fetch. Select a fetch first, or drop onto it, to link its output. With no selection, a sole unparsed fetch is linked automatically.">
+                <span class="toolbox-icon">◇</span> Parser
+            </button>
             <button class="toolbox-item" data-node-type="augment" data-node-label="Augment" @onclick="AddAugmentNode">
                 <span class="toolbox-icon">◇</span> Augment
             </button>
             <button class="toolbox-item" data-node-type="join" data-node-label="Join sources" @onclick="AddJoinAugmentNode" disabled="@(ParseNodes.Count < 2)" title="Adds a multi-source join and map augment, pre-wired to the first two parse nodes on the canvas.">
                 <span class="toolbox-icon">⋈</span> Join sources
+            </button>
+            <button class="toolbox-item" data-node-type="render" data-node-label="Render" @onclick="AddRenderNode" title="Adds a render to a selected route missing one, or creates a new render-only route. Add a deliver node before saving.">
+                <span class="toolbox-icon">◇</span> Render
             </button>
             <button class="toolbox-item" data-node-type="route" data-node-label="Delivery route" @onclick="AddDeliveryRoute">
                 <span class="toolbox-icon">⑂→</span> Delivery route
@@ -258,6 +265,20 @@
                 <span class="toolbox-icon">⑂+</span> Extra deliver
             </button>
         </div>
+        @if (AugmentNodes.Any(IsJoinNode))
+        {
+            <h3>Join steps</h3>
+            @foreach (var join in AugmentNodes.Where(IsJoinNode))
+            {
+                <div @key="join.Id">
+                    <p class="field-hint">@NodeHeading(join)</p>
+                    <div class="action-row">
+                        <button class="secondary-button" @onclick="() => SelectNode(join)" aria-label="@($"Configure {NodeHeading(join)}")">Configure join</button>
+                        <button class="secondary-button" @onclick="() => RemoveCanvasNode(join)" aria-label="@($"Remove {NodeHeading(join)}")">Remove join</button>
+                    </div>
+                </div>
+            }
+        }
     </FloatingPanel>
 
     <FloatingPanel Title="Flow overview" Icon="🗺" X="24" Y="400" Width="260">
@@ -290,6 +311,16 @@
             }
         </select>
 
+        <p class="field-hint">@TriggerGuidance</p>
+        @if (string.Equals(_triggerMode, "Push", StringComparison.OrdinalIgnoreCase) && PushTriggerFetch is null)
+        {
+            <p class="status-banner error compact">Push requires a loaded push-capable fetch module. SFTP alone cannot trigger this flow.</p>
+        }
+        @if (!string.Equals(_triggerMode, "Push", StringComparison.OrdinalIgnoreCase) && FetchNodes.Any(fetch => fetch.ModuleId == "file-system-watcher-fetch"))
+        {
+            <p class="field-hint">File system watcher events will not start this flow in this mode. Prefer Push for watching, or file-system-fetch with Interval for periodic directory scans.</p>
+        }
+
         @if (string.Equals(_triggerMode, "Interval", StringComparison.OrdinalIgnoreCase))
         {
             <label class="field-label" for="trigger-interval">Interval (hh:mm:ss)</label>
@@ -297,12 +328,12 @@
         }
 
         <label class="field-label checkbox-row">
-            <input type="checkbox" checked="@_runOnStartup" @onchange="e => _runOnStartup = (bool)(e.Value ?? false)" />
-            <span>Run on startup</span>
+            <input type="checkbox" checked="@_runOnStartup" disabled="@(!string.Equals(_triggerMode, "Interval", StringComparison.OrdinalIgnoreCase))" @onchange="e => _runOnStartup = (bool)(e.Value ?? false)" />
+            <span>Run on startup (Interval only)</span>
         </label>
 
         <label class="field-label checkbox-row">
-            <input type="checkbox" checked="@_hasDefaultRetry" @onchange="e => _hasDefaultRetry = (bool)(e.Value ?? false)" />
+            <input type="checkbox" checked="@_hasDefaultRetry"
             <span>Use a default retry policy</span>
         </label>
 
@@ -393,8 +424,11 @@
             @foreach (var parse in ParseNodes)
             {
                 var bounds = LaneBounds(parse);
-                <g class="source-lane" @key="parse">
+                <g class="source-lane" @key="parse" data-lane-members="@string.Join(" ", LaneMembers(parse).Select(member => member.Id))">
                     <rect class="source-lane-body" x="@F(bounds.X)" y="@F(bounds.Y)" width="@F(bounds.Width)" height="@F(bounds.Height)" rx="18" ry="18" />
+                    <rect class="source-lane-handle" x="@F(bounds.X)" y="@F(bounds.Y)" width="@F(bounds.Width)" height="36">
+                        <title>Drag this header to move the source group, including shared fetch nodes. Other groups containing shared nodes resize to match.</title>
+                    </rect>
                     <text class="source-lane-label" x="@F(bounds.X + 18)" y="@F(bounds.Y + 24)">@LaneLabel(parse)</text>
                 </g>
             }
@@ -406,7 +440,9 @@
                       data-edge-to="@edge.To.Id"
                       data-edge-kind="@(edge.IsDependency ? "dependency" : "flow")"
                       d="@EdgePath(edge)"
-                      marker-end="@(edge.IsDependency ? "url(#dependency-arrow)" : "url(#flow-arrow)")" />
+                      marker-end="@(edge.IsDependency ? "url(#dependency-arrow)" : "url(#flow-arrow)")">
+                    <title>@(edge.IsDependency ? $"Lookup input: parsed rows from {NodeHeading(edge.From)} supply {NodeHeading(edge.To)}. This does not join rows." : $"Batch flow: {NodeHeading(edge.From)} to {NodeHeading(edge.To)}.")</title>
+                </path>
             }
 
             @{
@@ -423,21 +459,30 @@
                    transform="translate(@F(node.X), @F(node.Y))"
                    @onclick="() => SelectNode(node)">
                     <rect class="node-body" x="0" y="0" width="@F(NodeWidth)" height="@F(NodeHeight)" rx="14" ry="14" />
-                    <text class="node-stage" x="16" y="26">@Truncate(NodeHeading(node), 24)</text>
+                    <text class="node-stage" x="16" y="26">@Truncate(NodeHeading(node), 18)</text>
                     <text class="node-title" x="16" y="52">@Truncate(NodeTitle(node), 26)</text>
                     <text class="node-subtitle" x="16" y="74">@NodeSubtitle(node)</text>
+                    <foreignObject x="@F(NodeWidth - 34)" y="4" width="30" height="30">
+                        <button type="button" class="node-remove" aria-label="@($"Remove {NodeHeading(node)}")"
+                                title="Remove only this node. Connected nodes stay; incomplete connections must be repaired before saving."
+                                @onclick="() => RemoveCanvasNode(node)" @onclick:stopPropagation="true">
+                            <span aria-hidden="true">&#215;</span>
+                        </button>
+                    </foreignObject>
                     @if (incomingCount >= 2)
                     {
                         <g class="badge-group">
+                            <title>@(IsJoinNode(node) ? "Join sources matches rows using the configured keys and field mappings." : "Incoming payloads share a batch. No row matching happens here.")</title>
                             <circle class="merge-dot" cx="0" cy="@F(NodeHeight / 2)" r="6" />
-                            <text class="join-badge" x="-6" y="-8">⋈ JOIN</text>
+                            <text class="join-badge" x="-6" y="-8">@IncomingBatchLabel(node, incomingCount)</text>
                         </g>
                     }
                     @if (outgoingCount >= 2)
                     {
                         <g class="badge-group">
+                            <title>This output has @outgoingCount uses, including lookup inputs. Rows are not split or removed.</title>
                             <circle class="fork-dot" cx="@F(NodeWidth)" cy="@F(NodeHeight / 2)" r="6" />
-                            <text class="split-badge" x="@F(NodeWidth - 70)" y="-8">⑂ SPLITS ×@outgoingCount</text>
+                            <text class="split-badge" x="@F(NodeWidth - 70)" y="-8">USES ×@outgoingCount</text>
                         </g>
                     }
                 </g>
@@ -456,6 +501,21 @@
             var catalogModule = FindCatalogModule(node.ModuleId);
             <h3>@NodeHeading(node)</h3>
             <p class="panel-hint">@StageDescription(node.Stage)</p>
+            @if (IsJoinNode(node))
+            {
+                <button class="secondary-button" @onclick="() => RemoveCanvasNode(node)">Remove join</button>
+                <p class="field-hint">Removing this join keeps the sources, render and deliver nodes. Configure its keys and mappings below.</p>
+            }
+            @if (node.Stage == NodeStage.Render)
+            {
+                <h3>Incoming batch</h3>
+                <p class="field-hint">All parsed sources feed the ordered augment chain, then this render. Converging arrows are automatic batch wiring, not a removable join. Add or configure a Join sources step to match rows by key.</p>
+                @foreach (var join in AugmentNodes.Where(IsJoinNode))
+                {
+                    <button class="secondary-button" @onclick="() => SelectNode(join)">Configure @NodeHeading(join)</button>
+                }
+                <button class="secondary-button" @onclick="AddJoinAugmentNode" disabled="@(ParseNodes.Count < 2)">Add join sources</button>
+            }
             <p class="field-hint">Type <code>{{</code> in a module setting for config/secret reference suggestions. Use Up/Down and Enter/Tab, or click a suggestion. <a href="/config-values">Manage stored values</a>.</p>
 
             <label class="field-label">Name</label>
@@ -486,12 +546,19 @@
                 <h3>Fetch node</h3>
                 <label class="field-label">Fetch node id</label>
                 <input class="mapping-input" value="@node.GraphId" @onchange="@(args => RenameGraphNode(node, args.Value?.ToString()))" />
-                <p class="field-hint">Parse nodes reference this id to parse this fetch's raw output. Fetch and parse node ids share one namespace.</p>
+                <p class="field-hint">Parse nodes reference this id to interpret this fetch's output. Fetch and parse node ids share one namespace.</p>
+                <h3>Execution and trigger</h3>
+                <p class="field-hint">@FetchTriggerGuidance(node)</p>
+                @if (node.ModuleId == "sql-server-lookup-fetch")
+                {
+                    <p class="field-hint">SQL lookup emits a JSON array of rows, not an Excel file or database reader. Use JSON parse to validate/normalize it and name the row source for a join. It does not rerun the SQL query or match rows; configure Join sources separately.</p>
+                }
 
                 <label class="field-label">Parsed by (parse nodes)</label>
+                <button class="secondary-button" @onclick="() => AddParseForFetch(node)">Add parser for this fetch</button>
                 @if (ParseNodes.Count == 0)
                 {
-                    <p class="field-hint">Add a parse node (e.g. with the Source toolbox item) to parse this fetch's raw output.</p>
+                    <p class="field-hint">Use Add parser for this fetch or the Parser toolbox item; the existing fetch and its settings are kept.</p>
                 }
                 else
                 {
@@ -814,6 +881,11 @@
                         <p class="field-hint">Compensation: <code>@compensation.Module</code> (kept as-is when saving; configure it through the flows API).</p>
                     }
 
+                    @if (route?.Render is null)
+                    {
+                        <p class="field-hint">This route is missing its render. Restore it without removing the deliver nodes or their settings.</p>
+                        <button class="secondary-button" @onclick="() => AddRenderToRoute(node.RouteId)">Add render to this route</button>
+                    }
                     <div class="action-row">
                         <button class="secondary-button" @onclick="() => AddDeliverToRoute(node.RouteId)" title="Adds another deliver node that receives this route's rendered output.">Add deliver node</button>
                     </div>
@@ -822,6 +894,10 @@
                 <div class="action-row">
                     @if (node.Stage is NodeStage.Render or NodeStage.Deliver)
                     {
+                        @if (node.Stage == NodeStage.Render)
+                        {
+                            <button class="secondary-button" @onclick="() => RemoveCanvasNode(node)">Remove render only</button>
+                        }
                         @if (node.Stage == NodeStage.Deliver && (FindRoute(node.RouteId)?.Delivers.Count ?? 0) > 1)
                         {
                             <button class="secondary-button" @onclick="() => RemoveDeliverNode(node)" title="Removes only this deliver node; the route keeps its render node and other deliver nodes.">Remove deliver node</button>

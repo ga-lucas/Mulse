@@ -27,7 +27,7 @@ public sealed class FileSystemWatcherFetchModule(ILogger<FileSystemWatcherFetchM
         "file-system-watcher-fetch",
         "File system watcher fetch",
         ModuleKind.Fetch,
-        "Watches a directory with FileSystemWatcher and can initiate flows when new work arrives, while still returning only files queued for this flow instance.",
+        "Use an enabled Push flow to register FileSystemWatcher before the first run; settled file events then initiate the flow. Fetch drains queued files, not a fresh directory scan. OnDemand/Interval only initialize the watcher on their first execution and drain it on later executions.",
         SettingDescriptors,
         Recommendation);
 

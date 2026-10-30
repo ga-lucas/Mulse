@@ -94,6 +94,41 @@ public partial class Designer
         _statusMessage = DescribeStandaloneFetch(fetch, targetParse);
     }
 
+    private void AddParseNode()
+    {
+        var target = SelectedNode is { Stage: NodeStage.Fetch } selected ? selected : null;
+        target ??= FetchNodes.Count(fetch => ParsesForFetch(fetch).Count == 0) == 1
+            ? FetchNodes.Single(fetch => ParsesForFetch(fetch).Count == 0) : null;
+        AddParseForFetch(target, null);
+    }
+
+    private void AddParseNodeAt(double x, double y)
+    {
+        var target = FetchNodes
+            .Where(fetch => x >= fetch.X - LaneGap && x <= fetch.X + NodeWidth + LaneGap
+                && y >= fetch.Y - LaneGap && y <= fetch.Y + NodeHeight + LaneGap)
+            .OrderBy(fetch => Math.Abs(fetch.X - x) + Math.Abs(fetch.Y - y))
+            .FirstOrDefault();
+        AddParseForFetch(target, (x, y));
+    }
+
+    private void AddParseForFetch(FlowNode? fetch, (double X, double Y)? position = null)
+    {
+        var formats = fetch is null ? null : FindCatalogModule(fetch.ModuleId)?.SupportedFormats;
+        var module = formats is { Count: 1 } && string.Equals(formats[0], "Json", StringComparison.OrdinalIgnoreCase)
+            ? ModulesForStage(NodeStage.Parse).FirstOrDefault(candidate => candidate.Id == "json-parse") : null;
+        var parse = CreateParseNode(NextParseId(), module?.Id ?? string.Empty, null,
+            fetch is null ? [] : [fetch.GraphId]);
+        ApplyModuleDefaults(parse, module);
+        parse.X = position?.X ?? (fetch is null ? CanvasPadding + ColumnSpacing : fetch.X + ColumnSpacing);
+        parse.Y = position?.Y ?? (fetch?.Y ?? (_nodes.Count == 1 ? CanvasPadding : _nodes.Where(node => node != parse).Max(node => node.Y) + RowSpacing));
+        _selectedNodeId = parse.Id;
+        _errorMessage = null;
+        _statusMessage = fetch is null
+            ? $"Added parser '{parse.GraphId}'. Choose its module and select the fetch outputs it parses in Properties."
+            : $"Added parser '{parse.GraphId}' for fetch '{fetch.GraphId}', keeping the fetch's settings. Review the parser module and settings; reselect this source in lookup inputs and join settings if it replaces a deleted parser.";
+    }
+
     private FlowNode CreateStandaloneFetch(FlowNode? targetParse)
     {
         var fetchModule = ModulesForStage(NodeStage.Fetch).FirstOrDefault();
@@ -489,6 +524,64 @@ public partial class Designer
         _selectedNodeId = node.Id;
     }
 
+    private void AddRenderNode() => AddRenderNodeCore(null);
+
+    private void AddRenderNodeAt(double x, double y) => AddRenderNodeCore((x, y));
+
+    private void AddRenderNodeCore((double X, double Y)? position)
+    {
+        var target = position is { } drop ? FindRouteAt(drop.X, drop.Y) : null;
+        target ??= SelectedNode is { Stage: NodeStage.Render or NodeStage.Deliver } selected ? FindRoute(selected.RouteId) : null;
+        target ??= Routes.Count(route => route.Render is null) == 1 ? Routes.Single(route => route.Render is null) : null;
+        if (target?.Render is not null)
+        {
+            _errorMessage = "This route already has a render. Select it to change its module, or deselect the route and add a separate render.";
+            return;
+        }
+
+        AddRenderToRoute(target?.RouteId, position);
+    }
+
+    private void AddRenderToRoute(string? routeId, (double X, double Y)? position = null)
+    {
+        var route = routeId is null ? null : FindRoute(routeId);
+        if (routeId is not null && route is null)
+        {
+            _errorMessage = "The delivery route no longer exists. Select a current route and try again.";
+            return;
+        }
+        if (route?.Render is not null)
+        {
+            _errorMessage = "This route already has a render. Select it to configure it.";
+            return;
+        }
+
+        var module = ModulesForStage(NodeStage.Render).FirstOrDefault();
+        var render = CreateNode(NodeStage.Render, module?.Id ?? string.Empty,
+            order: route?.Order ?? Routes.Count, routeId: routeId ?? Guid.NewGuid().ToString("n"));
+        ApplyModuleDefaults(render, module);
+        if (position is { } drop)
+        {
+            render.X = drop.X;
+            render.Y = drop.Y;
+        }
+        else if (route is not null)
+        {
+            render.X = Math.Max(0, route.Delivers.Min(node => node.X) - ColumnSpacing);
+            render.Y = route.Delivers.Average(node => node.Y);
+        }
+        else
+        {
+            AutoLayout();
+        }
+
+        _selectedNodeId = render.Id;
+        _errorMessage = null;
+        _statusMessage = route is null
+            ? "Added a render in a new route. Add a deliver node before saving."
+            : "Restored this route's render. Existing deliver nodes and their settings were kept.";
+    }
+
     private void AddDeliveryRoute()
     {
         var routeId = Guid.NewGuid().ToString("n");
@@ -638,6 +731,24 @@ public partial class Designer
         var maxX = nodes.Max(static node => node.X) + NodeWidth;
         var maxY = nodes.Max(static node => node.Y) + NodeHeight;
         return (minX, minY, maxX - minX, maxY - minY);
+    }
+
+    private void RemoveCanvasNode(FlowNode node)
+    {
+        if (node.Stage == NodeStage.Fetch)
+        {
+            RemoveFetchNode(node);
+        }
+        else if (node.Stage == NodeStage.Parse)
+        {
+            RemoveParseNode(node, includeExclusiveFetches: false);
+        }
+        else
+        {
+            var heading = NodeHeading(node);
+            RemoveNode(node);
+            _statusMessage = $"Removed {heading}. Connected nodes were kept; review the flow before saving.";
+        }
     }
 
     private void RemoveNode(FlowNode node)
@@ -804,11 +915,17 @@ public partial class Designer
         }
     }
 
-    /// <summary>Bounding box of one source lane: a parse node plus every fetch node it currently parses.</summary>
-    private (double X, double Y, double Width, double Height) LaneBounds(FlowNode parse)
+    private List<FlowNode> LaneMembers(FlowNode parse)
     {
         var members = FetchesForParse(parse);
         members.Add(parse);
+        return members;
+    }
+
+    /// <summary>Bounding box of one source lane: a parse node plus every fetch node it currently parses.</summary>
+    private (double X, double Y, double Width, double Height) LaneBounds(FlowNode parse)
+    {
+        var members = LaneMembers(parse);
         var minX = Math.Max(0, members.Min(static node => node.X) - LanePaddingX);
         var minY = Math.Max(0, members.Min(static node => node.Y) - LaneHeaderHeight);
         var maxX = members.Max(static node => node.X) + NodeWidth + LanePaddingX;
@@ -903,7 +1020,10 @@ public partial class Designer
         return edges;
     }
 
-    /// <summary>Counts inbound edges per node id (both regular flow edges and dependency edges), used to flag join/merge points in the canvas UI.</summary>
+    private string IncomingBatchLabel(FlowNode node, int count)
+        => IsJoinNode(node) ? "JOIN BY KEY" : $"BATCH x{count}";
+
+    /// <summary>Counts inbound edges per node id (both regular flow edges and dependency edges).</summary>
     private Dictionary<string, int> IncomingEdgeCounts()
         => BuildEdges()
             .GroupBy(edge => edge.To.Id, StringComparer.Ordinal)

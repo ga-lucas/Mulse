@@ -11,4 +11,5 @@ public sealed record ModuleViewModel(
     IReadOnlyList<string> Capabilities,
     string PackageId = "",
     string PackageSourceKind = "",
-    string AssemblyPath = "");
+    string AssemblyPath = "",
+    bool SupportsPushTrigger = false);

@@ -65,6 +65,11 @@ public sealed class WorkspaceApiTests
                 var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
                 using var http = new HttpClient { BaseAddress = new Uri(address) };
                 var client = new MulseApiClient(http);
+                var modules = await client.GetModulesAsync(CancellationToken.None);
+                Assert.True(modules.Single(module => module.Id == "file-system-watcher-fetch").SupportsPushTrigger);
+                Assert.True(modules.Single(module => module.Id == "http-inbound-fetch").SupportsPushTrigger);
+                Assert.False(modules.Single(module => module.Id == "sftp-fetch").SupportsPushTrigger);
+                Assert.False(modules.Single(module => module.Id == "file-system-fetch").SupportsPushTrigger);
                 const string password = "long-api-backup-password";
                 var backup = await client.BackupWorkspaceAsync(password, CancellationToken.None);
                 Assert.EndsWith(".mulsebackup", backup.FileName);

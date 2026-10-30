@@ -43,7 +43,7 @@ public sealed class SqlServerLookupFetchModule : IFetchModule
         "sql-server-lookup-fetch",
         "SQL Server lookup fetch",
         ModuleKind.Fetch,
-        "Fetches SQL Server reference rows using IDs extracted from an upstream parse node's parsed payloads, emitting one JSON array payload of rows for a downstream join.",
+        "Fetches SQL Server reference rows using IDs extracted from an upstream parse node's parsed payloads, emitting one JSON array payload of rows. Connect JSON parse to validate/normalize that JSON and name its source for joins; no Excel or SQL-specific parser is needed.",
         SettingDescriptors,
         Recommendation);
 

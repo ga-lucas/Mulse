@@ -14,4 +14,5 @@ public sealed record ModuleResponse(
     IReadOnlyList<ModuleSettingResponse> Settings,
     IReadOnlyList<string> SupportedFormats,
     IReadOnlyList<string> Protocols,
-    IReadOnlyList<string> Capabilities);
+    IReadOnlyList<string> Capabilities,
+    bool SupportsPushTrigger = false);

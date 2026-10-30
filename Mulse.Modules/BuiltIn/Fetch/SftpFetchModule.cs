@@ -18,9 +18,9 @@ public sealed class SftpFetchModule : IFetchOutcomeModule
         new("port", "Port", "The SFTP port.", true, ModuleSettingInputKind.Number, "22"),
         new("username", "Username", "The SFTP account user name.", true),
         new("password", "Password", "The SFTP account password.", true, ModuleSettingInputKind.Password),
-        new("remotePath", "Remote path", "The remote directory to poll for files.", true),
+        new("remotePath", "Remote path", "The remote directory scanned once when this fetch executes. Configure repeated scans with the flow's Interval trigger.", true),
         new("searchPattern", "Search pattern", "A wildcard pattern used to select remote files.", false, ModuleSettingInputKind.Text, "*.*"),
-        new("maxFiles", "Max files per poll", "Limits how many files are read during one execution.", false, ModuleSettingInputKind.Number, "50"),
+        new("maxFiles", "Max files per execution", "Limits how many files are read during one flow execution; this is not a polling interval.", false, ModuleSettingInputKind.Number, "50"),
         new("deleteAfterRead", "Delete after successful processing", "Deletes remote files only after all processing and deliveries succeed. Kept for compatibility with the original setting name.", false, ModuleSettingInputKind.Boolean, "false"),
         new("failureRemotePath", "Failure directory", "Optional existing remote directory to quarantine files after permanent processing/delivery failure. Blank keeps originals. Some destinations may already have received data.", false)
     ];
@@ -29,11 +29,11 @@ public sealed class SftpFetchModule : IFetchOutcomeModule
         "sftp-fetch",
         "SFTP fetch",
         ModuleKind.Fetch,
-        "Polls an SFTP location for raw files and emits them into the flow for downstream parsing.",
+        "Scans an SFTP directory once per flow execution and reads matching files. Use the flow's Interval trigger for repeated polling or OnDemand for manual runs; this module does not initiate Push runs.",
         SettingDescriptors,
         Recommendation);
 
-    /// <summary><paramref name="input"/> is unused: this is a root source that polls an SFTP location only.</summary>
+    /// <summary><paramref name="input"/> is unused: this root source scans an SFTP location once per execution.</summary>
     public async Task<IntegrationBatch> FetchAsync(
         FlowExecutionContext context,
         IntegrationBatch input,

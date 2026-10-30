@@ -218,6 +218,16 @@
     stroke-dasharray: 4 4;
 }
 
+.source-lane-handle {
+    fill: transparent;
+    pointer-events: all;
+    cursor: grab;
+}
+
+.source-lane.dragging .source-lane-handle {
+    cursor: grabbing;
+}
+
 .source-lane-label {
     fill: var(--accent-soft-ink);
     font-size: 0.78rem;
@@ -254,6 +264,33 @@
 
 .flow-node text {
     pointer-events: none;
+}
+
+.node-remove {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: var(--surface-panel);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 1.25rem;
+    line-height: 1;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.node-remove:hover {
+    background: var(--error-bg);
+    color: var(--error-text);
+}
+
+.node-remove:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
 }
 
 .node-stage {

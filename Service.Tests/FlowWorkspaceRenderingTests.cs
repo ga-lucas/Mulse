@@ -184,6 +184,157 @@ public sealed class FlowWorkspaceRenderingTests
         Assert.Contains("fixed after creation", html);
         Assert.Contains("--panel-x:calc(100% - var(--panel-width, 360px) - 1rem)", html);
         Assert.Contains("Create flow", html);
+        Assert.Contains("80%", html);
+        Assert.Contains("data-node-type=\"render\"", html);
+        Assert.Contains("data-node-type=\"parse\"", html);
+        Assert.Contains("Run on startup (Interval only)", html);
+    }
+
+    [Fact]
+    public async Task Designer_RendersNativeRemoveButtonOnEveryNode()
+    {
+        var html = await RenderAsync<Designer>(flowId: "remove-test");
+        Assert.Equal(5, html.Split("class=\"node-remove\"").Length - 1);
+        Assert.Equal(5, html.Split("<foreignObject").Length - 1);
+        Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(html, "<button[^>]*type=\"button\"[^>]*class=\"node-remove\"[^>]*aria-label=\"Remove ").Count);
+        Assert.Contains("Remove only this node", html);
+        Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(WebUtility.HtmlDecode(html), "<span[^>]*aria-hidden=\"true\"[^>]*>\\s*\\u00d7\\s*</span>").Count);
+        Assert.Contains("Dashed arrows supply lookup inputs", html);
+        Assert.Contains("not matching rows", html);
+        Assert.Contains("Batch flow:", html);
+        Assert.Contains("data-lane-members=", html);
+        Assert.Contains("class=\"source-lane-handle\"", html);
+        Assert.Contains("Drag this header", html);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Designer_DistinguishesLookupDependenciesBatchMergesAndRealJoins(bool join)
+    {
+        var html = WebUtility.HtmlDecode(await RenderAsync<Designer>(flowId: join ? "join-test" : "lookup-test"));
+        Assert.Contains("data-edge-kind=\"dependency\"", html);
+        Assert.Contains("Lookup input:", html);
+        Assert.Contains("This does not join rows.", html);
+        Assert.Contains("USES \u00d72", html);
+        Assert.DoesNotContain("SPLITS", html);
+        if (join)
+        {
+            Assert.Contains("JOIN BY KEY", html);
+            Assert.Contains("Join steps", html);
+            Assert.Contains("Configure join", html);
+            Assert.Contains("Remove join", html);
+            Assert.DoesNotContain("BATCH x2", html);
+        }
+        else
+        {
+            Assert.Contains("BATCH x2", html);
+            Assert.DoesNotContain("JOIN BY KEY", html);
+        }
+    }
+
+    [Fact]
+    public async Task Designer_GraphEditingAndTriggerGuidanceSurviveRenders()
+    {
+        using var httpClient = new HttpClient(new WorkspaceHandler(false, false)) { BaseAddress = new Uri("http://localhost/") };
+        await using var services = new ServiceCollection().AddLogging()
+            .AddSingleton<NavigationManager>(new TestNavigationManager())
+            .AddSingleton<Microsoft.JSInterop.IJSRuntime>(new StaticRenderJsRuntime())
+            .AddSingleton<IMulseApiClient>(new MulseApiClient(httpClient)).BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>());
+        await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            Designer? designer = null;
+            var rendered = await renderer.RenderComponentAsync<DesignerHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(DesignerHost.Capture)] = (Action<Designer>)(value => designer = value)
+            }));
+            Assert.NotNull(designer);
+            var nodes = (System.Collections.IList)typeof(Designer).GetField("_nodes", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(designer)!;
+            static string Value(object node, string property) => node.GetType().GetProperty(property)!.GetValue(node)!.ToString()!;
+            object Find(string stage) => nodes.Cast<object>().First(node => Value(node, "Stage") == stage);
+            void Invoke(string method, params object?[] arguments) => typeof(Designer).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(designer, arguments);
+            async Task Refresh() => await designer.OnViewChanged(0, 0, 1600, 800);
+
+            var fetchId = Value(Find("Fetch"), "Id");
+            var parseId = Value(Find("Parse"), "Id");
+            await designer.OnNodesMoved([new(fetchId, 120, 160), new(parseId, 390, 160)]);
+            await Refresh();
+            Assert.Contains("transform=\"translate(120, 160)\"", rendered.ToHtmlString());
+            Assert.Contains("transform=\"translate(390, 160)\"", rendered.ToHtmlString());
+
+            var join = Find("Augment");
+            var render = Find("Render");
+            var deliver = Find("Deliver");
+            Invoke("SelectNode", join);
+            await Refresh();
+            Assert.Contains("Join inputs", rendered.ToHtmlString());
+            Assert.Contains("Remove join", rendered.ToHtmlString());
+            Invoke("RemoveCanvasNode", join);
+            await Refresh();
+            Assert.DoesNotContain("JOIN BY KEY", rendered.ToHtmlString());
+            Assert.Contains(render, nodes.Cast<object>());
+            Assert.Contains(deliver, nodes.Cast<object>());
+
+            Invoke("RemoveCanvasNode", render);
+            Invoke("SelectNode", deliver);
+            await Refresh();
+            Assert.Contains("Add render to this route", rendered.ToHtmlString());
+            Invoke("AddRenderToRoute", Value(deliver, "RouteId"), null);
+            await Refresh();
+            Assert.DoesNotContain("Add render to this route", rendered.ToHtmlString());
+            Assert.Equal(Value(deliver, "RouteId"), Value(Find("Render"), "RouteId"));
+            Assert.Contains(deliver, nodes.Cast<object>());
+            Assert.Contains("transform=\"translate(120, 160)\"", rendered.ToHtmlString());
+
+            var fetch = Find("Fetch");
+            var removedParser = Find("Parse");
+            Invoke("RemoveCanvasNode", removedParser);
+            Invoke("SelectNode", fetch);
+            await Refresh();
+            Assert.Contains("Add parser for this fetch", rendered.ToHtmlString());
+            var count = nodes.Count;
+            Invoke("AddParseForFetch", fetch, null);
+            await Refresh();
+            Assert.Equal(count + 1, nodes.Count);
+            Assert.DoesNotContain(removedParser, nodes.Cast<object>());
+            Assert.Contains("SQL lookup emits JSON, so use JSON parse", rendered.ToHtmlString());
+            Assert.Contains("keeping the fetch", rendered.ToHtmlString());
+
+            void SetField(string name, object value) => typeof(Designer).GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(designer, value);
+            fetch.GetType().GetProperty("ModuleId")!.SetValue(fetch, "sftp-fetch");
+            SetField("_triggerMode", "Push");
+            Invoke("SelectNode", fetch);
+            await Refresh();
+            Assert.Contains("Push requires a loaded push-capable fetch module", rendered.ToHtmlString());
+            Assert.Contains("SFTP has no internal timer", rendered.ToHtmlString());
+            SetField("_modules", new ModuleViewModel[]
+            {
+                new("file-system-watcher-fetch", "Watcher", "Fetch", "File events", [], [], [], [], SupportsPushTrigger: true)
+            });
+            fetch.GetType().GetProperty("ModuleId")!.SetValue(fetch, "file-system-watcher-fetch");
+            await Refresh();
+            Assert.DoesNotContain("Push requires a loaded push-capable fetch module", rendered.ToHtmlString());
+            Assert.Contains("no manual bootstrap run is needed", rendered.ToHtmlString());
+            SetField("_triggerMode", "Interval");
+            await Refresh();
+            Assert.Contains("File system watcher events will not start this flow", rendered.ToHtmlString());
+            Assert.Contains("The flow owns the schedule", rendered.ToHtmlString());
+        });
+    }
+
+    private sealed class DesignerHost : ComponentBase
+    {
+        [Parameter]
+        public Action<Designer>? Capture { get; set; }
+
+        protected override void BuildRenderTree(Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder builder)
+        {
+            builder.OpenComponent<Designer>(0);
+            builder.AddAttribute(1, nameof(Designer.FlowId), "join-test");
+            builder.AddComponentReferenceCapture(2, value => Capture?.Invoke((Designer)value));
+            builder.CloseComponent();
+        }
     }
 
     [Fact]
@@ -227,7 +378,7 @@ public sealed class FlowWorkspaceRenderingTests
         }
     }
 
-    private static async Task<string> RenderAsync<TComponent>(bool missingModules = false, bool packages = false) where TComponent : IComponent
+    private static async Task<string> RenderAsync<TComponent>(bool missingModules = false, bool packages = false, string? flowId = null) where TComponent : IComponent
     {
         using var httpClient = new HttpClient(new WorkspaceHandler(missingModules, packages)) { BaseAddress = new Uri("http://localhost") };
         await using var services = new ServiceCollection().AddLogging()
@@ -237,7 +388,9 @@ public sealed class FlowWorkspaceRenderingTests
         await using var renderer = new HtmlRenderer(services, services.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>());
         return await renderer.Dispatcher.InvokeAsync(async () =>
         {
-            var component = await renderer.RenderComponentAsync<TComponent>(ParameterView.Empty);
+            var parameters = flowId is null ? ParameterView.Empty
+                : ParameterView.FromDictionary(new Dictionary<string, object?> { [nameof(Designer.FlowId)] = flowId });
+            var component = await renderer.RenderComponentAsync<TComponent>(parameters);
             return component.ToHtmlString();
         });
     }
@@ -258,10 +411,26 @@ public sealed class FlowWorkspaceRenderingTests
 
     private sealed class WorkspaceHandler(bool missingModules, bool packages) : HttpMessageHandler
     {
+        private static FlowViewModel LookupFlow(bool join) => new(
+            join ? "join-test" : "lookup-test", false, "OnDemand", null, false,
+            ["input", "lookup"], ["primary", "reference"], ["file-fetch", "sql-server-lookup-fetch"], ["excel-parse", "json-parse"], [], ["json-render"], ["file-system-deliver"],
+            [new("input", new("file-fetch", new Dictionary<string, string>()), []), new("lookup", new("sql-server-lookup-fetch", new Dictionary<string, string>()), ["primary"])],
+            [new("primary", new("excel-parse", new Dictionary<string, string>()), ["input"]), new("reference", new("json-parse", new Dictionary<string, string>()), ["lookup"])],
+            join ? [new("multi-source-join-map-augment", new Dictionary<string, string> { ["leftSourceId"] = "primary", ["rightSourceId"] = "reference" })] : [],
+            [new(new("json-render", new Dictionary<string, string>()), [new(new("file-system-deliver", new Dictionary<string, string>()))])]);
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             object payload = request.RequestUri!.AbsolutePath switch
             {
+                "/api/flows/lookup-test" => LookupFlow(false),
+                "/api/flows/join-test" => LookupFlow(true),
+                "/api/flows/remove-test" => new FlowViewModel(
+                    "remove-test", false, "OnDemand", null, false, ["input"], ["parsed"], ["file-fetch"], ["json-parse"], ["augment"], ["render"], ["deliver"],
+                    [new("input", new("file-fetch", new Dictionary<string, string>()), [])],
+                    [new("parsed", new("json-parse", new Dictionary<string, string>()), ["input"])],
+                    [new("augment", new Dictionary<string, string>())],
+                    [new(new("render", new Dictionary<string, string>()), [new(new("deliver", new Dictionary<string, string>()))])]),
                 "/api/flows" => Enumerable.Range(1, 12).Select(index => new FlowViewModel(
                     $"flow-{index:00}", false, "OnDemand", null, false, ["input"], ["parsed"], ["file-fetch"], ["json-parse"], [], [], [], [], [], [], [], Category: "Sales", MissingModules: missingModules ? ["Fetch: missing-plugin"] : [], Name: $"Customer orders {index}")).ToArray(),
                 "/api/modules" => new[]
