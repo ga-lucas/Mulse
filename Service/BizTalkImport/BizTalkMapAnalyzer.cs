@@ -25,8 +25,8 @@ namespace Service.BizTalkImport;
 /// Any <c>LinkFrom</c>/<c>LinkTo</c>/<c>Query</c> value that doesn't start with a real XPath segment references
 /// a BizTalk functoid (transformation logic) by ID instead of a field - those can't be safely guessed, so
 /// they're counted as untranslated and called out in a TODO comment rather than silently dropped without a
-/// trace. This never blocks or fails import: any parse failure for a given map silently degrades to a null
-/// result, and the caller falls back to its pre-existing xslt-render placeholder behavior.
+/// trace. Read/parse/limit failures return null; the migration report then records an explicit blocking
+/// diagnostic. This legacy scaffold is separate from the schema-checked native map proposal converter.
 /// </remarks>
 internal static class BizTalkMapAnalyzer
 {
@@ -35,8 +35,8 @@ internal static class BizTalkMapAnalyzer
     private static readonly Regex SegmentPattern = new(@"^@?\*\[local-name\(\)='(?<name>[^']+)'\]$", RegexOptions.Compiled);
 
     /// <summary>
-    /// Analyzes a single .btm map file. Never throws: returns null if the file can't be read/parsed, or if it
-    /// has no translatable links/constants at all (a purely functoid-driven map, for example).
+    /// Analyzes a bounded .btm file without executing scripts. Read/parse/limit failures return null;
+    /// recognized maps retain functoid/script evidence even when no starter XSLT can be generated.
     /// </summary>
     public static BizTalkMapAnalysisResponse? Analyze(string mapFilePath, string mapName)
     {
@@ -47,7 +47,8 @@ internal static class BizTalkMapAnalyzer
                 return null;
             }
 
-            var document = XDocument.Load(mapFilePath, LoadOptions.None);
+            var document = Mulse.Modules.Mapping.XmlMappingSchemas.ReadXmlFile(mapFilePath);
+            var scripts = BizTalkMapScriptAnalyzer.Analyze(document);
             var root = document.Root;
             if (root is null || !string.Equals(root.Name.LocalName, "mapsource", StringComparison.Ordinal))
             {
@@ -117,7 +118,8 @@ internal static class BizTalkMapAnalyzer
                 // Nothing translatable (e.g. a purely functoid-driven map) - an empty stylesheet wouldn't help.
                 return new BizTalkMapAnalysisResponse(mapName, mapFilePath, sourceSchemaRef, targetSchemaRef, 0, 0, functoidCount, null, null, null)
                 {
-                    FunctoidFidCounts = functoidFidCounts
+                    FunctoidFidCounts = functoidFidCounts,
+                    ScriptInventory = scripts
                 };
             }
 
@@ -127,10 +129,11 @@ internal static class BizTalkMapAnalyzer
 
             return new BizTalkMapAnalysisResponse(mapName, mapFilePath, sourceSchemaRef, targetSchemaRef, directCount, constantCount, functoidCount, fileName, moduleId, xslt)
             {
-                FunctoidFidCounts = functoidFidCounts
+                FunctoidFidCounts = functoidFidCounts,
+                ScriptInventory = scripts
             };
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Xml.XmlException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Xml.XmlException or ArgumentException)
         {
             return null;
         }

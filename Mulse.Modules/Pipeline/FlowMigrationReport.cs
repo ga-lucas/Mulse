@@ -30,13 +30,30 @@ public sealed record FlowMigrationReport(
     IReadOnlyList<string> Warnings)
 {
     public int Version { get; init; } = 1;
+
+    public MigrationMapInventory? MapInventory { get; init; }
 }
 
 public sealed record MigrationArtifactReport(
     string Kind,
     string SourcePath,
     MigrationTranslationStatus Status,
-    IReadOnlyList<MigrationDiagnostic> Diagnostics);
+    IReadOnlyList<MigrationDiagnostic> Diagnostics)
+{
+    public OrchestrationMigrationInventory? Orchestration { get; init; }
+}
+
+public sealed record OrchestrationMigrationInventory(
+    IReadOnlyDictionary<string, int> ShapeCounts,
+    IReadOnlyList<OrchestrationShapeReport> Shapes);
+
+public sealed record OrchestrationShapeReport(
+    int Id,
+    int? ParentId,
+    int SourceLine,
+    string ShapeType,
+    string Name,
+    IReadOnlyDictionary<string, string> References);
 
 public sealed record MigrationDiagnostic(
     string Code,

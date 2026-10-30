@@ -35,6 +35,18 @@ public sealed class BizTalkMigrationReportTests : IDisposable
         </mapsource>
         """;
 
+    private const string InventoryOdx = """
+        // #if __DESIGNER_DATA
+        <?xml version="1.0"?>
+        <om:MetaModel xmlns:om="http://schemas.microsoft.com/BizTalk/2003/DesignerData">
+          <om:Element Type="Send">
+            <om:Property Name="Name" Value="&lt;Unsafe&gt;" />
+            <om:Property Name="PortName" Value="OutputPort" />
+          </om:Element>
+        </om:MetaModel>
+        // #endif
+        """;
+
     [Fact]
     public async Task DirectMap_IsReviewRequiredAndExplicitlyNotWiredOrVerified()
     {
@@ -112,6 +124,34 @@ public sealed class BizTalkMigrationReportTests : IDisposable
         Assert.Equal(MigrationTranslationStatus.ReviewRequired, map.Status);
         Assert.Contains(map.Diagnostics, diagnostic => diagnostic.Code == "BT-MAP-NOT-WIRED");
         Assert.DoesNotContain(map.Diagnostics, diagnostic => diagnostic.Code == "BT-MAP-NOT-ANALYZED");
+        var indexedMap = Assert.Single(report.MapInventory!.Candidates);
+        Assert.Equal("Shared", indexedMap.Name);
+        Assert.Equal(Path.Combine(library, "Library.btproj"), indexedMap.SourceProjectPath);
+        Assert.Equal(Path.Combine(library, "Shared.btm"), indexedMap.SourcePath);
+        Assert.Equal(MigrationTranslationStatus.ReviewRequired, indexedMap.Status);
+        Assert.Contains("not wired or verified", indexedMap.Limitation, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SeparateUnreferencedMapProject_IsListedAsAWorkspaceCandidateNotAnOrchestrationArtifact()
+    {
+        await AnalyzeProject(("XLang", "Process.odx", InventoryOdx));
+        var mapDirectory = Path.Combine(_directory, "SeparateMaps");
+        Directory.CreateDirectory(mapDirectory);
+        File.WriteAllText(Path.Combine(mapDirectory, "Shared.btm"), DirectMap);
+        new XDocument(new XElement("Project", new XElement("ItemGroup", new XElement("Map", new XAttribute("Include", "Shared.btm")))))
+            .Save(Path.Combine(mapDirectory, "Maps.btproj"));
+
+        var result = await new BizTalkImportService().AnalyzeAsync(
+            new AnalyzeBizTalkSolutionRequest { SourcePath = _directory }, CancellationToken.None);
+        var importProjectPath = Path.Combine(_directory, "Import.btproj");
+        var report = result.FlowCandidates.Single(flow => flow.SourceProjectPath == importProjectPath).DraftFlow.Migration!;
+        var candidate = Assert.Single(report.MapInventory!.Candidates);
+        Assert.Equal(Path.Combine(mapDirectory, "Maps.btproj"), candidate.SourceProjectPath);
+        Assert.Equal(Path.Combine(mapDirectory, "Shared.btm"), candidate.SourcePath);
+        Assert.DoesNotContain(report.Artifacts, artifact => artifact.SourcePath == candidate.SourcePath);
+        Assert.Equal(MigrationTranslationStatus.ReviewRequired, candidate.Status);
+        Assert.Contains("not wired or verified", candidate.Limitation, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -161,7 +201,10 @@ public sealed class BizTalkMigrationReportTests : IDisposable
     [Fact]
     public async Task Report_PersistsAcrossDiskReloadApiRoundTripAndLegacyUpdateAndDuplicate()
     {
-        var draft = (await AnalyzeProject(("Map", "Map.btm", DirectMap))).DraftFlow;
+        var draft = (await AnalyzeProject(("Map", "Map.btm", DirectMap), ("XLang", "Process.odx", InventoryOdx))).DraftFlow;
+        Assert.NotNull(draft.Migration!.Artifacts.Single(artifact => artifact.Kind == "Orchestration").Orchestration);
+        Assert.Equal(1, draft.Migration.MapInventory!.TotalDiscovered);
+        Assert.Equal(MigrationTranslationStatus.ReviewRequired, Assert.Single(draft.Migration.MapInventory.Candidates).Status);
         var imported = FlowMappings.MapPipeline(draft);
         var store = Store();
         await store.UpsertFlowAsync(imported, CancellationToken.None);
@@ -219,7 +262,7 @@ public sealed class BizTalkMigrationReportTests : IDisposable
     [Fact]
     public async Task Ui_CreateAndUpdateAndReopen_RetainReportAndWarnThatItIsNotApproval()
     {
-        var candidate = await AnalyzeProject(("Map", "Direct.btm", DirectMap));
+        var candidate = await AnalyzeProject(("Map", "Direct.btm", DirectMap), ("XLang", "Process.odx", InventoryOdx));
         var view = JsonSerializer.Deserialize<BizTalkFlowCandidateViewModel>(JsonSerializer.Serialize(candidate, JsonOptions), JsonOptions)!;
         var handler = new SavingHandler();
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost/") };
@@ -227,6 +270,11 @@ public sealed class BizTalkMigrationReportTests : IDisposable
         Property("ApiClient").SetValue(designer, new MulseApiClient(http));
         Property("Navigation").SetValue(designer, new TestNavigation());
         Invoke(designer, "ApplyBizTalkCandidate", view);
+        Field("_enabled").SetValue(designer, true);
+        await (Task)Invoke(designer, "SaveAsync")!;
+        Assert.Contains("verified translation support", Assert.IsType<string>(Field("_errorMessage").GetValue(designer)));
+        Assert.Equal(0, handler.Saves);
+        Field("_enabled").SetValue(designer, false);
         await (Task)Invoke(designer, "SaveAsync")!;
         Assert.Null(Field("_errorMessage").GetValue(designer));
         Assert.NotNull(handler.Saved);
@@ -253,10 +301,20 @@ public sealed class BizTalkMigrationReportTests : IDisposable
         Assert.Contains("Migration report - BizTalk", html);
         Assert.Contains("blocking diagnostic(s)", html);
         Assert.Contains("Import-time snapshot, not execution approval", html);
-        Assert.Contains("Enable/run enforcement is not implemented yet", html);
+        Assert.Contains("execution blocked", html);
+        Assert.Contains("verified translation support", html);
         Assert.Contains("BT-MAP-NOT-WIRED", html);
         Assert.Contains("Next action:", html);
         Assert.Contains(candidate.SourceProjectPath, html);
+        Assert.Contains("Orchestration source inventory", html);
+        Assert.Contains("not an executable sequence", html);
+        Assert.Contains("Source line", html);
+        Assert.Contains("OutputPort", html);
+        Assert.Contains("Maps found in analyzed source", html);
+        Assert.Contains("map use by this orchestration is unverified", html);
+        Assert.Contains("Direct.btm", html);
+        Assert.Contains("&lt;Unsafe&gt;", html);
+        Assert.DoesNotContain("<Unsafe>", html);
     }
 
     [Fact]

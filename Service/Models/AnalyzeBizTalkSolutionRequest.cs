@@ -2,10 +2,10 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Service.Models;
 
-/// <summary>Payload for analyzing a BizTalk solution, project, or directory for migration.</summary>
+/// <summary>Payload for analyzing a BizTalk solution, project, orchestration, or directory for migration.</summary>
 public sealed record AnalyzeBizTalkSolutionRequest
 {
-    /// <summary>The full path to a BizTalk solution, BizTalk project, custom project, or directory on disk.</summary>
+    /// <summary>The full path to a solution, project, directory, or ODX file explicitly included by one sibling BizTalk project. ODX selection analyzes the owning project, including its sibling orchestrations.</summary>
     [Required]
     public required string SourcePath { get; init; }
 

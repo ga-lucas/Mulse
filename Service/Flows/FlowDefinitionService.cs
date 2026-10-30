@@ -36,8 +36,10 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
         }
 
         var existing = GetById(flowId);
-        if (pipeline.Migration is null && existing.Migration is not null)
+        if (existing.Migration is not null)
         {
+            if (pipeline.Migration is not null && JsonSerializer.Serialize(pipeline.Migration) != JsonSerializer.Serialize(existing.Migration))
+                throw new InvalidOperationException($"Flow '{flowId}' migration provenance cannot be replaced through a flow update. Preserve the saved report or omit it; editing a report cannot approve execution.");
             pipeline = FlowMappings.CopyPipeline(pipeline, pipeline.Id, pipeline.Enabled, pipeline.Category, existing.Migration);
         }
         ValidatePipeline(pipeline, allowExisting: true);
@@ -87,6 +89,9 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
         {
             throw new ArgumentException($"Flow '{pipeline.Id}' must define at least one delivery route.", nameof(pipeline));
         }
+
+        if (pipeline.Enabled)
+            FlowMigrationReadiness.EnsureReady(pipeline);
 
         var available = moduleCatalog.GetAll();
         var availableModules = available.Select(static entry => entry.Descriptor).ToArray();

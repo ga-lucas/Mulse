@@ -5,13 +5,59 @@ namespace Service.BizTalkImport;
 
 public sealed partial class BizTalkImportService
 {
+    private const int MaximumReportedWorkspaceMaps = 512;
+
+    private static MigrationMapInventory CreateMigrationMapInventory(IReadOnlyList<BizTalkProjectAnalysis> projects)
+    {
+        var schemas = BizTalkSchemaSourceCatalog.Read(projects.Select(project => project.Response.ProjectPath));
+        var maps = projects.SelectMany(project => project.Response.Artifacts
+                .Where(static artifact => string.Equals(artifact.Kind, "Map", StringComparison.OrdinalIgnoreCase))
+                .Select(artifact =>
+                {
+                    var analysis = project.Response.MapAnalyses.FirstOrDefault(map => string.Equals(map.MapFilePath, artifact.FullPath, StringComparison.OrdinalIgnoreCase));
+                    var hasUnsupportedLogic = analysis is null || analysis.GeneratedXsltSourceCode is null
+                        || analysis.FunctoidInvolvedLinkCount > 0 || analysis.FunctoidFidCounts.Count > 0 || analysis.ScriptInventory?.TotalScripts > 0;
+                    var limitation = analysis is null
+                        ? "The map is listed by its project but could not be analyzed."
+                        : hasUnsupportedLogic
+                            ? "Only some direct links/constants may have a starter XSLT; functoid behavior is not translated."
+                            : "A direct-link/constant starter XSLT exists, but it is not wired or verified against expected output.";
+                    return new MigrationMapCandidate(
+                        analysis?.MapName ?? Path.GetFileNameWithoutExtension(artifact.Name),
+                        project.Response.ProjectPath,
+                        artifact.FullPath,
+                        analysis?.SourceSchemaReference ?? "(not analyzed)",
+                        analysis?.TargetSchemaReference ?? "(not analyzed)",
+                        hasUnsupportedLogic ? MigrationTranslationStatus.Unsupported : MigrationTranslationStatus.ReviewRequired,
+                        analysis?.DirectLinkCount ?? 0,
+                        analysis?.ConstantValueCount ?? 0,
+                        analysis?.FunctoidInvolvedLinkCount ?? 0,
+                        analysis?.FunctoidFidCounts ?? new Dictionary<int, int>(),
+                        limitation)
+                    {
+                        ScriptInventory = analysis?.ScriptInventory,
+                        SourceSchema = schemas.Resolve(analysis?.SourceSchemaReference ?? string.Empty),
+                        TargetSchema = schemas.Resolve(analysis?.TargetSchemaReference ?? string.Empty)
+                    };
+                }))
+            .OrderBy(static map => map.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static map => map.SourceProjectPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static map => map.SourcePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return new MigrationMapInventory(maps.Length, Math.Max(0, maps.Length - MaximumReportedWorkspaceMaps), maps.Take(MaximumReportedWorkspaceMaps).ToArray())
+        {
+            SchemaCatalogWarnings = schemas.Warnings.ToArray()
+        };
+    }
+
     private static FlowMigrationReport CreateMigrationReport(
         BizTalkProjectAnalysis project,
         OrchestrationSplit? split,
         IReadOnlyList<BizTalkCustomAssemblyResponse> assemblies,
         IReadOnlyList<BindingFileAnalysis> bindings,
         IReadOnlyList<BizTalkSettingRequirementResponse> requirements,
-        IReadOnlyList<string> warnings)
+        IReadOnlyList<string> warnings,
+        MigrationMapInventory mapInventory)
     {
         var response = project.Response;
         var artifacts = response.Artifacts.Concat(response.ReferencedArtifacts)
@@ -56,13 +102,17 @@ public sealed partial class BizTalkImportService
         var sourceOrchestration = split?.OrchestrationName
             ?? (ownOrchestrations.Length == 1 ? OrchestrationName(ownOrchestrations[0]) : null);
         return new FlowMigrationReport("BizTalk", response.ProjectPath, sourceOrchestration,
-            artifacts, diagnostics, warnings.ToArray());
+            artifacts, diagnostics, warnings.ToArray())
+        {
+            MapInventory = mapInventory
+        };
 
         MigrationArtifactReport ReportArtifact(BizTalkArtifactResponse artifact)
         {
             var path = artifact.FullPath;
             var status = MigrationTranslationStatus.ReviewRequired;
             var issues = new List<MigrationDiagnostic>();
+            OrchestrationMigrationInventory? inventory = null;
             if (!File.Exists(path))
             {
                 return new(artifact.Kind, path, MigrationTranslationStatus.Unsupported,
@@ -84,12 +134,18 @@ public sealed partial class BizTalkImportService
                     }
                     else
                     {
-                        if (map.FunctoidInvolvedLinkCount > 0 || map.FunctoidFidCounts.Count > 0 || map.GeneratedXsltSourceCode is null)
+                        if (map.FunctoidInvolvedLinkCount > 0 || map.FunctoidFidCounts.Count > 0 || map.GeneratedXsltSourceCode is null || map.ScriptInventory?.TotalScripts > 0)
                         {
                             status = MigrationTranslationStatus.Unsupported;
                             issues.Add(Diagnostic("BT-MAP-UNTRANSLATED", MigrationDiagnosticSeverity.Blocking, path,
                                 $"{map.FunctoidInvolvedLinkCount} unsupported/functoid links and {map.FunctoidFidCounts.Values.Sum()} functoid instances were detected; this map is not fully translated.",
                                 "Implement the remaining transformations, including script functoids, and validate every required mapping."));
+                        }
+                        if (map.ScriptInventory is { TotalScripts: > 0 } scriptInventory)
+                        {
+                            issues.Add(Diagnostic("BT-MAP-SCRIPTS-UNTRANSLATED", MigrationDiagnosticSeverity.Blocking, path,
+                                $"{scriptInventory.TotalScripts} script block(s) were inventoried, not translated or executed. Script bodies are not copied into the report.",
+                                "Review each original script and external dependency. Textual BizTalk API hints are not a portability or safety assessment; implement and test native equivalents."));
                         }
                         if (map.GeneratedXsltSourceCode is not null)
                         {
@@ -100,6 +156,9 @@ public sealed partial class BizTalkImportService
                     }
                     break;
                 case "Orchestration":
+                    var evidence = BizTalkOrchestrationInventoryAnalyzer.Analyze(path);
+                    inventory = evidence.Inventory;
+                    issues.AddRange(evidence.Diagnostics);
                     var analysis = response.OrchestrationDecisionAnalyses.FirstOrDefault(analysis =>
                         string.Equals(analysis.OrchestrationName, OrchestrationName(artifact), StringComparison.OrdinalIgnoreCase));
                     if (analysis?.ScaffoldedModuleSourceCode is not null)
@@ -133,7 +192,7 @@ public sealed partial class BizTalkImportService
                         "This artifact kind has no verified translator.", "Implement equivalent behavior and verify it before execution."));
                     break;
             }
-            return new(artifact.Kind, path, status, issues);
+            return new(artifact.Kind, path, status, issues) { Orchestration = inventory };
         }
     }
 

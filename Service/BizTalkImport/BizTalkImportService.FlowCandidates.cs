@@ -95,6 +95,7 @@ public sealed partial class BizTalkImportService
         BizTalkProjectAnalysis project,
         IReadOnlyList<BizTalkCustomAssemblyResponse> customAssemblies,
         IReadOnlyList<BindingFileAnalysis> bindingFiles,
+        MigrationMapInventory mapInventory,
         ISet<string> reservedFlowIds)
     {
         var orchestrationNames = OrchestrationArtifacts(project.Response.Artifacts)
@@ -103,7 +104,7 @@ public sealed partial class BizTalkImportService
             .ToArray();
         if (orchestrationNames.Length <= 1)
         {
-            return [CreateFlowCandidate(project, customAssemblies, bindingFiles, reservedFlowIds, split: null)];
+            return [CreateFlowCandidate(project, customAssemblies, bindingFiles, mapInventory, reservedFlowIds, split: null)];
         }
 
         return orchestrationNames.OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
@@ -111,6 +112,7 @@ public sealed partial class BizTalkImportService
                 project,
                 customAssemblies,
                 bindingFiles,
+                mapInventory,
                 reservedFlowIds,
                 new OrchestrationSplit(orchestrationName, orchestrationNames.Length)))
             .ToArray();
@@ -120,6 +122,7 @@ public sealed partial class BizTalkImportService
         BizTalkProjectAnalysis project,
         IReadOnlyList<BizTalkCustomAssemblyResponse> customAssemblies,
         IReadOnlyList<BindingFileAnalysis> bindingFiles,
+        MigrationMapInventory mapInventory,
         ISet<string> reservedFlowIds,
         OrchestrationSplit? split)
     {
@@ -254,7 +257,7 @@ public sealed partial class BizTalkImportService
         var scaffoldedModules = CollectScaffoldedModules(effectiveProject);
         if (scaffoldedModules.Count > 0)
         {
-            openQuestions.Add($"{scaffoldedModules.Count} starter artifact(s) were scaffolded for logic that could not be auto-translated ({string.Join(", ", scaffoldedModules.Select(static module => module.FileName))}). Each one compiles or parses as-is; who owns implementing and registering them before this flow is enabled?");
+            openQuestions.Add($"{scaffoldedModules.Count} starter artifact(s) were scaffolded for logic that could not be auto-translated ({string.Join(", ", scaffoldedModules.Select(static module => module.FileName))}). Orchestration stubs fail explicitly until implemented. Who owns implementing and testing these artifacts? Registration alone does not approve imported execution.");
         }
 
         var isLikelyTestArtifact = split is not null
@@ -276,7 +279,7 @@ public sealed partial class BizTalkImportService
             deliveries,
             requirements,
             draftWarnings,
-            CreateMigrationReport(project, split, relatedAssemblies, relatedBindings, requirements, draftWarnings));
+            CreateMigrationReport(project, split, relatedAssemblies, relatedBindings, requirements, draftWarnings, mapInventory));
 
         var summary = $"{effectiveProject.OrchestrationCount} orchestration(s), {effectiveProject.MapCount} map(s), {effectiveProject.SchemaCount} schema(s), {effectiveProject.PipelineCount} pipeline(s), {relatedBindings.Sum(static binding => binding.SendPorts.Count)} send port(s).";
         if (split is not null)

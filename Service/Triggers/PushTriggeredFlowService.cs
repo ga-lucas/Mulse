@@ -80,9 +80,12 @@ public sealed class PushTriggeredFlowService(
         await _registrationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var pushFlows = flowRuntime.GetConfiguredFlows()
+            var configuredPushFlows = flowRuntime.GetConfiguredFlows()
                 .Where(static flow => flow.Enabled && flow.Trigger.Mode == PipelineTriggerMode.Push)
                 .ToArray();
+            foreach (var blocked in configuredPushFlows.Where(static flow => flow.Migration is not null))
+                logger.LogWarning("Push registration blocked for flow {FlowId}: {Reason}", blocked.Id, FlowMigrationReadiness.BlockReason);
+            var pushFlows = configuredPushFlows.Where(static flow => flow.Migration is null).ToArray();
             var activeFlowIds = pushFlows.Select(static flow => flow.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 

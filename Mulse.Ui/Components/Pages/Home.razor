@@ -168,10 +168,10 @@
                                         <button class="secondary-button" @onclick='() => BeginAction(flow, "category")' disabled="@IsBusy">Categorize</button>
                                         <button class="secondary-button" @onclick='() => BeginAction(flow, "duplicate")' disabled="@IsBusy">Duplicate</button>
                                         <button class="secondary-button danger-button" @onclick='() => BeginAction(flow, "delete")' disabled="@IsBusy">Delete</button>
-                                        <button class="secondary-button" @onclick="() => ToggleFlowEnabledAsync(flow)" disabled="@(IsBusy || (!flow.Enabled && (HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 })))" title="@((!flow.Enabled && (HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 })) ? "Resolve missing modules and config/secret references before enabling this flow" : null)">
+                                        <button class="secondary-button" @onclick="() => ToggleFlowEnabledAsync(flow)" disabled="@(IsBusy || (!flow.Enabled && (flow.Migration is not null || HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 })))" title="@(flow.Migration is not null && !flow.Enabled ? FlowMigrationReportViewModel.ExecutionBlockReason : (!flow.Enabled && (HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 })) ? "Resolve missing modules and config/secret references before enabling this flow" : null)">
                                             @(flow.Enabled ? "Disable" : "Enable")
                                         </button>
-                                        <button class="run-button" @onclick="() => RunFlowAsync(flow.Id)" disabled="@(IsBusy || HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 })" title="@((HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 }) ? "Resolve missing modules and config/secret references before running this flow" : null)">
+                                        <button class="run-button" @onclick="() => RunFlowAsync(flow.Id)" disabled="@(IsBusy || flow.Migration is not null || HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 })" title="@(flow.Migration is not null ? FlowMigrationReportViewModel.ExecutionBlockReason : (HasUnresolvedConfig(flow.Id) || flow.MissingModules is { Count: > 0 }) ? "Resolve missing modules and config/secret references before running this flow" : null)">
                                             Run flow
                                         </button>
                                     </div>
@@ -184,6 +184,11 @@
                                             <a href="/module-packages">Load the required packages</a> or correct module references before enabling or running this flow.
                                         </ErrorContent>
                                     </StatusBanner>
+                                }
+                                @if (flow.Migration is { } migration)
+                                {
+                                    <p class="status-banner error compact">@FlowMigrationReportViewModel.ExecutionBlockReason</p>
+                                    <MigrationReport Report="migration" />
                                 }
                                 @{ var unresolvedCount = CountUnresolvedConfig(flow.Id); }
                                 @if (unresolvedCount > 0)

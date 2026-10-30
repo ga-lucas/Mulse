@@ -38,6 +38,21 @@ public sealed class FlowWorkspaceRenderingTests
     }
 
     [Fact]
+    public async Task ImportedFlows_ShowReportsAndDisableEnableRunControls()
+    {
+        var dashboard = await RenderAsync<Home>(migration: true);
+        Assert.Contains("verified translation support", dashboard);
+        Assert.Contains("execution blocked", dashboard);
+        Assert.Matches("<button[^>]*disabled[^>]*>\\s*Enable", dashboard);
+        Assert.Matches("<button[^>]*disabled[^>]*>\\s*Run flow", dashboard);
+        Assert.Contains("Configure", dashboard);
+        var designer = await RenderAsync<Designer>(flowId: "join-test", migration: true);
+        Assert.Contains("You can still edit and save a disabled draft", designer);
+        Assert.Contains("execution blocked", designer);
+        Assert.Matches("<input[^>]*type=\"checkbox\"[^>]*disabled[^>]*>\\s*<span[^>]*>Enabled</span>", designer);
+    }
+
+    [Fact]
     public async Task Modules_RendersOnlyCatalogWithLinkToPackages()
     {
         var html = await RenderAsync<Mulse.Ui.Components.Pages.Modules>();
@@ -380,9 +395,9 @@ public sealed class FlowWorkspaceRenderingTests
         }
     }
 
-    private static async Task<string> RenderAsync<TComponent>(bool missingModules = false, bool packages = false, string? flowId = null) where TComponent : IComponent
+    private static async Task<string> RenderAsync<TComponent>(bool missingModules = false, bool packages = false, string? flowId = null, bool migration = false) where TComponent : IComponent
     {
-        using var httpClient = new HttpClient(new WorkspaceHandler(missingModules, packages)) { BaseAddress = new Uri("http://localhost") };
+        using var httpClient = new HttpClient(new WorkspaceHandler(missingModules, packages, migration)) { BaseAddress = new Uri("http://localhost") };
         await using var services = new ServiceCollection().AddLogging()
             .AddSingleton<NavigationManager>(new TestNavigationManager())
             .AddSingleton<Microsoft.JSInterop.IJSRuntime>(new StaticRenderJsRuntime())
@@ -411,8 +426,10 @@ public sealed class FlowWorkspaceRenderingTests
             => throw new NotSupportedException("Static rendering must not invoke JavaScript.");
     }
 
-    private sealed class WorkspaceHandler(bool missingModules, bool packages) : HttpMessageHandler
+    private sealed class WorkspaceHandler(bool missingModules, bool packages, bool migration = false) : HttpMessageHandler
     {
+        private FlowMigrationReportViewModel? Report => migration ? new("BizTalk", @"C:\migration\Orders.btproj", "Orders", [], [], []) : null;
+
         private static FlowViewModel LookupFlow(bool join) => new(
             join ? "join-test" : "lookup-test", false, "OnDemand", null, false,
             ["input", "lookup"], ["primary", "reference"], ["file-fetch", "sql-server-lookup-fetch"], ["excel-parse", "json-parse"], [], ["json-render"], ["file-system-deliver"],
@@ -426,7 +443,7 @@ public sealed class FlowWorkspaceRenderingTests
             object payload = request.RequestUri!.AbsolutePath switch
             {
                 "/api/flows/lookup-test" => LookupFlow(false),
-                "/api/flows/join-test" => LookupFlow(true),
+                "/api/flows/join-test" => LookupFlow(true) with { Migration = Report },
                 "/api/flows/remove-test" => new FlowViewModel(
                     "remove-test", false, "OnDemand", null, false, ["input"], ["parsed"], ["file-fetch"], ["json-parse"], ["augment"], ["render"], ["deliver"],
                     [new("input", new("file-fetch", new Dictionary<string, string>()), [])],
@@ -434,7 +451,7 @@ public sealed class FlowWorkspaceRenderingTests
                     [new("augment", new Dictionary<string, string>())],
                     [new(new("render", new Dictionary<string, string>()), [new(new("deliver", new Dictionary<string, string>()))])]),
                 "/api/flows" => Enumerable.Range(1, 12).Select(index => new FlowViewModel(
-                    $"flow-{index:00}", false, "OnDemand", null, false, ["input"], ["parsed"], ["file-fetch"], ["json-parse"], [], [], [], [], [], [], [], Category: "Sales", MissingModules: missingModules ? ["Fetch: missing-plugin"] : [], Name: $"Customer orders {index}")).ToArray(),
+                    $"flow-{index:00}", false, "OnDemand", null, false, ["input"], ["parsed"], ["file-fetch"], ["json-parse"], [], [], [], [], [], [], [], Category: "Sales", MissingModules: missingModules ? ["Fetch: missing-plugin"] : [], Name: $"Customer orders {index}", Migration: Report)).ToArray(),
                 "/api/modules" => new[]
                 {
                     new ModuleViewModel("file-fetch", "File fetch", "Fetch", "Reads files", [], [], [], [], "builtin.core", "BuiltIn", "C:\\runtime\\Mulse.Modules.dll"),

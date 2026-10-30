@@ -19,8 +19,8 @@ public sealed record BizTalkFlowCandidateResponse(
     /// <summary>
     /// Starter C# module source files scaffolded for orchestrations with decision branches or control-flow
     /// constructs (convoys, correlation, transactions, loops) too complex to auto-translate into declarative
-    /// augment rules. Each compiles as-is (pass-through) and is annotated with TODOs quoting the original
-    /// BizTalk logic; save, implement, and register as a plugin module before enabling the flow.
+    /// augment rules. Orchestration stubs fail explicitly until implemented and carry TODOs quoting the
+    /// source logic. Implement and register native behavior; registration alone does not approve execution.
     /// </summary>
     public IReadOnlyList<BizTalkScaffoldedModuleResponse> ScaffoldedModules { get; init; } = [];
 

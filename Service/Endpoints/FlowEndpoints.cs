@@ -79,10 +79,11 @@ public static class FlowEndpoints
             })
             .WithName("SetFlowEnabled")
             .WithSummary("Enable or disable a flow")
-            .WithDescription("Toggles whether a flow is enabled without requiring the caller to resend its fetch, parse, augment, and delivery definition. Useful right after reviewing an imported or newly-designed draft flow's settings.")
+            .WithDescription("Toggles whether a flow is enabled without resending its definition. Imported flows remain blocked until verified translation support exists; reviewing or editing report statuses does not approve execution.")
             .WithTags("Flows")
             .Produces<FlowResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
         app.MapPost("/api/flows/{flowId}/duplicate", async Task<Created<FlowResponse>> (string flowId, DuplicateFlowRequest request, IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>

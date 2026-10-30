@@ -39,6 +39,24 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<FlowDesignAnalysisViewModel>(response, cancellationToken, "flow design analysis response").ConfigureAwait(false);
     }
 
+    public async Task<XmlMappingPreviewViewModel> PreviewXmlMappingAsync(XmlMappingPreviewRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/flow-designer/xml-mapping/preview", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<XmlMappingPreviewViewModel>(response, cancellationToken, "XML mapping preview").ConfigureAwait(false);
+    }
+
+    public async Task<XmlSchemaTreeViewModel> AnalyzeXmlMappingSchemasAsync(XmlSchemaAnalysisRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/flow-designer/xml-mapping/schemas", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<XmlSchemaTreeViewModel>(response, cancellationToken, "XML schema tree").ConfigureAwait(false);
+    }
+
+    public async Task<NativeMapConversionViewModel> ImportNativeXmlMappingAsync(XmlMappingImportRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/flow-designer/xml-mapping/import", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<NativeMapConversionViewModel>(response, cancellationToken, "native XML map proposal").ConfigureAwait(false);
+    }
+
     public async Task<BizTalkSolutionAnalysisViewModel> AnalyzeBizTalkSolutionAsync(AnalyzeBizTalkSolutionRequestViewModel request, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PostAsJsonAsync("/api/biztalk-import/analyze", request, cancellationToken).ConfigureAwait(false);

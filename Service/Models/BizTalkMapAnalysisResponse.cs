@@ -27,4 +27,6 @@ public sealed record BizTalkMapAnalysisResponse(
     /// original .btm map in BizTalk Mapper and checking the corresponding functoid's Properties dialog.
     /// </summary>
     public IReadOnlyDictionary<int, int> FunctoidFidCounts { get; init; } = new Dictionary<int, int>();
+
+    public Mulse.Modules.Pipeline.MapScriptInventory? ScriptInventory { get; init; }
 }

@@ -1,12 +1,71 @@
 <details class="migration-report">
-    <summary>Migration report - @Report.SourceSystem (@BlockingCount blocking diagnostic(s))</summary>
-    <p class="field-hint">Import-time snapshot, not execution approval. Changes to modules, mappings, or configuration do not automatically clear these diagnostics. Enable/run enforcement is not implemented yet.</p>
+    <summary>Migration report - @Report.SourceSystem (execution blocked; @BlockingCount blocking diagnostic(s))</summary>
+    <p class="field-hint">Import-time snapshot, not execution approval. @FlowMigrationReportViewModel.ExecutionBlockReason Editing configuration, diagnostics, or translation statuses does not approve execution.</p>
     <p><strong>Source project:</strong> <code>@Report.SourceProjectPath</code></p>
     @if (!string.IsNullOrWhiteSpace(Report.SourceOrchestration))
     {
         <p><strong>Source orchestration:</strong> @Report.SourceOrchestration</p>
     }
     <p>Report version: @Report.Version</p>
+    @if (Report.MapInventory is { } mapInventory)
+    {
+        <details>
+            <summary>Maps found in analyzed source (@mapInventory.TotalDiscovered; map use by this orchestration is unverified)</summary>
+            <p class="field-hint">Workspace inventory only. These maps were not proven to be selected by the deployed Business Rules policy or this orchestration. Obtain the policy/vocabulary export and confirm each map before wiring it. No map is marked fully translated.</p>
+            @if (mapInventory.OmittedCount > 0)
+            {
+                <p>@mapInventory.OmittedCount additional map(s) omitted from this saved report to keep its size bounded.</p>
+            }
+            @if (mapInventory.SchemaCatalogWarnings.Count > 0)
+            {
+                <details>
+                    <summary>Schema source catalog warnings (ownership may be incomplete)</summary>
+                    @foreach (var warning in mapInventory.SchemaCatalogWarnings) { <p>@warning</p> }
+                </details>
+            }
+            <table>
+                <thead><tr><th>Map</th><th>Status</th><th>Project</th><th>Source / target schemas</th><th>Links / constants / unsupported</th><th>Limitation</th></tr></thead>
+                <tbody>
+                    @foreach (var map in mapInventory.Candidates)
+                    {
+                        <tr>
+                            <td><strong>@map.Name</strong><br /><span class="path-value">@map.SourcePath</span></td>
+                            <td>@map.Status</td>
+                            <td class="path-value">@map.SourceProjectPath</td>
+                            <td>
+                                @map.SourceSchemaReference<br />to @map.TargetSchemaReference
+                                @if (map.SourceSchema is { } sourceSchema) { <SchemaReferenceEvidence Label="Source" Evidence="sourceSchema" /> }
+                                @if (map.TargetSchema is { } targetSchema) { <SchemaReferenceEvidence Label="Target" Evidence="targetSchema" /> }
+                            </td>
+                            <td>@map.DirectLinkCount / @map.ConstantValueCount / @map.UnsupportedLinkCount
+                                @if (map.FunctoidFidCounts.Count > 0)
+                                {
+                                    <div>Functoid FIDs: @string.Join(", ", map.FunctoidFidCounts.OrderBy(entry => entry.Key).Select(entry => $"{entry.Key} x{entry.Value}"))</div>
+                                }
+                            </td>
+                            <td>
+                                @map.Limitation
+                                @if (map.ScriptInventory is { TotalScripts: > 0 } scripts)
+                                {
+                                    <details>
+                                        <summary>Script evidence (@scripts.TotalScripts; untranslated)</summary>
+                                        <p>Script bodies are not saved here. Textual API hints do not prove portability or safety. Review the original source.</p>
+                                        <p>@scripts.OmittedCount script detail(s) omitted by the report limit.</p>
+                                        @foreach (var script in scripts.Scripts)
+                                        {
+                                            <p>Line @script.SourceLine / functoid @script.FunctoidId / @script.Language / @script.CharacterCount characters</p>
+                                            <p>SHA-256: <code>@script.Sha256</code></p>
+                                            <p>BizTalk API hints: @(script.BizTalkApiReferences.Count == 0 ? "None detected; manual review still required" : string.Join(", ", script.BizTalkApiReferences))</p>
+                                        }
+                                    </details>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </details>
+    }
     @foreach (var diagnostic in Report.Diagnostics)
     {
         <div class="warning-panel">
@@ -25,6 +84,36 @@
             {
                 <p><strong>@diagnostic.Severity - @diagnostic.Code:</strong> @diagnostic.Message</p>
                 <p><strong>Next action:</strong> @diagnostic.Remediation</p>
+            }
+            @if (artifact.Orchestration is { } inventory)
+            {
+                <details>
+                    <summary>Orchestration source inventory (@inventory.Shapes.Count designer shapes)</summary>
+                    <p class="field-hint">Designer document order and parent IDs, not an executable sequence. Expressions are not executed or copied into this report. Source lines refer to the original import-time file.</p>
+                    <ul>
+                        @foreach (var count in inventory.ShapeCounts.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+                        {
+                            <li>@count.Key: @count.Value</li>
+                        }
+                    </ul>
+                    <table>
+                        <thead><tr><th>ID / parent</th><th>Source line</th><th>Shape</th><th>Name</th><th>References</th></tr></thead>
+                        <tbody>
+                            @foreach (var shape in inventory.Shapes)
+                            {
+                                <tr>
+                                    <td>@shape.Id / @shape.ParentId</td><td>@shape.SourceLine</td><td>@shape.ShapeType</td><td>@shape.Name</td>
+                                    <td>
+                                        @foreach (var reference in shape.References)
+                                        {
+                                            <div><strong>@reference.Key:</strong> @reference.Value</div>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </details>
             }
         </details>
     }

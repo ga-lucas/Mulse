@@ -1,0 +1,262 @@
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using Mulse.Ui.Models
+@using Mulse.Ui.Services
+@inject IMulseApiClient ApiClient
+
+<section aria-label="XML mapping editor">
+    <p class="field-hint">Saved with this render node when you save the flow. Scalar XML fields, text constants, explicit missing-source conditions/defaults, and optional persisted XSD validation; no scripts or repeating records. Unprefixed names mean no namespace.</p>
+    <XmlMappingSourceTools Applied="SetRawAsync" FieldAdded="AddSchemaFieldAsync" SchemasApplied="SetSchemasAsync" />
+    @if (_error is not null)
+    {
+        <p class="status-banner error" role="alert">@_error</p>
+    }
+    @if (string.IsNullOrWhiteSpace(Value))
+    {
+        <button class="secondary-button" @onclick="async () => { _map = new(); await WriteAsync(); }">Start new XML map</button>
+    }
+    @if (_map is { } map)
+    {
+        <p>Runtime XSD validation: @map.SourceSchemas.Count source / @map.TargetSchemas.Count target schema(s).</p>
+        @if (map.SourceSchemas.Count > 0 || map.TargetSchemas.Count > 0)
+        {
+            <button class="secondary-button" @onclick="async () => { map.SourceSchemas.Clear(); map.TargetSchemas.Clear(); await WriteAsync(); }">Remove runtime validation schemas from this mapping</button>
+        }
+        <label class="field-label">Required source root (optional QName, version 2)</label>
+        <input class="mapping-input" aria-label="XML source root" value="@map.SourceRoot" @onchange="async e => { var text = e.Value?.ToString(); map.SourceRoot = string.IsNullOrWhiteSpace(text) ? null : text; map.Version = 2; await WriteAsync(); }" />
+        <label class="field-label">Target root (QName)</label>
+        <input class="mapping-input" aria-label="XML target root" value="@map.TargetRoot" @onchange="async e => { map.TargetRoot = e.Value?.ToString() ?? string.Empty; await WriteAsync(); }" />
+        <h4>Namespaces</h4>
+        @foreach (var prefix in map.Namespaces.Keys.ToArray())
+        {
+            <div class="inline-row" @key="prefix">
+                <code>@prefix</code>
+                <input class="mapping-input" aria-label="@($"Namespace URI for {prefix}")" value="@map.Namespaces[prefix]" @onchange="async e => { map.Namespaces[prefix] = e.Value?.ToString() ?? string.Empty; await WriteAsync(); }" />
+                <button class="secondary-button" @onclick="async () => { map.Namespaces.Remove(prefix); await WriteAsync(); }">Remove namespace @prefix</button>
+            </div>
+        }
+        <div class="inline-row">
+            <input class="mapping-input" aria-label="New namespace prefix" @bind="_prefix" placeholder="s" />
+            <input class="mapping-input" aria-label="New namespace URI" @bind="_uri" placeholder="urn:source" />
+            <button class="secondary-button" @onclick="AddNamespaceAsync">Add namespace</button>
+        </div>
+        <h4>Field mappings</h4>
+        <p class="field-hint">Source: absolute named path, e.g. /s:Order/s:Id or /s:Order/@@id. Target: relative to the target root, e.g. t:Header/t:Id or @@id. Each source must select exactly one scalar value; missing or repeated values fail explicitly.</p>
+        @foreach (var field in map.Fields)
+        {
+            <fieldset @key="field">
+                <legend>Field mapping</legend>
+                <label class="field-label">Value kind</label>
+                <select class="selector" aria-label="XML mapping value kind" value="@(field.Constant is null ? "Field" : "Constant")" @onchange="e => SetKindAsync(field, e.Value?.ToString())">
+                    <option value="Field">Source field</option>
+                    <option value="Constant">Text constant</option>
+                </select>
+                @if (field.Constant is null)
+                {
+                    <label class="field-label">Source path</label>
+                    <input class="mapping-input" aria-label="XML source path" value="@field.SourcePath" @onchange="async e => { field.SourcePath = e.Value?.ToString() ?? string.Empty; await WriteAsync(); }" />
+                    <label class="field-label">When source is missing</label>
+                    <select class="selector" aria-label="Missing XML source behavior" value="@field.MissingValueBehavior" @onchange="e => SetMissingBehaviorAsync(field, e.Value?.ToString())">
+                        <option value="Error">Fail explicitly</option>
+                        <option value="Omit">Omit this target field</option>
+                        <option value="Default">Use text default</option>
+                    </select>
+                    @if (field.MissingValueBehavior == "Default")
+                    {
+                        <input class="mapping-input" aria-label="Missing XML source default" value="@field.DefaultValue" @onchange="async e => { field.DefaultValue = e.Value?.ToString() ?? string.Empty; await WriteAsync(); }" />
+                    }
+                    <p class="field-hint">Omit/default upgrades this definition to version 2. Empty present values are not missing; repeating or complex values still fail.</p>
+                }
+                else
+                {
+                    <label class="field-label">Constant text (empty allowed)</label>
+                    <input class="mapping-input" aria-label="XML constant text" value="@field.Constant" @onchange="async e => { field.Constant = e.Value?.ToString() ?? string.Empty; await WriteAsync(); }" />
+                }
+                <label class="field-label">Target path</label>
+                <input class="mapping-input" aria-label="XML target path" value="@field.TargetPath" @onchange="async e => { field.TargetPath = e.Value?.ToString() ?? string.Empty; await WriteAsync(); }" />
+                <button class="secondary-button" @onclick="async () => { map.Fields.Remove(field); await WriteAsync(); }">Remove field mapping</button>
+            </fieldset>
+        }
+        <button class="secondary-button" @onclick="AddFieldAsync">Add XML field mapping</button>
+    }
+    <details>
+        <summary>Mapping definition JSON</summary>
+        <textarea class="sample-textarea" aria-label="XML mapping definition JSON" value="@Value" @onchange="e => SetRawAsync(e.Value?.ToString() ?? string.Empty)"></textarea>
+    </details>
+    <label class="field-label">Sample XML (not saved)</label>
+    <textarea class="sample-textarea" aria-label="XML mapping sample" value="@_sample" @onchange="e => { _sample = e.Value?.ToString() ?? string.Empty; _preview = null; _revision++; }"></textarea>
+    <button class="secondary-button" @onclick="PreviewAsync" disabled="@(_busy || _map is null)">@(_busy ? "Previewing..." : "Preview XML mapping")</button>
+    <p class="field-hint">Preview uses the execution engine, without running a flow or delivering output. It does not approve an imported flow. Results are cleared after edits.</p>
+    @if (_preview is { } preview)
+    {
+        <h4>Sample output XML</h4>
+        <pre>@preview.OutputXml</pre>
+        <details><summary>Generated XSLT</summary><pre>@preview.Xslt</pre></details>
+    }
+</section>
+
+@code {
+    [Parameter] public string Value { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
+    {
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+    };
+    private XmlMappingViewModel? _map;
+    private string? _loadedValue;
+    private string? _error;
+    private string _prefix = string.Empty;
+    private string _uri = string.Empty;
+    private string _sample = string.Empty;
+    private XmlMappingPreviewViewModel? _preview;
+    private bool _busy;
+    private int _revision;
+
+    protected override void OnParametersSet()
+    {
+        if (_loadedValue == Value) return;
+        _loadedValue = Value;
+        _preview = null;
+        _error = null;
+        _revision++;
+        if (string.IsNullOrWhiteSpace(Value)) { _map = null; return; }
+        try
+        {
+            _map = JsonSerializer.Deserialize<XmlMappingViewModel>(Value, Options);
+            if (_map is null || _map.Version is not (1 or 2) || _map.Namespaces is null || _map.Fields is null || _map.Fields.Any(field => field is null)
+                || _map.SourceSchemas is null || _map.TargetSchemas is null)
+            {
+                _map = null;
+                _error = "Mapping editor requires version 1 or 2 with namespace and field collections. Correct the JSON; the original definition is preserved.";
+            }
+        }
+        catch (JsonException exception)
+        {
+            _map = null;
+            _error = $"Unable to edit XML mapping: {exception.Message} Correct the JSON; the original definition is preserved.";
+        }
+    }
+
+    private async Task WriteAsync()
+    {
+        _error = null;
+        _preview = null;
+        _revision++;
+        Value = JsonSerializer.Serialize(_map, Options);
+        _loadedValue = Value;
+        await ValueChanged.InvokeAsync(Value);
+    }
+
+    private async Task SetRawAsync(string value)
+    {
+        Value = value;
+        OnParametersSet();
+        await ValueChanged.InvokeAsync(value);
+    }
+
+    private async Task AddNamespaceAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_prefix) || string.IsNullOrWhiteSpace(_uri) || _map!.Namespaces.ContainsKey(_prefix))
+        {
+            _error = "Enter a unique nonempty prefix and namespace URI.";
+            return;
+        }
+        _map.Namespaces.Add(_prefix, _uri);
+        _prefix = _uri = string.Empty;
+        await WriteAsync();
+    }
+
+    private async Task SetKindAsync(XmlFieldMappingViewModel field, string? kind)
+    {
+        field.Constant = kind == "Constant" ? string.Empty : null;
+        field.SourcePath = string.Empty;
+        field.MissingValueBehavior = "Error";
+        field.DefaultValue = null;
+        await WriteAsync();
+    }
+
+    private async Task SetMissingBehaviorAsync(XmlFieldMappingViewModel field, string? behavior)
+    {
+        if (behavior is not ("Error" or "Omit" or "Default"))
+        {
+            _error = "Select a supported missing-source behavior.";
+            return;
+        }
+        field.MissingValueBehavior = behavior;
+        field.DefaultValue = behavior == "Default" ? field.DefaultValue ?? string.Empty : null;
+        if (behavior != "Error") _map!.Version = 2;
+        await WriteAsync();
+    }
+
+    private async Task AddFieldAsync()
+    {
+        _map!.Fields.Add(new());
+        await WriteAsync();
+    }
+
+    private async Task SetSchemasAsync(XmlMappingSchemasViewModel schemas)
+    {
+        if (_map is null)
+        {
+            _error = "Start or correct the native mapping before attaching runtime validation schemas; the definition is preserved.";
+            return;
+        }
+        _map.Version = 2;
+        _map.SourceSchemas = schemas.SourceSchemas.ToList();
+        _map.TargetSchemas = schemas.TargetSchemas.ToList();
+        await WriteAsync();
+    }
+
+    private async Task AddSchemaFieldAsync(XmlSchemaFieldPairViewModel pair)
+    {
+        var source = pair.Source;
+        var target = pair.Target;
+        if (!source.Field.Scalar || source.Field.Repeating || source.Field.UnsupportedReason is not null
+            || !target.Field.Scalar || target.Field.Repeating || target.Field.UnsupportedReason is not null
+            || target.Field.Path == target.Root.Path)
+        {
+            _error = "Select a scalar source and a scalar target below its root. Records, repetitions, and unsupported schema shapes require explicit handling.";
+            return;
+        }
+        if (_map is null && !string.IsNullOrWhiteSpace(Value))
+        {
+            _error = "Correct the existing definition before adding fields; it has been preserved.";
+            return;
+        }
+        static string Prefix(string path, string side) => string.Join("/", path.Split('/').Select(segment => segment.Contains(':')
+            ? segment.StartsWith('@') ? "@" + side + segment[1..] : side + segment : segment));
+        var targetRoot = Prefix(target.Root.Path[1..], "t");
+        var namespaces = source.Namespaces.ToDictionary(entry => "s" + entry.Key, entry => entry.Value, StringComparer.Ordinal);
+        foreach (var entry in target.Namespaces) namespaces.Add("t" + entry.Key, entry.Value);
+        var map = _map ?? new XmlMappingViewModel();
+        if ((map.Fields.Count > 0 && map.TargetRoot != targetRoot)
+            || namespaces.Any(entry => map.Namespaces.TryGetValue(entry.Key, out var uri) && uri != entry.Value))
+        {
+            _error = "The selected schema root or namespace prefixes conflict with this map. Use a new mapping node or reconcile the existing names first; the definition is preserved.";
+            return;
+        }
+        _map = map;
+        map.TargetRoot = targetRoot;
+        foreach (var entry in namespaces) map.Namespaces[entry.Key] = entry.Value;
+        map.Fields.Add(new() { SourcePath = Prefix(source.Field.Path, "s"), TargetPath = Prefix(target.Field.Path[(target.Root.Path.Length + 1)..], "t") });
+        await WriteAsync();
+    }
+
+    private async Task PreviewAsync()
+    {
+        _busy = true;
+        _preview = null;
+        _error = null;
+        var revision = _revision;
+        try
+        {
+            var result = await ApiClient.PreviewXmlMappingAsync(new(Value, _sample), CancellationToken.None);
+            if (revision == _revision) _preview = result;
+        }
+        catch (Exception exception)
+        {
+            if (revision == _revision) _error = $"Unable to preview XML mapping: {exception.Message}";
+        }
+        finally { _busy = false; }
+    }
+}

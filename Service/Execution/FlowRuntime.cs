@@ -49,6 +49,7 @@ public sealed partial class FlowRuntime(
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            pipeline = GetConfiguredFlow(flowId);
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
             var pendingSourceWork = (await flowRetryStateStore.GetAllAsync(cancellationToken).ConfigureAwait(false))
                 .FirstOrDefault(state => state.FlowId.Equals(pipeline.Id, StringComparison.OrdinalIgnoreCase) && state.SourceReceipts.Count > 0);
@@ -680,6 +681,7 @@ public sealed partial class FlowRuntime(
     private PipelineDefinition GetConfiguredFlow(string flowId)
     {
         var pipeline = flowDefinitionService.GetById(flowId);
+        FlowMigrationReadiness.EnsureReady(pipeline);
 
         if (!pipeline.Enabled)
         {

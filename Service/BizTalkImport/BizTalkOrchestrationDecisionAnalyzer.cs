@@ -35,7 +35,7 @@ internal static class BizTalkOrchestrationDecisionAnalyzer
     /// declarations, atomic transaction scopes, and loops.
     /// </summary>
     private static readonly IReadOnlyList<string> ComplexControlFlowShapeTypes =
-        ["Listen", "Parallel", "CorrelationDeclaration", "CorrelationType", "AtomicTransaction", "Loop"];
+        ["Listen", "Parallel", "CorrelationDeclaration", "CorrelationType", "AtomicTransaction", "Loop", "While"];
 
     /// <summary>
     /// Matches one simple comparison conjunct, e.g. <c>msgBilling.ConfigurationInfo.TransportType != "MLLP"</c>
@@ -406,22 +406,29 @@ internal static class BizTalkOrchestrationDecisionAnalyzer
         IReadOnlyDictionary<string, int> controlFlowCounts)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("using Mulse.Modules;");
+        builder.AppendLine("using System;");
+        builder.AppendLine("using System.Threading;");
+        builder.AppendLine("using System.Threading.Tasks;");
+        builder.AppendLine("using Mulse.Modules.Abstractions;");
+        builder.AppendLine("using Mulse.Modules.Execution;");
+        builder.AppendLine("using Mulse.Modules.Payloads;");
+        builder.AppendLine("using Mulse.Modules.Pipeline;");
         builder.AppendLine();
         builder.AppendLine($"namespace {moduleNamespaceHint};");
         builder.AppendLine();
         builder.AppendLine($"// Scaffolded from BizTalk orchestration '{orchestrationName}' by the Mulse BizTalk importer.");
         builder.AppendLine("// This is a starting point only: the TODOs below summarize the BizTalk logic the importer");
         builder.AppendLine("// could not confidently translate into a declarative decision-augment rule. Implement the");
-        builder.AppendLine("// real behavior in TransformAsync, then register this module from an IModuleInstaller and");
-        builder.AppendLine("// reference its module id from the imported flow's augment chain.");
+        builder.AppendLine("// real behavior in AugmentAsync, then register this module from an IModuleInstaller and");
+        builder.AppendLine("// reference its module id from the imported flow's augment chain. It fails until implemented;");
+        builder.AppendLine("// registration alone does not approve execution of an imported flow.");
         builder.AppendLine($"public sealed class {className} : IOrchestrationAugmentModule");
         builder.AppendLine("{");
         builder.AppendLine("    public ModuleDescriptor Descriptor { get; } = new(");
         builder.AppendLine($"        \"{moduleId}\",");
-        builder.AppendLine($"        \"{orchestrationName} (migrated)\",");
+        builder.AppendLine($"        \"{orchestrationName} (unimplemented migration stub)\",");
         builder.AppendLine("        ModuleKind.OrchestrationAugment,");
-        builder.AppendLine($"        \"Scaffolded replacement for BizTalk orchestration '{orchestrationName}'. Implement TransformAsync below.\");");
+        builder.AppendLine($"        \"Scaffolded replacement for BizTalk orchestration '{orchestrationName}'. Implement AugmentAsync below.\");");
         builder.AppendLine();
         builder.AppendLine("    public Task<IntegrationBatch> AugmentAsync(");
         builder.AppendLine("        FlowExecutionContext context,");
@@ -456,8 +463,7 @@ internal static class BizTalkOrchestrationDecisionAnalyzer
             builder.AppendLine();
         }
 
-        builder.AppendLine("        // Placeholder: passes payloads through unchanged until the logic above is implemented.");
-        builder.AppendLine("        return Task.FromResult(batch);");
+        builder.AppendLine("        throw new NotSupportedException(\"This BizTalk orchestration stub has not been implemented. Translate and verify its behavior before use.\");");
         builder.AppendLine("    }");
         builder.AppendLine("}");
 

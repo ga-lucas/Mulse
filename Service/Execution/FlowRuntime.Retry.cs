@@ -36,7 +36,7 @@ public sealed partial class FlowRuntime
                 }
                 : GetConfiguredFlow(retryState.FlowId);
         }
-        catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException)
+        catch (Exception exception) when (exception is not FlowMigrationBlockedException && (exception is KeyNotFoundException or InvalidOperationException))
         {
             logger.LogWarning(
                 "Cannot resume pending retry for flow {FlowId} execution {ExecutionId} stage {StageId}: {Reason}",
@@ -56,6 +56,8 @@ public sealed partial class FlowRuntime
             if (current is null || (!restartSourceNotifications && current.SourceCompletion?.NotificationsExhausted == true)) return null;
             if (restartSourceNotifications && current.SourceCompletion?.NotificationsExhausted != true) return null;
             retryState = current;
+            if (retryState.SourceCompletion is null)
+                pipeline = GetConfiguredFlow(retryState.FlowId);
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
             var context = new FlowExecutionContext(pipeline.Id, retryState.ExecutionId, retryState.ExecutionStartedAt)
             {

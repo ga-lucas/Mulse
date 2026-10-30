@@ -47,7 +47,7 @@ public sealed class WorkspaceApiTests
             builder.Logging.ClearProviders();
             builder.Services.AddProblemDetails();
             builder.Services.AddExceptionHandler<ApiExceptionHandler>();
-            builder.Services.AddValidation();
+            ApiTestValidation.Register(builder.Services);
             builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
             builder.Services.AddSingleton<IRuntimeConfigurationStore>(store);
             builder.Services.AddSingleton<IModuleCatalog>(catalog);
@@ -70,6 +70,10 @@ public sealed class WorkspaceApiTests
                 Assert.True(modules.Single(module => module.Id == "http-inbound-fetch").SupportsPushTrigger);
                 Assert.False(modules.Single(module => module.Id == "sftp-fetch").SupportsPushTrigger);
                 Assert.False(modules.Single(module => module.Id == "file-system-fetch").SupportsPushTrigger);
+                var xmlMapping = Assert.Single(modules, module => module.Id == "xml-mapping-render");
+                Assert.Equal("Render", xmlMapping.Kind);
+                Assert.Equal("builtin.compatibility", xmlMapping.PackageId);
+                Assert.Contains(xmlMapping.Settings, setting => setting.Key == "mappingJson" && setting.IsRequired);
                 const string password = "long-api-backup-password";
                 var backup = await client.BackupWorkspaceAsync(password, CancellationToken.None);
                 Assert.EndsWith(".mulsebackup", backup.FileName);

@@ -25,7 +25,7 @@ public sealed class FileDraftApiTests
         builder.Logging.ClearProviders();
         builder.Services.AddProblemDetails();
         builder.Services.AddExceptionHandler<ApiExceptionHandler>();
-        builder.Services.AddValidation();
+        ApiTestValidation.Register(builder.Services);
         builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
         var catalog = FakeModuleCatalog.WithModules(("json-parse", ModuleKind.Parse));
         builder.Services.AddSingleton<IFlowDesignService>(new FlowDesignService(catalog, new FakeFlowDefinitionService()));

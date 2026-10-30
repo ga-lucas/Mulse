@@ -1,0 +1,35 @@
+@using Mulse.Ui.Models
+
+@if (Tree is { } tree)
+{
+    @foreach (var entry in tree.Namespaces)
+    {
+        <p><code>@entry.Key = @entry.Value</code></p>
+    }
+    @foreach (var root in tree.Roots)
+    {
+        <details>
+            <summary>@root.Name</summary>
+            <table>
+                <thead><tr><th>Path</th><th>Cardinality / kind</th><th>Limitation</th><th>Select</th></tr></thead>
+                <tbody>
+                    @foreach (var field in root.Fields)
+                    {
+                        <tr>
+                            <td><code>@field.Path</code></td>
+                            <td>@(field.Required ? "Required" : "Optional") / @(field.Repeating ? "repeating" : "single") / @(field.Scalar ? "scalar" : "record")</td>
+                            <td>@field.UnsupportedReason @(field.HasDefaultOrFixed ? "Schema default/fixed value" : null)</td>
+                            <td><button class="secondary-button" disabled="@(!field.Scalar || field.Repeating || field.UnsupportedReason is not null)" @onclick="() => Selected.InvokeAsync(new(root, field, tree.Namespaces))">Select @Side field</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </details>
+    }
+}
+
+@code {
+    [Parameter] public XmlSchemaTreeViewModel? Tree { get; set; }
+    [Parameter] public string Side { get; set; } = string.Empty;
+    [Parameter] public EventCallback<XmlSchemaSelectionViewModel> Selected { get; set; }
+}

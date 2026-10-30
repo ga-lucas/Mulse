@@ -58,8 +58,8 @@ public static class BizTalkMigrationEndpoints
                 return TypedResults.File(zipBytes, "application/zip", $"{request.SuggestedFlowId}-scaffolded-modules.zip");
             })
             .WithName("DownloadBizTalkScaffoldedModules")
-            .WithSummary("Download all scaffolded C# modules for a generated BizTalk draft flow as a zip")
-            .WithDescription("Re-analyzes the BizTalk source, finds one generated draft flow by suggested id, and returns every starter C# module scaffolded for its complex decision/control-flow logic (correlations, convoys, transactions, loops) as a downloadable zip. Each file compiles as a safe pass-through with TODO comments quoting the original BizTalk logic.")
+            .WithSummary("Download scaffolded migration artifacts for a generated BizTalk draft flow as a zip")
+            .WithDescription("Re-analyzes the source and downloads starter C# orchestration modules and XSLT scaffolds. Orchestration modules throw NotSupportedException until implemented; compiling or registering them does not approve imported execution. TODO comments identify untranslated behavior.")
             .WithTags("BizTalk Migration")
             .Produces(StatusCodes.Status200OK, contentType: "application/zip")
             .ProducesProblem(StatusCodes.Status400BadRequest)

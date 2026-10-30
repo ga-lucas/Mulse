@@ -48,11 +48,15 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
 
         var warnings = new List<string>
         {
-            "Generated draft flows are imported disabled so placeholder configuration and secrets can be reviewed before runtime use.",
+            "Generated draft flows remain disabled and cannot run until verified translation support exists. Configuration review or editing report statuses does not approve execution.",
             "BizTalk orchestration Decision shapes are auto-translated into declarative decision-augment rules where the branch expression is simple enough to translate confidently; convoys, correlation sets, atomic transactions, loops, and anything else too complex are scaffolded as starter C# modules instead."
         };
 
         var scope = ResolveScope(resolvedPath);
+        if (scope.SourceType == "Orchestration")
+        {
+            warnings.Add($"Selected orchestration '{scope.SourcePath}' was resolved to its explicit owning project '{scope.BizTalkProjects[0]}'. All of that project's orchestration candidates remain available; choose the required candidate. Dependency sources and deployed bindings still need to be supplied.");
+        }
         var scopes = new List<AnalysisScope> { scope };
         foreach (var additionalSourcePath in request.AdditionalSourcePaths)
         {
@@ -228,10 +232,11 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             warnings.Add("No draft flows were generated: every analyzed project looks like a shared schema library (no orchestrations, maps, pipelines, or matching binding file). Point the importer at the project or solution that owns the orchestration/pipeline, or supply its binding export via AdditionalBindingPaths.");
         }
 
+        var mapInventory = CreateMigrationMapInventory(hydratedAnalyses);
         var reservedFlowIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var flowCandidates = candidateProjects
             .OrderBy(static project => project.Response.ProjectPath, StringComparer.OrdinalIgnoreCase)
-            .SelectMany(project => CreateFlowCandidates(project, customAssemblies, bindingAnalyses, reservedFlowIds))
+            .SelectMany(project => CreateFlowCandidates(project, customAssemblies, bindingAnalyses, mapInventory, reservedFlowIds))
             .ToArray();
 
         return Task.FromResult(new BizTalkSolutionAnalysisResponse(
@@ -257,6 +262,10 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
         if (File.Exists(sourcePath))
         {
             var extension = Path.GetExtension(sourcePath);
+            if (string.Equals(extension, ".odx", StringComparison.OrdinalIgnoreCase))
+            {
+                return ResolveOrchestrationScope(sourcePath);
+            }
             if (string.Equals(extension, ".sln", StringComparison.OrdinalIgnoreCase))
             {
                 var rootDirectory = Path.GetDirectoryName(sourcePath)
@@ -389,6 +398,7 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
         ("AtomicTransaction", "atomic transaction scope(s)"),
         ("Decision", "Decision/branch shape(s)"),
         ("Loop", "Loop shape(s)"),
+        ("While", "While loop shape(s)"),
     ];
 
     /// <summary>

@@ -96,7 +96,7 @@ Two ways to ship a module:
 |---|---|---|
 | Core (`builtin.core`) | `file-system-fetch`, `sftp-fetch`, `flow-link-fetch`; `json-parse`; JSON envelope, decision, multi-source join/map, stateful orchestration and debatch augments; `json-render`, `xml-render`; `logging-deliver`, `file-system-deliver`, `http-deliver`, `flow-link-deliver`. | Built in. |
 | Core transforms | Concat, add/subtract/multiply/divide, coalesce, substring, upper/lower case, trim, round and date formatting, selected within join/map fields. | Built in. |
-| Compatibility (`builtin.compatibility`) | `document-repository-fetch`, `file-system-watcher-fetch`, `http-inbound-fetch`; `xml-xsd-parse`, `flat-file-parse`, `xml-envelope-debatch-parse`; metadata-promotion and route-selection augments; `flat-file-render`, `xslt-render`, `soap-envelope-render`; `document-repository-store`, `smtp-email-deliver`, `http-inbound-reply-deliver`. | Built in. |
+| Compatibility (`builtin.compatibility`) | `document-repository-fetch`, `file-system-watcher-fetch`, `http-inbound-fetch`; `xml-xsd-parse`, `flat-file-parse`, `xml-envelope-debatch-parse`; metadata-promotion and route-selection augments; `flat-file-render`, `xslt-render`, `xml-mapping-render`, `soap-envelope-render`; `document-repository-store`, `smtp-email-deliver`, `http-inbound-reply-deliver`. | Built in. |
 | `Mulse.Dbms.SqlServer` | `sql-server-lookup-fetch` uses upstream parsed IDs for a parameterized lookup; `sql-server-execute-deliver` executes SQL text/stored procedures with JSON-to-parameter binding per payload. | Build and load plugin. |
 | `Mulse.Hl7` | `hl7-parse` and `hl7-render` for HL7 v2 ER7 text/normalized JSON. | Build and load plugin. |
 | `Mulse.Excel` | `excel-parse` and `excel-render` for XLS/XLSX worksheets. | Build and load plugin. |
@@ -453,10 +453,13 @@ Newer NPOI versions have different commercial maintenance terms; review licensin
 
 ## BizTalk migration
 
-In the designer, choose **Import from BizTalk** and supply a `.sln`, `.btproj`, custom project, or folder
-path **accessible to the Service host**. This is path-based analysis, not a browser project upload. Add
-semicolon-separated additional solution/project/folder paths to resolve cross-solution references, and
-binding file/directory paths when deployment bindings live outside the source tree.
+In the designer, choose **Import from BizTalk** and supply a `.sln`, `.btproj`, custom project, folder,
+or `.odx` path **accessible to the Service host**. An `.odx` must be explicitly included by exactly one
+sibling `.btproj`; the complete owning project is analyzed, including its other orchestration candidates.
+Missing/ambiguous ownership is rejected instead of guessed. For linked/nested orchestration files,
+select the owning project or solution explicitly. This is path-based analysis, not a browser project upload.
+Add semicolon-separated additional solution/project/folder paths to resolve cross-solution references,
+and binding file/directory paths when deployment bindings live outside the source tree.
 
 The implementation in `Service\BizTalkImport` can:
 
@@ -472,34 +475,135 @@ The implementation in `Service\BizTalkImport` can:
   same analyzed paths; moving projects or changing the workspace can change them.
 - Auto-translate simple orchestration `Decision` branches (including `Regex.IsMatch(...)` conditions) into
   declarative decision rules, and scaffold a starter C# module for anything too complex (correlations,
-  convoys, transactions, loops) rather than guessing.
+  convoys, transactions, `Loop`/`While` shapes) rather than guessing. New orchestration stubs compile
+  against the SDK but throw `NotSupportedException` until implemented; they never silently pass data
+  through. Previously downloaded stubs are not changed; re-download and review them.
+- Preserve an **Orchestration source inventory** in each artifact's migration report: designer shape
+  counts, IDs/parent IDs, original source lines, names and selected type/port/message references.
+  Document order is not executable ordering. Coded blockers identify assignments/transforms, BRE calls,
+  loops, ports/calls, failure scopes and waits/correlation. Metadata parse/size failures are explicit;
+  source expressions are not executed or copied into this inventory. The inventory is an import-time
+  snapshot retained through ordinary save/reopen/duplication; reanalyze to inspect changed source.
 - Best-effort translate `.btm` maps into XSLT for direct field links/constants, and clearly call out
   functoid-involved links (with their functoid type IDs) that need manual review instead of silently
   guessing at functoid semantics.
 - Extract promoted/written context properties from custom pipeline component source (e.g.
   `context.Promote(...)`/`context.Write(...)` calls) to pre-populate metadata-promotion routing.
-- Produce a draft, disabled Mulse flow plus a list of settings/requirements and warnings that a user must
-  review before enabling and running it.
+- Produce an editable, disabled Mulse draft plus settings/requirements and warnings. Imported drafts
+  cannot be enabled or run until verified translation support exists; configuration review alone is not approval.
 - Show a **Migration report** in each import candidate and the designer's **BizTalk import follow-up**
   panel, including after saving and reopening. The versioned report preserves source paths, artifact
   statuses, coded blocking/review diagnostics, original warnings, and suggested next actions through
-  edits, duplication, disk reload, and workspace backup/restore. Older updates omitting the report do
+  edits, duplication, disk reload, and workspace backup/restore. It also lists `.btm` maps found in the
+  analyzed source scope with their owning project, schema references, direct-link/constant/functoid counts,
+  and limitations. This is a workspace candidate inventory, not evidence that the orchestration's deployed
+  policy selects a map; no map is automatically wired or approved. Older updates omitting the report do
   not erase existing provenance; manually-created flows need no report.
 
 Reports are **import-time snapshots, not execution approval**. Configuration or canvas edits do not
 clear diagnostics automatically. Starter XSLT is not installed/wired, generated C# stubs are not completed
-translations, and no artifact is marked fully translated. Semantic enable/run enforcement remains
-pending: blocking diagnostics are currently advisory, and client-editable report metadata must not be
-used as proof of readiness.
+translations, and no artifact is marked fully translated. **Every flow carrying migration metadata is
+blocked from enable/run**, regardless of submitted statuses or diagnostic counts. Creating or updating
+an enabled import, enabling an import, or running it returns HTTP 409; scheduled processing, push
+registration, and processing retries are blocked too. Saved provenance cannot be replaced through a
+flow update (409); omitting it preserves the saved report. Dashboard and designer controls explain the
+block. There is no manual approval override.
 
 Apply a candidate to the canvas, review its transport paths/credentials, mappings, retry/compensation
-settings and warnings, then explicitly save it. Download the suggested scaffolded modules individually
-or as a bundle, implement their business behavior, build/load them, and resolve configuration gaps
-before enabling. A scaffold is a migration starting point, not a completed translation or a guarantee of
-BizTalk-equivalent behavior. Existing flow edits still require deliberate review before saving.
+settings and warnings, then explicitly save a disabled draft. Suggested scaffolds can be downloaded and
+implemented, but that alone does not remove the gate: verified translation/revalidation support is still
+pending. Editing, disabling, categorizing disabled drafts, duplication, and backup/restore remain available.
+Terminal source acknowledgements for already-completed work may finish without replaying processing or
+deliveries; the gate does not cancel an execution already in progress. Scratch-built flows without
+migration metadata retain their existing behavior.
+
+Historical imports without migration metadata need reanalysis/re-import to receive this gate. The gate
+cannot infer provenance from manually copied definitions or direct workspace/backup edits that remove
+metadata; it is a workflow safety policy, not an authorization boundary against workspace editors.
 
 See [the compatibility plan and implementation status](BizTalk-Import-Compatibility-Plan.md) for verified
-increments and remaining gaps, including the Mapping Designer and semantic readiness gates.
+increments and remaining gaps, including schema-based mapping translation and verified approvals.
+The [BillingServiceProcess migration guide](BillingServiceProcess-Migration-Guide.md) separates the
+currently available disabled import from implementation prerequisites, BizTalk-team evidence, validation
+and eventual cutover. Billing is not currently an executable equivalent merely by importing it.
+
+### Native XML Mapping Designer
+
+In **Flow Designer > Mapping Designer**, choose **Add XML mapping render**. This adds a render-only
+route (or fills a route missing a render); add a deliver node before saving. It works for scratch-built
+flows and disabled imported drafts. Existing native map nodes also offer **Edit XML mapping** in Properties.
+Existing join field mappings are still edited per join in Properties, linked from Mapping Designer.
+
+Configure the target root, namespace prefixes and field mappings, then **Create flow / Save flow**.
+The versioned model is saved in that node's `mappingJson` setting and survives reopen and duplication.
+Source paths are absolute named paths such as `/s:Order/s:Id` or `/s:Order/@id`; target paths are relative
+to the target root, such as `t:Header/t:Number` or `@id`. Define `s` and `t` namespace URIs explicitly;
+unprefixed names select/create names in **no namespace**. Text constants need no JSON quoting in the
+field editor and may be empty. For example, a saved definition can be:
+
+```json
+{
+  "version": 1,
+  "targetRoot": "t:Result",
+  "namespaces": { "s": "urn:source", "t": "urn:target" },
+  "fields": [
+    { "sourcePath": "/s:Order/s:Id", "targetPath": "t:Number" },
+    { "targetPath": "@status", "constant": "new" }
+  ]
+}
+```
+
+**Preview XML mapping** shows output XML and generated XSLT using the same engine as `xml-mapping-render`.
+Sample XML and preview results are not saved, and edits invalidate results. The preview API is
+`POST /api/flow-designer/xml-mapping/preview` with `mappingJson` (a JSON string) and `sampleXml`.
+It does not run the flow, fetch data, deliver output, or approve an imported draft.
+
+Version 1 requires exactly one scalar element/attribute per source field, including empty values.
+Version 2 adds explicit **Error / Omit / Default** missing-source policies. Omit suppresses an absent
+field; Default inserts the supplied literal only when absent. Present empty values are not missing.
+Repeated/complex values, duplicate/overlapping targets, unknown versions, undeclared prefixes,
+XPath functions/predicates/wildcards and DTDs fail explicitly. These are presence conditions, not
+arbitrary expressions or record loops.
+
+Every native editor exposes **XSD schema trees and BizTalk map import**:
+
+1. Paste XSD text or choose multiple `.xsd` files. Inspect source and target trees, namespaces,
+   cardinality and unsupported shapes; select scalar fields to add editable named-path mappings.
+2. Optionally select **Use supplied XSDs for runtime validation**. This explicitly saves both schema
+   sets with the map; uploading/inspecting alone does not. Preview and actual rendering validate input
+   and output using these saved schemas. Validation can also be explicitly removed in the editor.
+3. Paste/upload a `.btm`, provide its exact source/target XSDs, and choose **Create native map proposal**.
+   Conservative scalar direct links/constants are converted, ordered by target schema, and checked for
+   required target fields. Optional-source/optional-target links use Omit. Unsupported settings,
+   ambiguous paths, functoids/scripts and unsupported schema shapes reject the entire proposal.
+4. Inspect the JSON, generated XSLT and warnings. Only **Replace this node's mapping with proposal**
+   changes the node. Save normally to persist it. Proposals are version 2 and retain the selected source
+   root plus exact source/target schemas, including constant-only maps. The source-root assertion is
+   editable as a QName. Invalid proposals preserve the existing definition.
+
+The schema API is `POST /api/flow-designer/xml-mapping/schemas` with `schemas` (XSD strings).
+The proposal API is `POST /api/flow-designer/xml-mapping/import` with `mapXml`, `sourceSchemas` and
+`targetSchemas`. Neither endpoint executes scripts, wires an orchestration or approves migration.
+Schema imports resolve only from supplied texts; external resolution, includes and redefine are not
+supported. Schema sets allow at most 16 documents / 1,000,000 total characters; inspection allows
+2,048 nodes / 32 levels / 32 namespace URIs. The mapping limit also includes embedded schema text.
+Preview/runtime limits remain 262,144 mapping characters, 128 fields, 32 prefixes, 32 path segments,
+1,000,000 input characters and 4,000,000 output characters.
+
+Workspace reports also retain bounded script metadata (language, FID, line, size, hash and textual
+BizTalk API hints), not bodies or execution/portability approval. Each map's source/target schema
+reference shows case-sensitive file candidates from explicit project Namespace/TypeName metadata or
+labeled literal naming conventions. Candidate project/file paths, metadata method, source line and
+file presence are retained. Missing, ambiguous, conditional/dynamic and incomplete evidence stays
+explicit; disk filenames alone never establish class ownership. Inspection is capped at 4,096 schema
+declarations, 32 saved candidates per reference and 32 shared warning details. Reanalyze source for
+fresh evidence; existing saved reports remain original snapshots.
+
+Repeated-record mapping, arbitrary functions/conditions, functoid/script translation,
+evaluated/deployed schema ownership and automatic orchestration wiring remain unfinished. Existing
+imported XSLT/stub references are not replaced automatically. Use an XML-preserving parser such as
+`xml-xsd-parse` before this render; it does not map JSON payloads. Preview success is local evidence,
+not proof of BizTalk-equivalent behavior.
 
 ## Running locally
 

@@ -1,0 +1,180 @@
+@using Mulse.Ui.Models
+@using Mulse.Ui.Services
+@inject IMulseApiClient ApiClient
+
+<details>
+    <summary>XSD schema trees and BizTalk map import</summary>
+    <p class="field-hint">Available to scratch-built and imported flows. Paste an XSD or select up to 16 XSD files per side, including imported namespaces. Inspection alone does not save schemas; applied proposals include them for runtime validation. External files/network locations are never resolved. Persisted mapping JSON, including schemas, is limited to 256 KiB characters.</p>
+    @if (_error is not null)
+    {
+        <p class="status-banner error" role="alert">@_error</p>
+    }
+    <label class="field-label">Source XSD</label>
+    <textarea class="sample-textarea" aria-label="Source XSD" value="@_sourceXsd" @onchange="e => SetText(e.Value?.ToString() ?? string.Empty, true)"></textarea>
+    <InputFile OnChange="e => ReadSchemasAsync(e, true)" accept=".xsd" multiple disabled="@_busy" />
+    <p>@_sourceFiles.Count source XSD file(s) selected</p>
+    <button class="secondary-button" disabled="@_busy" @onclick="() => AnalyzeAsync(true)">Inspect source schema tree</button>
+    <XmlSchemaBrowser Tree="_sourceTree" Side="source" Selected="selection => _sourceSelection = selection" />
+    <label class="field-label">Target XSD</label>
+    <textarea class="sample-textarea" aria-label="Target XSD" value="@_targetXsd" @onchange="e => SetText(e.Value?.ToString() ?? string.Empty, false)"></textarea>
+    <InputFile OnChange="e => ReadSchemasAsync(e, false)" accept=".xsd" multiple disabled="@_busy" />
+    <p>@_targetFiles.Count target XSD file(s) selected</p>
+    <button class="secondary-button" disabled="@_busy" @onclick="() => AnalyzeAsync(false)">Inspect target schema tree</button>
+    <XmlSchemaBrowser Tree="_targetTree" Side="target" Selected="selection => _targetSelection = selection" />
+    <p>Source: @_sourceSelection?.Field.Path / Target: @_targetSelection?.Field.Path</p>
+    <button class="secondary-button" disabled="@(_busy || _sourceSelection is null || _targetSelection is null)" @onclick="AddSelectedAsync">Add selected scalar field mapping</button>
+    <button class="secondary-button" disabled="@_busy" @onclick="AttachSchemasAsync">Use supplied XSDs for runtime validation</button>
+    <p class="field-hint">Optional sources require an explicit missing-value policy. Repeating/record values cannot be added as scalar mappings. Attaching schemas upgrades the mapping to version 2 and validates input and output in preview and execution; it does not approve an imported flow.</p>
+    <label class="field-label">BizTalk map XML (.btm)</label>
+    <textarea class="sample-textarea" aria-label="BizTalk map XML" value="@_mapXml" @onchange="e => { _mapXml = e.Value?.ToString() ?? string.Empty; Invalidate(); }"></textarea>
+    <InputFile OnChange="ReadMapAsync" accept=".btm" disabled="@_busy" />
+    <button class="secondary-button" disabled="@_busy" @onclick="ConvertAsync">Create native map proposal</button>
+    <p class="field-hint">Requires source/target XSDs. Only complete supported scalar-link/constant maps are accepted. Optional links require optional targets and use an explicit presence condition. Repeating sources, structured copies, functoids, scripts, custom XSLT, unknown constructs and unsupported target shapes fail explicitly; no partial map replaces your work.</p>
+    @if (_proposal is { } proposal)
+    {
+        @foreach (var warning in proposal.Warnings)
+        {
+            <p class="warning-panel">@warning</p>
+        }
+        <details><summary>Proposed native mapping JSON</summary><pre>@proposal.MappingJson</pre></details>
+        <details><summary>Proposed XSLT</summary><pre>@proposal.Xslt</pre></details>
+        <button class="secondary-button" @onclick="() => Applied.InvokeAsync(proposal.MappingJson)">Replace this node's mapping with proposal</button>
+        <p class="field-hint">This replaces only the selected mapping, not its flow provenance. Imported flows stay blocked. Save the flow to persist the change.</p>
+    }
+</details>
+
+@code {
+    [Parameter] public EventCallback<string> Applied { get; set; }
+    [Parameter] public EventCallback<XmlSchemaFieldPairViewModel> FieldAdded { get; set; }
+    [Parameter] public EventCallback<XmlMappingSchemasViewModel> SchemasApplied { get; set; }
+    private string _sourceXsd = string.Empty;
+    private string _targetXsd = string.Empty;
+    private string _mapXml = string.Empty;
+    private IReadOnlyList<string> _sourceFiles = [];
+    private IReadOnlyList<string> _targetFiles = [];
+    private XmlSchemaTreeViewModel? _sourceTree;
+    private XmlSchemaTreeViewModel? _targetTree;
+    private XmlSchemaSelectionViewModel? _sourceSelection;
+    private XmlSchemaSelectionViewModel? _targetSelection;
+    private NativeMapConversionViewModel? _proposal;
+    private string? _error;
+    private bool _busy;
+    private int _revision;
+
+    private void Invalidate()
+    {
+        _revision++;
+        _proposal = null;
+        _error = null;
+    }
+
+    private void SetText(string text, bool source)
+    {
+        if (source) { _sourceXsd = text; _sourceTree = null; _sourceSelection = null; }
+        else { _targetXsd = text; _targetTree = null; _targetSelection = null; }
+        Invalidate();
+    }
+
+    private IReadOnlyList<string> Schemas(bool source)
+    {
+        var text = source ? _sourceXsd : _targetXsd;
+        var files = source ? _sourceFiles : _targetFiles;
+        return string.IsNullOrWhiteSpace(text) ? files : [text, .. files];
+    }
+
+    private async Task ReadSchemasAsync(InputFileChangeEventArgs args, bool source)
+    {
+        Invalidate();
+        _busy = true;
+        var revision = _revision;
+        if (source) { _sourceTree = null; _sourceSelection = null; _sourceFiles = []; }
+        else { _targetTree = null; _targetSelection = null; _targetFiles = []; }
+        try
+        {
+            var files = new List<string>();
+            foreach (var file in args.GetMultipleFiles(16)) files.Add(await ReadAsync(file));
+            if (revision == _revision)
+            {
+                if (source) _sourceFiles = files; else _targetFiles = files;
+            }
+        }
+        catch (Exception exception) { if (revision == _revision) _error = $"Unable to read XSD files: {exception.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private async Task ReadMapAsync(InputFileChangeEventArgs args)
+    {
+        Invalidate();
+        _busy = true;
+        var revision = _revision;
+        _mapXml = string.Empty;
+        try
+        {
+            var text = await ReadAsync(args.File);
+            if (revision == _revision) _mapXml = text;
+        }
+        catch (Exception exception) { if (revision == _revision) _error = $"Unable to read map file: {exception.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private static async Task<string> ReadAsync(IBrowserFile file)
+    {
+        await using var stream = file.OpenReadStream(2_000_000);
+        using var reader = new StreamReader(stream);
+        var text = await reader.ReadToEndAsync();
+        if (text.Length > 1_000_000) throw new ArgumentException("Each mapping/schema file must not exceed 1,000,000 characters.");
+        return text;
+    }
+
+    private async Task AnalyzeAsync(bool source)
+    {
+        Invalidate();
+        _busy = true;
+        var revision = _revision;
+        try
+        {
+            var tree = await ApiClient.AnalyzeXmlMappingSchemasAsync(new(Schemas(source)), CancellationToken.None);
+            if (revision == _revision)
+            {
+                if (source) { _sourceTree = tree; _sourceSelection = null; }
+                else { _targetTree = tree; _targetSelection = null; }
+            }
+        }
+        catch (Exception exception) { if (revision == _revision) _error = $"Unable to inspect XSDs: {exception.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private async Task ConvertAsync()
+    {
+        Invalidate();
+        _busy = true;
+        var revision = _revision;
+        try
+        {
+            var result = await ApiClient.ImportNativeXmlMappingAsync(new(_mapXml, Schemas(true), Schemas(false)), CancellationToken.None);
+            if (revision == _revision) _proposal = result;
+        }
+        catch (Exception exception) { if (revision == _revision) _error = $"Unable to convert map; existing mapping preserved: {exception.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private async Task AttachSchemasAsync()
+    {
+        Invalidate();
+        _busy = true;
+        var revision = _revision;
+        var source = Schemas(true);
+        var target = Schemas(false);
+        try
+        {
+            await ApiClient.AnalyzeXmlMappingSchemasAsync(new(source), CancellationToken.None);
+            await ApiClient.AnalyzeXmlMappingSchemasAsync(new(target), CancellationToken.None);
+            if (revision == _revision) await SchemasApplied.InvokeAsync(new(source, target));
+        }
+        catch (Exception exception) { if (revision == _revision) _error = $"Unable to attach XSD validation; existing mapping preserved: {exception.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private Task AddSelectedAsync() => _sourceSelection is { } source && _targetSelection is { } target
+        ? FieldAdded.InvokeAsync(new(source, target)) : Task.CompletedTask;
+}

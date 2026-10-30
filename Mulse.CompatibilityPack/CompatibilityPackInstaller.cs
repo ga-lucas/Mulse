@@ -16,6 +16,7 @@ public sealed class CompatibilityPackInstaller : IModuleInstaller
         builder.AddOrchestrationAugment<RouteSelectionAugmentModule>();
         builder.AddRender<FlatFileRenderModule>();
         builder.AddRender<XsltRenderModule>();
+        builder.AddRender<XmlMappingRenderModule>();
         builder.AddRender<SoapEnvelopeRenderModule>();
         builder.AddDeliver<DocumentRepositoryStoreModule>();
         builder.AddDeliver<SmtpEmailDeliverModule>();

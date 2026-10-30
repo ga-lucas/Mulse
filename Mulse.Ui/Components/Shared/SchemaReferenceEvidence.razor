@@ -1,0 +1,27 @@
+<details>
+    <summary>@Label schema source evidence: @Evidence.Status (@Evidence.TotalCandidates candidate(s))</summary>
+    <p>@Evidence.Limitation</p>
+    @if (Evidence.CatalogWarningCount > 0)
+    {
+        <p>@Evidence.CatalogWarningCount catalog issue(s); review schema source catalog warnings before relying on ownership.</p>
+    }
+    @if (Evidence.OmittedCount > 0)
+    {
+        <p>@Evidence.OmittedCount additional candidate(s) omitted by the saved-report limit.</p>
+    }
+    @foreach (var candidate in Evidence.Candidates)
+    {
+        <p><code>@candidate.ClassName</code> / @candidate.Method / project line @candidate.SourceLine</p>
+        <p class="path-value">Project: @candidate.SourceProjectPath</p>
+        <p class="path-value">Schema: @candidate.SourcePath</p>
+        <p>Source file present at import: @candidate.SourceExists</p>
+    }
+</details>
+
+@code {
+    [Microsoft.AspNetCore.Components.Parameter, Microsoft.AspNetCore.Components.EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    [Microsoft.AspNetCore.Components.Parameter, Microsoft.AspNetCore.Components.EditorRequired]
+    public MigrationSchemaReferenceEvidenceViewModel Evidence { get; set; } = default!;
+}

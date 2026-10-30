@@ -39,10 +39,6 @@ public partial class Designer : IAsyncDisposable
     private static readonly string[] TriggerModeOptions = ["Disabled", "OnDemand", "Interval", "Push"];
     private static readonly string[] RetryBackoffOptions = ["Fixed", "Linear", "Exponential"];
     private static readonly string[] SourceKindOptions = ["Left", "Right", "Literal", "Transform"];
-
-    // Kinds that resolve a single value directly (no transform): used for transform inputs (nested transforms
-    // aren't supported) and for the sample-analysis mapping panel, whose mappings are sent to the design API
-    // without any transform configuration.
     private static readonly string[] ScalarSourceKindOptions = ["Left", "Right", "Literal"];
     private static readonly string[] ConditionOptions = ["Always", "WhenMatched", "WhenUnmatched"];
     private static readonly string[] JoinKindOptions = ["Inner", "Left", "Right", "Full"];
@@ -58,7 +54,6 @@ public partial class Designer : IAsyncDisposable
 
     private readonly List<FlowNode> _nodes = [];
     private readonly Dictionary<string, JoinEditorState> _joinEditors = new(StringComparer.Ordinal);
-    private readonly List<FieldMappingRow> _mappingRows = [];
 
     private IReadOnlyList<ModuleViewModel> _modules = [];
     private IReadOnlyList<string> _configReferences = [];
@@ -123,13 +118,22 @@ public partial class Designer : IAsyncDisposable
 
     private bool IsExistingFlow => !string.IsNullOrWhiteSpace(FlowId);
 
-    private void ToggleMappingDesigner()
+    private void ToggleMappingDesigner() => _showMappingDesigner = !_showMappingDesigner;
+
+    private void AddXmlMappingRender()
     {
-        _showMappingDesigner = !_showMappingDesigner;
-        if (_showMappingDesigner && _mappingRows.Count == 0)
+        if (FindCatalogModule("xml-mapping-render") is null)
         {
-            AddMappingRow();
+            _errorMessage = "Load the compatibility package to add an XML mapping render.";
+            return;
         }
+        var route = Routes.FirstOrDefault(candidate => candidate.Render is null);
+        var render = CreateNode(NodeStage.Render, "xml-mapping-render",
+            new Dictionary<string, string> { ["mappingJson"] = JsonSerializer.Serialize(new XmlMappingViewModel(), JsonOptions) },
+            order: route?.Order ?? Routes.Count, routeId: route?.RouteId ?? Guid.NewGuid().ToString("n"));
+        _selectedNodeId = render.Id;
+        AutoLayout();
+        _statusMessage = "Added XML mapping render. Edit its fields in Mapping Designer and add a deliver node before saving.";
     }
 
     private FlowNode? SelectedNode => _nodes.FirstOrDefault(node => string.Equals(node.Id, _selectedNodeId, StringComparison.Ordinal));
@@ -379,7 +383,6 @@ public partial class Designer : IAsyncDisposable
     {
         _nodes.Clear();
         _joinEditors.Clear();
-        _mappingRows.Clear();
         _bizTalkRequirements = [];
         _bizTalkWarnings = [];
         _migration = null;
@@ -416,7 +419,6 @@ public partial class Designer : IAsyncDisposable
     {
         _nodes.Clear();
         _joinEditors.Clear();
-        _mappingRows.Clear();
         _bizTalkRequirements = [];
         _bizTalkWarnings = [];
         _migration = flow.Migration;
@@ -654,6 +656,9 @@ public partial class Designer : IAsyncDisposable
                 throw new InvalidOperationException("Select a module for every augment node.");
             }
 
+            if (_enabled && _migration is not null)
+                throw new InvalidOperationException(FlowMigrationReportViewModel.ExecutionBlockReason);
+
             if (_enabled && _unresolvedConfigCount > 0)
             {
                 throw new InvalidOperationException($"This flow has {_unresolvedConfigCount} unresolved config/secret reference(s). Resolve them on the Config values page before enabling it.");
@@ -707,31 +712,9 @@ public partial class Designer : IAsyncDisposable
             }
             else
             {
-                var mappings = _mappingRows
-                    .Where(static row => !string.IsNullOrWhiteSpace(row.TargetField))
-                    .Select(static row => new FlowDesignFieldMappingRequestViewModel(row.SourceKind, row.SourcePath, row.TargetField, row.Condition, row.LiteralValue))
-                    .ToArray();
-                var hasJoinAugment = augments.Any(static node => string.Equals(node.ModuleId, JoinModuleId, StringComparison.OrdinalIgnoreCase));
-
-                if (mappings.Length > 0 && hasJoinAugment)
-                {
-                    saved = await ApiClient.CreateDesignedFlowAsync(
-                        new CreateDesignedFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, mappings, _flowName, _migration),
-                        CancellationToken.None);
-
-                    if (retry is not null)
-                    {
-                        saved = await ApiClient.UpdateFlowAsync(
-                            new UpdateFlowRequestViewModel(saved.Id, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, Name: _flowName, Migration: _migration),
-                            CancellationToken.None);
-                    }
-                }
-                else
-                {
-                    saved = await ApiClient.CreateFlowAsync(
-                        new CreateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, _flowName, _migration),
-                        CancellationToken.None);
-                }
+                saved = await ApiClient.CreateFlowAsync(
+                    new CreateFlowRequestViewModel(flowId, _enabled, trigger, fetchSteps, parseSteps, augmentSteps, deliverySteps, retry, _flowName, _migration),
+                    CancellationToken.None);
 
                 _statusMessage = $"Created flow '{saved.Id}' with {parseSteps.Length} parse node(s), {fetchSteps.Length} fetch node(s), {augmentSteps.Length} augment(s), and {deliverySteps.Length} delivery route(s).";
                 _loadedFlowId = saved.Id;
@@ -776,8 +759,6 @@ public partial class Designer : IAsyncDisposable
             ? 0
             : _configUsages.Count(usage => !usage.IsResolved && string.Equals(usage.FlowId, flowId, StringComparison.OrdinalIgnoreCase));
     }
-
-    private void AddMappingRow() => _mappingRows.Add(new FieldMappingRow());
 
     private IReadOnlyList<ModuleViewModel> ModulesForStage(NodeStage stage)
     {

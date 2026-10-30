@@ -79,7 +79,6 @@ public partial class Designer
 
         _nodes.Clear();
         _joinEditors.Clear();
-        _mappingRows.Clear();
         _selectedNodeId = null;
 
         if (!IsExistingFlow)
@@ -131,7 +130,7 @@ public partial class Designer
         _seedSource = SeedSource.BizTalk;
         _showBizTalkPanel = false;
         AutoLayout();
-        _statusMessage = $"Loaded BizTalk draft flow '{candidate.SuggestedFlowId}' onto the canvas with {ParseNodes.Count} source lane(s) ({FetchNodes.Count} fetch node(s)). It stays disabled until you review its settings and enable it.";
+        _statusMessage = $"Loaded BizTalk draft flow '{candidate.SuggestedFlowId}' onto the canvas with {ParseNodes.Count} source lane(s) ({FetchNodes.Count} fetch node(s)). Save it disabled; execution remains blocked until verified translation support exists.";
     }
 
     private void ClearBizTalk()

@@ -44,7 +44,7 @@ public sealed class FlowManagementApiTests
         builder.Logging.ClearProviders();
         builder.Services.AddProblemDetails();
         builder.Services.AddExceptionHandler<ApiExceptionHandler>();
-        builder.Services.AddValidation();
+        ApiTestValidation.Register(builder.Services);
         builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
         builder.Services.AddSingleton<IFlowDefinitionService>(definitions);
         builder.Services.AddSingleton<IModuleCatalog>(catalog);

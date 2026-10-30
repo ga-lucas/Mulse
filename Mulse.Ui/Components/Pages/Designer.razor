@@ -125,6 +125,7 @@
 
             <label class="field-label" for="source-path">Source path</label>
             <input id="source-path" class="mapping-input" @bind="_sourcePath" @bind:event="oninput" placeholder="C:\Users\...\MyBizTalkApp.sln" />
+            <p class="field-hint">Choose a solution, project, directory, or .odx file. An .odx file must be explicitly included by exactly one .btproj in the same folder; its whole project is analyzed. Choose the desired orchestration candidate below.</p>
 
             <label class="field-label" for="additional-source-paths">Additional solutions/projects (optional)</label>
             <input id="additional-source-paths" class="mapping-input" @bind="_additionalSourcePaths" @bind:event="oninput" placeholder="C:\...\Partners.sln; C:\...\Core.sln" />
@@ -307,9 +308,13 @@
         <p class="field-hint">Unique technical identifier used in URLs and API calls; fixed after creation.</p>
 
         <label class="field-label checkbox-row">
-            <input type="checkbox" checked="@_enabled" @onchange="e => _enabled = (bool)(e.Value ?? false)" />
+            <input type="checkbox" checked="@_enabled" @onchange="e => _enabled = (bool)(e.Value ?? false)" disabled="@(_migration is not null && !_enabled)" />
             <span>Enabled</span>
         </label>
+        @if (_migration is not null)
+        {
+            <p class="status-banner error compact">@FlowMigrationReportViewModel.ExecutionBlockReason You can still edit and save a disabled draft.</p>
+        }
 
         <label class="field-label" for="trigger-mode">Trigger mode</label>
         <select id="trigger-mode" class="selector" value="@_triggerMode" @onchange="e => _triggerMode = e.Value?.ToString() ?? _triggerMode">
@@ -827,6 +832,11 @@
                         <button class="secondary-button" @onclick="@(() => AddJoinMapping(node))">Add mapping</button>
                     </div>
                 }
+                else if (node.Stage == NodeStage.Render && node.ModuleId == "xml-mapping-render")
+                {
+                    <p class="field-hint">Open Mapping Designer to edit this node's saved XML field mappings and preview sample output.</p>
+                    <button class="secondary-button" @onclick="() => _showMappingDesigner = true">Edit XML mapping</button>
+                }
                 else
                 {
                     @RenderSettingsEditor(catalogModule?.Settings, node.Settings)
@@ -931,50 +941,20 @@
     @if (_showMappingDesigner)
     {
         <FloatingPanel Title="Mapping Designer" Icon="🔗" X="420" Y="24" Width="560" ShowClose="true" OnClose="ToggleMappingDesigner">
-            <p class="panel-hint">Create and edit mappings directly in the UI. These mappings are available to scratch-built workflows and can be used as the editing surface for imported BizTalk maps.</p>
-            <div class="action-row">
-                <button class="secondary-button" @onclick="AddMappingRow">Add mapping</button>
-            </div>
-
-            <table class="mapping-table">
-                <thead>
-                    <tr>
-                        <th>Reads from</th>
-                        <th>Source path</th>
-                        <th>Target field</th>
-                        <th>Condition</th>
-                        <th>Literal</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var row in _mappingRows)
-                    {
-                        <tr @key="row">
-                            <td>
-                                <select class="selector compact" value="@row.SourceKind" @onchange="e => row.SourceKind = e.Value?.ToString() ?? row.SourceKind">
-                                    @foreach (var kind in ScalarSourceKindOptions)
-                                    {
-                                        <option value="@kind">@kind</option>
-                                    }
-                                </select>
-                            </td>
-                            <td><ReferenceInput Value="@row.SourcePath" ValueChanged="value => row.SourcePath = value" Label="Mapping source path" References="_configReferences" /></td>
-                            <td><ReferenceInput Value="@row.TargetField" ValueChanged="value => row.TargetField = value" Label="Mapping target field" References="_configReferences" /></td>
-                            <td>
-                                <select class="selector compact" value="@row.Condition" @onchange="e => row.Condition = e.Value?.ToString() ?? row.Condition">
-                                    @foreach (var condition in ConditionOptions)
-                                    {
-                                        <option value="@condition">@condition</option>
-                                    }
-                                </select>
-                            </td>
-                            <td><ReferenceInput Value="@row.LiteralValue" ValueChanged="value => row.LiteralValue = value" Label="Mapping literal JSON" References="_configReferences" /></td>
-                            <td><button class="secondary-button" @onclick="() => _mappingRows.Remove(row)">Remove</button></td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
+            <p class="panel-hint">Mappings belong to individual nodes and persist with the flow. XML maps use the same editor for scratch-built and imported drafts; automatic BizTalk map conversion is still pending.</p>
+            <button class="secondary-button" @onclick="AddXmlMappingRender">Add XML mapping render</button>
+            @foreach (var mapNode in _nodes.Where(node => node.Stage == NodeStage.Render && node.ModuleId == "xml-mapping-render"))
+            {
+                <details @key="mapNode.Id" open>
+                    <summary>@NodeHeading(mapNode)</summary>
+                    <XmlMappingEditor @key="mapNode.Id" Value="@(mapNode.Settings.GetValueOrDefault("mappingJson") ?? string.Empty)" ValueChanged='value => mapNode.Settings["mappingJson"] = value' />
+                </details>
+            }
+            @foreach (var join in AugmentNodes.Where(IsJoinNode))
+            {
+                <button class="secondary-button" @onclick="() => SelectNode(join)">Edit field mappings for @NodeHeading(join)</button>
+            }
+            <p class="field-hint">For existing XSLT renders, use Properties to configure the stylesheet path. Existing join field mappings are edited per join in Properties, not in a separate unsaved table.</p>
         </FloatingPanel>
     }
 
