@@ -461,6 +461,15 @@ binding file/directory paths when deployment bindings live outside the source tr
 The implementation in `Service\BizTalkImport` can:
 
 - Enumerate orchestrations, maps, schemas, pipelines, and custom assemblies.
+- Keep same-named projects separate by full path, resolve explicit `ProjectReference` paths and infer
+  `HintPath` ownership inside the analyzed workspace, then fall back to names only when unique and no
+  path was supplied. Ambiguous/unresolved references are reported, not guessed. The import panel's
+  **Project dependencies** report shows the source evidence, resolution method, and candidate paths.
+  Include referenced projects in the source paths; projects outside the analyzed scope are not loaded
+  automatically. MSBuild expressions and shared/external output directories require manual review.
+- Generate distinct draft IDs (and configuration reference prefixes) for colliding project/orchestration
+  names, with each candidate showing its original project path. Collision suffixes are stable for the
+  same analyzed paths; moving projects or changing the workspace can change them.
 - Auto-translate simple orchestration `Decision` branches (including `Regex.IsMatch(...)` conditions) into
   declarative decision rules, and scaffold a starter C# module for anything too complex (correlations,
   convoys, transactions, loops) rather than guessing.
@@ -477,6 +486,9 @@ settings and warnings, then explicitly save it. Download the suggested scaffolde
 or as a bundle, implement their business behavior, build/load them, and resolve configuration gaps
 before enabling. A scaffold is a migration starting point, not a completed translation or a guarantee of
 BizTalk-equivalent behavior. Existing flow edits still require deliberate review before saving.
+
+See [the compatibility plan and implementation status](BizTalk-Import-Compatibility-Plan.md) for verified
+increments and remaining gaps, including the Mapping Designer and semantic readiness gates.
 
 ## Running locally
 

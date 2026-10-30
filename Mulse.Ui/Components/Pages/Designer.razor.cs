@@ -106,6 +106,7 @@ public partial class Designer : IAsyncDisposable
     private double? _retryMaxDelaySeconds;
 
     private bool _showSamplePanel;
+    private bool _showMappingDesigner;
     private bool _isAnalyzingSample;
     private string _sampleText = string.Empty;
     private string? _fileName;
@@ -120,6 +121,15 @@ public partial class Designer : IAsyncDisposable
     private BizTalkSolutionAnalysisViewModel? _bizTalkAnalysis;
 
     private bool IsExistingFlow => !string.IsNullOrWhiteSpace(FlowId);
+
+    private void ToggleMappingDesigner()
+    {
+        _showMappingDesigner = !_showMappingDesigner;
+        if (_showMappingDesigner && _mappingRows.Count == 0)
+        {
+            AddMappingRow();
+        }
+    }
 
     private FlowNode? SelectedNode => _nodes.FirstOrDefault(node => string.Equals(node.Id, _selectedNodeId, StringComparison.Ordinal));
 

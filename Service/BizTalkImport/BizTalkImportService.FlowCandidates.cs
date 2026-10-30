@@ -7,37 +7,17 @@ namespace Service.BizTalkImport;
 public sealed partial class BizTalkImportService
 {
     /// <summary>
-    /// Resolves the set of artifacts owned by BizTalk projects that <paramref name="project"/> depends on
-    /// (directly or transitively), such as shared schema or pipeline library projects. Many orchestration
-    /// projects don't ship their own schemas or pipelines but instead reference a separate library project,
-    /// so classification heuristics (parse/render module selection) need this signal in addition to the
-    /// project's own <see cref="BizTalkProjectResponse.Artifacts"/> to avoid falling back to generic guesses.
+    /// Collects artifacts from the resolved direct and transitive <paramref name="dependencyPaths"/>.
+    /// Many orchestration projects depend on shared schema or pipeline libraries, so classification
+    /// heuristics need this signal in addition to the project's own artifacts.
     /// </summary>
     private static IReadOnlyList<BizTalkArtifactResponse> ResolveReferencedArtifacts(
-        BizTalkProjectAnalysis project,
-        IReadOnlyDictionary<string, BizTalkProjectAnalysis> projectsByName)
-    {
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { project.Response.Name };
-        var collected = new List<BizTalkArtifactResponse>();
-        var pending = new Queue<string>(project.References);
-
-        while (pending.Count > 0)
-        {
-            var referenceName = pending.Dequeue();
-            if (!visited.Add(referenceName) || !projectsByName.TryGetValue(referenceName, out var referencedProject))
-            {
-                continue;
-            }
-
-            collected.AddRange(referencedProject.Response.Artifacts);
-            foreach (var transitiveReference in referencedProject.References)
-            {
-                pending.Enqueue(transitiveReference);
-            }
-        }
-
-        return collected;
-    }
+        IReadOnlyList<string> dependencyPaths,
+        IReadOnlyDictionary<string, BizTalkProjectAnalysis> projectsByPath)
+        => dependencyPaths.Where(projectsByPath.ContainsKey)
+            .SelectMany(path => projectsByPath[path].Response.Artifacts)
+            .DistinctBy(static artifact => artifact.FullPath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
     /// <summary>
     /// Combines a project's own artifacts with artifacts inherited from referenced BizTalk library projects,
@@ -49,16 +29,10 @@ public sealed partial class BizTalkImportService
     private static BizTalkCustomAssemblyResponse AnalyzeCustomProject(
         string projectPath,
         string rootDirectory,
-        IReadOnlyList<BizTalkProjectAnalysis> bizTalkProjects,
         IReadOnlyList<IBizTalkAssemblyKindClassifier> assemblyKindClassifiers)
     {
         var document = XDocument.Load(projectPath, LoadOptions.None);
         var assemblyName = GetProperty(document, "AssemblyName") ?? Path.GetFileNameWithoutExtension(projectPath);
-        var usedByProjects = bizTalkProjects
-            .Where(project => project.References.Contains(assemblyName, StringComparer.OrdinalIgnoreCase)
-                || project.References.Contains(Path.GetFileNameWithoutExtension(projectPath), StringComparer.OrdinalIgnoreCase))
-            .Select(project => project.Response.Name)
-            .ToArray();
         var projectDirectory = Path.GetDirectoryName(projectPath) ?? rootDirectory;
         var compileIncludePaths = document.Descendants()
             .Where(static element => string.Equals(element.Name.LocalName, "Compile", StringComparison.Ordinal))
@@ -86,7 +60,7 @@ public sealed partial class BizTalkImportService
             suggestedModuleKind,
             migrationApproach,
             false,
-            usedByProjects)
+            [])
         {
             PromotedProperties = promotedProperties
         };
@@ -120,7 +94,8 @@ public sealed partial class BizTalkImportService
     private static IReadOnlyList<BizTalkFlowCandidateResponse> CreateFlowCandidates(
         BizTalkProjectAnalysis project,
         IReadOnlyList<BizTalkCustomAssemblyResponse> customAssemblies,
-        IReadOnlyList<BindingFileAnalysis> bindingFiles)
+        IReadOnlyList<BindingFileAnalysis> bindingFiles,
+        ISet<string> reservedFlowIds)
     {
         var orchestrationNames = OrchestrationArtifacts(project.Response.Artifacts)
             .Select(OrchestrationName)
@@ -128,14 +103,15 @@ public sealed partial class BizTalkImportService
             .ToArray();
         if (orchestrationNames.Length <= 1)
         {
-            return [CreateFlowCandidate(project, customAssemblies, bindingFiles, split: null)];
+            return [CreateFlowCandidate(project, customAssemblies, bindingFiles, reservedFlowIds, split: null)];
         }
 
-        return orchestrationNames
+        return orchestrationNames.OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
             .Select(orchestrationName => CreateFlowCandidate(
                 project,
                 customAssemblies,
                 bindingFiles,
+                reservedFlowIds,
                 new OrchestrationSplit(orchestrationName, orchestrationNames.Length)))
             .ToArray();
     }
@@ -144,14 +120,16 @@ public sealed partial class BizTalkImportService
         BizTalkProjectAnalysis project,
         IReadOnlyList<BizTalkCustomAssemblyResponse> customAssemblies,
         IReadOnlyList<BindingFileAnalysis> bindingFiles,
+        ISet<string> reservedFlowIds,
         OrchestrationSplit? split)
     {
         var effectiveProject = ScopeProjectToOrchestration(project.Response, split);
-        var flowId = split is null
+        var suggestedId = split is null
             ? CreateFlowId(project.Response.Name)
             : CreateFlowId($"{project.Response.Name}-{split.OrchestrationName}");
+        var flowId = ReserveFlowId(suggestedId, $"{project.Response.ProjectPath}|{split?.OrchestrationName}", reservedFlowIds);
         var relatedAssemblies = customAssemblies
-            .Where(assembly => assembly.UsedByProjects.Contains(project.Response.Name, StringComparer.OrdinalIgnoreCase))
+            .Where(assembly => assembly.UsedByProjectPaths.Contains(project.Response.ProjectPath, StringComparer.OrdinalIgnoreCase))
             .ToArray();
         var relatedBindings = bindingFiles
             .Where(binding => IsBindingRelatedToProject(binding, project.Response))
@@ -224,6 +202,11 @@ public sealed partial class BizTalkImportService
         {
             "This draft is disabled by default so imported addresses, credentials, and map paths can be reviewed safely before execution."
         };
+        draftWarnings.AddRange(project.DependencyWarnings);
+        if (!string.Equals(flowId, suggestedId, StringComparison.Ordinal))
+        {
+            draftWarnings.Add($"The suggested flow id '{suggestedId}' collides with another candidate. A source-path-derived suffix was added to keep the draft and its configuration references distinct.");
+        }
 
         if (split is not null)
         {
@@ -315,6 +298,7 @@ public sealed partial class BizTalkImportService
             relatedBindings.Select(static binding => binding.Name).ToArray(),
             draftFlow)
         {
+            SourceProjectPath = project.Response.ProjectPath,
             ScaffoldedModules = scaffoldedModules,
             IsLikelyTestArtifact = isLikelyTestArtifact
         };

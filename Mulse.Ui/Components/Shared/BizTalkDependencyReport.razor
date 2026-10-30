@@ -1,0 +1,46 @@
+<details>
+    <summary>Project dependencies (@Projects.Count project(s))</summary>
+    <p class="field-hint">Projects are identified by full path. Ambiguous or unresolved references are not replaced with a same-named project. Resolution does not imply executable BizTalk compatibility.</p>
+    @foreach (var project in Projects)
+    {
+        <section @key="project.ProjectPath">
+            <h4>@project.Name</h4>
+            <p class="path-value">@project.ProjectPath</p>
+            @if (project.References.Count == 0)
+            {
+                <p>No project or assembly references reported.</p>
+            }
+            @foreach (var reference in project.References)
+            {
+                <details>
+                    <summary>@reference.Name - @reference.Resolution</summary>
+                    <p><strong>Include:</strong> <code>@reference.Include</code></p>
+                    @if (!string.IsNullOrWhiteSpace(reference.HintPath))
+                    {
+                        <p><strong>HintPath:</strong> <code>@reference.HintPath</code></p>
+                    }
+                    @if (reference.ResolvedProjectPath is { } resolved)
+                    {
+                        <p><strong>Resolved project:</strong> <code>@resolved</code></p>
+                    }
+                    <p>@reference.Description</p>
+                    @if (reference.CandidateProjectPaths.Count > 0)
+                    {
+                        <p>Source project candidates:</p>
+                        <ul>
+                            @foreach (var candidatePath in reference.CandidateProjectPaths)
+                            {
+                                <li class="path-value">@candidatePath</li>
+                            }
+                        </ul>
+                    }
+                </details>
+            }
+        </section>
+    }
+</details>
+
+@code {
+    [Microsoft.AspNetCore.Components.Parameter]
+    public IReadOnlyList<BizTalkProjectViewModel> Projects { get; set; } = [];
+}

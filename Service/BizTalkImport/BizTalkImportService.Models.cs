@@ -24,7 +24,10 @@ public sealed partial class BizTalkImportService
         IReadOnlyList<string> BizTalkProjects,
         IReadOnlyList<string> CustomProjects);
 
-    internal sealed record BizTalkProjectAnalysis(BizTalkProjectResponse Response, IReadOnlyList<string> References);
+    internal sealed record BizTalkProjectAnalysis(BizTalkProjectResponse Response, IReadOnlyList<ProjectReference> References)
+    {
+        public IReadOnlyList<string> DependencyWarnings { get; init; } = [];
+    }
 
     internal sealed record BindingFileAnalysis(
         string Name,

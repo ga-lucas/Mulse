@@ -10,6 +10,8 @@ public sealed record BizTalkCustomAssemblyResponse(
     bool WrapperRecommended,
     IReadOnlyList<string> UsedByProjects)
 {
+    public IReadOnlyList<string> UsedByProjectPaths { get; init; } = [];
+
     /// <summary>
     /// Context properties this assembly's source promotes or writes (e.g. via a pipeline component like
     /// <c>HL7Promotions.cs</c> calling <c>context.Promote(...)</c>/<c>context.Write(...)</c>), extracted by

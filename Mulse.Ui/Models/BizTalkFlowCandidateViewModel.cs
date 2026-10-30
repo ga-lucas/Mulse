@@ -13,6 +13,8 @@ public sealed record BizTalkFlowCandidateViewModel(
     IReadOnlyList<string> RelatedBindingFiles,
     BizTalkDraftFlowViewModel DraftFlow)
 {
+    public string SourceProjectPath { get; init; } = string.Empty;
+
     /// <summary>
     /// Starter C# module skeletons scaffolded for orchestrations with decision or control-flow logic (convoys,
     /// correlations, transactions, loops) too complex to auto-translate into declarative augment rules. Each

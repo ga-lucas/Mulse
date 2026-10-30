@@ -125,7 +125,7 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                customAssemblies.Add(AnalyzeCustomProject(projectPath, projectRootDirectory, bizTalkProjects, _assemblyKindClassifiers));
+                customAssemblies.Add(AnalyzeCustomProject(projectPath, projectRootDirectory, _assemblyKindClassifiers));
             }
             catch (XmlException exception)
             {
@@ -163,17 +163,48 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             warnings.Add("No BizTalk binding files were discovered, so fetch and deliver drafts fall back to generic repository-style modules and placeholders. BizTalk bindings are often deployed separately from source control (for example via the BizTalk Administration Console's 'Export Bindings', 'BTSTask ExportBindings', or a deployment framework's environment settings). Export them and pass their location(s) via AdditionalBindingPaths to improve the generated drafts.");
         }
 
-        var projectsByName = bizTalkProjects.ToDictionary(static project => project.Response.Name, StringComparer.OrdinalIgnoreCase);
+        var projectsByPath = bizTalkProjects.ToDictionary(static project => project.Response.ProjectPath, StringComparer.OrdinalIgnoreCase);
+        var identities = bizTalkProjects.Select(static project => new ProjectIdentity(project.Response.Name, project.Response.ProjectPath))
+            .Concat(customAssemblies.Select(static assembly => new ProjectIdentity(assembly.Name, assembly.ProjectPath)))
+            .ToArray();
+        var referencesByPath = bizTalkProjects.ToDictionary(
+            static project => project.Response.ProjectPath,
+            project => (IReadOnlyList<BizTalkProjectReferenceResponse>)project.References
+                .Select(reference => ResolveProjectReference(project.Response.ProjectPath, reference, identities)).ToArray(),
+            StringComparer.OrdinalIgnoreCase);
+        var dependenciesByPath = bizTalkProjects.ToDictionary(
+            static project => project.Response.ProjectPath,
+            project => ResolveDependencyPaths(project.Response.ProjectPath, referencesByPath),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var (projectPath, references) in referencesByPath)
+        {
+            warnings.AddRange(DescribeReferenceIssues(projectPath, references));
+        }
+
+        customAssemblies = customAssemblies.Select(assembly =>
+        {
+            var consumers = bizTalkProjects.Where(project => dependenciesByPath[project.Response.ProjectPath]
+                .Contains(assembly.ProjectPath, StringComparer.OrdinalIgnoreCase)).ToArray();
+            return assembly with
+            {
+                UsedByProjects = consumers.Select(static project => project.Response.Name).ToArray(),
+                UsedByProjectPaths = consumers.Select(static project => project.Response.ProjectPath).ToArray()
+            };
+        }).ToList();
         var hydratedAnalyses = bizTalkProjects
             .Select(project => project with
             {
+                DependencyWarnings = dependenciesByPath[project.Response.ProjectPath].Prepend(project.Response.ProjectPath)
+                    .Where(referencesByPath.ContainsKey)
+                    .SelectMany(path => DescribeReferenceIssues(path, referencesByPath[path])).ToArray(),
                 Response = project.Response with
                 {
                     ReferencedCustomAssemblies = customAssemblies
-                        .Where(assembly => assembly.UsedByProjects.Contains(project.Response.Name, StringComparer.OrdinalIgnoreCase))
+                        .Where(assembly => assembly.UsedByProjectPaths.Contains(project.Response.ProjectPath, StringComparer.OrdinalIgnoreCase))
                         .Select(assembly => assembly.Name)
                         .ToArray(),
-                    ReferencedArtifacts = ResolveReferencedArtifacts(project, projectsByName)
+                    References = referencesByPath[project.Response.ProjectPath],
+                    ReferencedArtifacts = ResolveReferencedArtifacts(dependenciesByPath[project.Response.ProjectPath], projectsByPath)
                 }
             })
             .ToArray();
@@ -193,8 +224,10 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             warnings.Add("No draft flows were generated: every analyzed project looks like a shared schema library (no orchestrations, maps, pipelines, or matching binding file). Point the importer at the project or solution that owns the orchestration/pipeline, or supply its binding export via AdditionalBindingPaths.");
         }
 
+        var reservedFlowIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var flowCandidates = candidateProjects
-            .SelectMany(project => CreateFlowCandidates(project, customAssemblies, bindingAnalyses))
+            .OrderBy(static project => project.Response.ProjectPath, StringComparer.OrdinalIgnoreCase)
+            .SelectMany(project => CreateFlowCandidates(project, customAssemblies, bindingAnalyses, reservedFlowIds))
             .ToArray();
 
         return Task.FromResult(new BizTalkSolutionAnalysisResponse(
@@ -310,15 +343,7 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             AddArtifacts(document, projectDirectory, rootDirectory, itemName, artifactKind, artifacts);
         }
 
-        var references = document.Descendants()
-            .Where(static element => string.Equals(element.Name.LocalName, "Reference", StringComparison.Ordinal)
-                || string.Equals(element.Name.LocalName, "ProjectReference", StringComparison.Ordinal))
-            .Select(static reference => NormalizeReferenceName(
-                reference.Attribute("Include")?.Value,
-                reference.Elements().FirstOrDefault(static element => string.Equals(element.Name.LocalName, "Name", StringComparison.Ordinal))?.Value))
-            .Where(static name => !string.IsNullOrWhiteSpace(name))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var references = ReadProjectReferences(document);
 
         var orchestrationSignals = DetectOrchestrationControlFlowSignalsByOrchestration(artifacts);
         var (receivePipelineCount, sendPipelineCount) = ClassifyPipelineDirections(artifacts);

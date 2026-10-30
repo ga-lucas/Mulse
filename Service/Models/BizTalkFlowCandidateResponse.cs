@@ -14,6 +14,8 @@ public sealed record BizTalkFlowCandidateResponse(
     IReadOnlyList<string> RelatedBindingFiles,
     BizTalkDraftFlowResponse DraftFlow)
 {
+    public string SourceProjectPath { get; init; } = string.Empty;
+
     /// <summary>
     /// Starter C# module source files scaffolded for orchestrations with decision branches or control-flow
     /// constructs (convoys, correlation, transactions, loops) too complex to auto-translate into declarative

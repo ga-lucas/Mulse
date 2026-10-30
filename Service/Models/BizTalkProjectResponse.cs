@@ -11,6 +11,8 @@ public sealed record BizTalkProjectResponse(
     IReadOnlyList<string> ReferencedCustomAssemblies,
     IReadOnlyList<BizTalkArtifactResponse> Artifacts)
 {
+    public IReadOnlyList<BizTalkProjectReferenceResponse> References { get; init; } = [];
+
     /// <summary>
     /// Artifacts (schemas, pipelines, maps, orchestrations) owned by other BizTalk projects that this
     /// project references, resolved transitively. Orchestration-only projects commonly depend on separate

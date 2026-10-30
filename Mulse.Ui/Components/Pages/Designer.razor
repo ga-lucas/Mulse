@@ -18,6 +18,7 @@
         </div>
         <div class="designer-topbar-actions" role="group" aria-label="Flow actions">
             <button class="secondary-button @(_showSamplePanel ? "active" : null)" aria-expanded="@(_showSamplePanel ? "true" : "false")" @onclick="ToggleSamplePanel">Add sample data</button>
+            <button class="secondary-button @(_showMappingDesigner ? "active" : null)" aria-expanded="@(_showMappingDesigner ? "true" : "false")" @onclick="ToggleMappingDesigner">Mapping Designer</button>
             <button class="secondary-button @(_showBizTalkPanel ? "active" : null)" aria-expanded="@(_showBizTalkPanel ? "true" : "false")" @onclick="ToggleBizTalkPanel">Import from BizTalk</button>
             <button class="secondary-button" @onclick="RefreshCatalogAsync" disabled="@_isAnalyzingSample">Refresh modules</button>
             <button class="secondary-button" @onclick="AutoLayout">Auto layout</button>
@@ -180,6 +181,8 @@
                     </div>
                 }
 
+                <BizTalkDependencyReport Projects="_bizTalkAnalysis.BizTalkProjects" />
+
                 @if (_bizTalkAnalysis.FlowCandidates.Count == 0)
                 {
                     <p>No draft flow candidates were generated for this source.</p>
@@ -194,6 +197,7 @@
                                     <div>
                                         <h3>@candidate.SuggestedFlowId</h3>
                                         <p><strong>Project:</strong> @candidate.SourceProject</p>
+                                        <p class="path-value">@candidate.SourceProjectPath</p>
                                         @if (candidate.IsLikelyTestArtifact)
                                         {
                                             <p class="test-artifact-badge">? Looks like a test/debug artifact - confirm before migrating</p>
@@ -920,10 +924,10 @@
     </FloatingPanel>
     </div>
 
-    @if (_mappingRows.Count > 0)
+    @if (_showMappingDesigner)
     {
-        <FloatingPanel Title="Field mappings" Icon="🔗" X="420" Y="24" Width="560">
-            <p class="panel-hint">Visual mappings captured from the analyzed sample. They are written into the join and map augment's field mappings when the flow is created.</p>
+        <FloatingPanel Title="Mapping Designer" Icon="🔗" X="420" Y="24" Width="560" ShowClose="true" OnClose="ToggleMappingDesigner">
+            <p class="panel-hint">Create and edit mappings directly in the UI. These mappings are available to scratch-built workflows and can be used as the editing surface for imported BizTalk maps.</p>
             <div class="action-row">
                 <button class="secondary-button" @onclick="AddMappingRow">Add mapping</button>
             </div>

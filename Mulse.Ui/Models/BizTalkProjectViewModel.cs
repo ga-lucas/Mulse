@@ -10,6 +10,8 @@ public sealed record BizTalkProjectViewModel(
     IReadOnlyList<string> ReferencedCustomAssemblies,
     IReadOnlyList<BizTalkArtifactViewModel> Artifacts)
 {
+    public IReadOnlyList<BizTalkProjectReferenceViewModel> References { get; init; } = [];
+
     /// <summary>Artifacts owned by referenced BizTalk projects (e.g. shared schema/pipeline libraries).</summary>
     public IReadOnlyList<BizTalkArtifactViewModel> ReferencedArtifacts { get; init; } = [];
 
