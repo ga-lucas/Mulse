@@ -97,7 +97,10 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
         var availableModules = available.Select(static entry => entry.Descriptor).ToArray();
 
         ValidateSourceGraph(pipeline);
+        DurableBatchSafety.Validate(pipeline);
         FlowModuleDependencies.EnsureAvailable(pipeline, available, runtimeConfigurationStore.GetState().ConfigValues);
+        if (existingFlow is not null)
+            DurableBatchSafety.EnsureUnchanged(existingFlow, pipeline, runtimeConfigurationStore.GetState().OrchestrationCheckpoints);
 
         foreach (var fetch in pipeline.Fetches)
         {

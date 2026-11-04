@@ -41,7 +41,9 @@ public sealed partial class FlowRuntime
             logger.LogWarning(
                 "Cannot resume pending retry for flow {FlowId} execution {ExecutionId} stage {StageId}: {Reason}",
                 retryState.FlowId, retryState.ExecutionId, retryState.StageId, exception.Message);
-            if (retryState.SourceReceipts.Count == 0 || exception is KeyNotFoundException)
+            var hasCollector = flowDefinitionService.GetAll().Any(flow => flow.Id.Equals(retryState.FlowId, StringComparison.OrdinalIgnoreCase)
+                && flow.Augments.Any(step => step.Module.Equals("durable-batch-augment", StringComparison.OrdinalIgnoreCase)));
+            if ((retryState.SourceReceipts.Count == 0 && retryState.CheckpointCorrelationKey is null && !hasCollector) || exception is KeyNotFoundException)
                 await flowRetryStateStore.DeleteAllForExecutionAsync(retryState.FlowId, retryState.ExecutionId, cancellationToken).ConfigureAwait(false);
             return null;
         }

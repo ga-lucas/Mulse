@@ -197,29 +197,14 @@ public sealed class StatefulOrchestrationAugmentModule(
             Bookmark = bookmark,
             UpdatedAt = timeProvider.GetUtcNow(),
             StateValues = new Dictionary<string, string>(stateValues, StringComparer.OrdinalIgnoreCase),
-            Payloads = batch.Payloads.Select(CreateSnapshot).ToList(),
+            Payloads = batch.Payloads.Select(FlowOrchestrationPayloadSnapshot.Capture).ToList(),
             SourceReceipts = context.SourceReceipts.ToList()
-        };
-    }
-
-    private static FlowOrchestrationPayloadSnapshot CreateSnapshot(IntegrationPayload payload)
-    {
-        return new FlowOrchestrationPayloadSnapshot
-        {
-            Name = payload.Name,
-            ContentBase64 = Convert.ToBase64String(payload.Content.ToArray()),
-            ContentType = payload.ContentType,
-            Metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.OrdinalIgnoreCase)
         };
     }
 
     private static IntegrationBatch MergeBatches(FlowOrchestrationCheckpoint checkpoint, IntegrationBatch currentBatch)
     {
-        var restoredPayloads = checkpoint.Payloads.Select(snapshot => new IntegrationPayload(
-            snapshot.Name,
-            BinaryData.FromBytes(Convert.FromBase64String(snapshot.ContentBase64)),
-            snapshot.ContentType,
-            new Dictionary<string, string>(snapshot.Metadata, StringComparer.OrdinalIgnoreCase)));
+        var restoredPayloads = checkpoint.Payloads.Select(snapshot => snapshot.Restore());
         return new IntegrationBatch(restoredPayloads.Concat(currentBatch.Payloads).ToArray());
     }
 

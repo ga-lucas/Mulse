@@ -1,0 +1,52 @@
+@inject IMulseApiClient ApiClient
+
+<details>
+    <summary>Pending batches / orchestration checkpoints</summary>
+    <p>Inspect saved state without fetching messages or replaying delivery. This view does not expose message bodies or source credentials.</p>
+    <button class="secondary-button" disabled="@_loading" @onclick="RefreshAsync">@(_loading ? "Loading checkpoints..." : "Refresh checkpoints")</button>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (_checkpoints is { Count: 0 }) { <p>No pending checkpoints.</p> }
+    @if (_checkpoints is { Count: > 0 })
+    {
+        @foreach (var checkpoint in _checkpoints)
+        {
+            <div class="setting-row" @key="checkpoint.InstanceId">
+                <p><strong>@checkpoint.Bookmark</strong> - correlation: <code>@checkpoint.CorrelationKey</code></p>
+                <p>Instance: <code>@checkpoint.InstanceId</code>; updated: @checkpoint.UpdatedAt.ToString("u")</p>
+                <p>@checkpoint.PayloadCount payload(s); @checkpoint.PendingSourceCount pending source receipt(s).</p>
+                @if (checkpoint.TargetCount is { } count)
+                {
+                    <p>Minimum count: @count. @(checkpoint.BatchReady == true ? "Released; awaiting completion or recovery. New runs are blocked to prevent replay." : "Collecting; sources remain pending. A count-only batch has no automatic timeout.")</p>
+                }
+            </div>
+        }
+        <p>Do not edit processing/configuration or delete the flow while data is pending. A released checkpoint is removed after successful delivery and source acknowledgements, not merely after rendering. Pending retries resume automatically; exhausted failures need outcome review before any replay. No destructive reset/replay button is provided.</p>
+    }
+</details>
+
+@code {
+    [Parameter, EditorRequired] public string FlowId { get; set; } = "";
+    private IReadOnlyList<FlowCheckpointViewModel>? _checkpoints;
+    private string? _error, _loadedFlow;
+    private bool _loading;
+    protected override void OnParametersSet()
+    {
+        if (_loadedFlow == FlowId) return;
+        _loadedFlow = FlowId;
+        _checkpoints = null;
+        _error = null;
+    }
+    private async Task RefreshAsync()
+    {
+        _loading = true; _error = null;
+        var flow = FlowId;
+        try
+        {
+            var checkpoints = await ApiClient.GetFlowCheckpointsAsync(flow, CancellationToken.None);
+            if (flow == FlowId) _checkpoints = checkpoints;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or System.Text.Json.JsonException)
+        { if (flow == FlowId) { _checkpoints = null; _error = "Unable to read checkpoints: " + ex.Message; } }
+        finally { _loading = false; }
+    }
+}

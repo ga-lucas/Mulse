@@ -79,6 +79,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
             var updated = Clone(_state);
             if (replace)
             {
+                EnsureNoPendingBatches(updated.OrchestrationCheckpoints);
                 updated.Pipelines.Clear();
                 updated.ManagedPackages.Clear();
                 updated.ConfigValues.Clear();
@@ -106,6 +107,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         try
         {
             var updated = Clone(_state);
+            EnsureNoPendingBatches(updated.OrchestrationCheckpoints);
             var count = updated.Pipelines.Count;
             updated.Pipelines.Clear();
             updated.OrchestrationCheckpoints.Clear();
@@ -114,6 +116,20 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
             return count;
         }
         finally { _gate.Release(); }
+    }
+
+    private static void EnsureNoPendingBatches(IEnumerable<FlowOrchestrationCheckpoint> checkpoints)
+    {
+        if (checkpoints.Any(checkpoint => checkpoint.Batch is not null))
+            throw new InvalidOperationException("Pending durable batches prevent deleting flows or replacing the workspace. Complete/recover delivery and source acknowledgements first; pending messages were not deleted.");
+    }
+
+    private void EnsureBatchConfigEditable(string reference)
+    {
+        var heldFlows = _state.Pipelines.Where(flow => _state.OrchestrationCheckpoints.Any(checkpoint => checkpoint.Batch is not null
+            && checkpoint.FlowId.Equals(flow.Id, StringComparison.OrdinalIgnoreCase)));
+        if (new ConfigValueResolver(this).FindReferenceUsages(heldFlows).Any(usage => usage.Reference.Equals(reference, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException($"Configuration '{reference}' is used by a flow with pending durable batches. Complete/recover the batch before changing its configuration.");
     }
 
     private async Task CommitWorkspaceAsync(RuntimeMulseState updated, CancellationToken cancellationToken)
@@ -152,6 +168,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
             var existingIndex = updated.Pipelines.FindIndex(candidate => string.Equals(candidate.Id, pipeline.Id, StringComparison.OrdinalIgnoreCase));
             if (existingIndex >= 0)
             {
+                DurableBatchSafety.EnsureUnchanged(updated.Pipelines[existingIndex], pipeline, updated.OrchestrationCheckpoints);
                 updated.Pipelines[existingIndex] = Clone(pipeline);
             }
             else
@@ -179,6 +196,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         try
         {
             var updated = Clone(_state);
+            EnsureNoPendingBatches(updated.OrchestrationCheckpoints.Where(checkpoint => checkpoint.FlowId.Equals(flowId, StringComparison.OrdinalIgnoreCase)));
             updated.Pipelines.RemoveAll(candidate => string.Equals(candidate.Id, flowId, StringComparison.OrdinalIgnoreCase));
             updated.OrchestrationCheckpoints.RemoveAll(candidate => string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase));
             updated.PendingRetries.RemoveAll(candidate => string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase));
@@ -260,8 +278,8 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
                 .ThenBy(static candidate => candidate.CorrelationKey, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
+            await WriteStateAsync(updated, _protector, _usesEnvelope, cancellationToken).ConfigureAwait(false);
             _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally
@@ -279,8 +297,8 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
             updated.OrchestrationCheckpoints.RemoveAll(candidate =>
                 string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(candidate.CorrelationKey, correlationKey, StringComparison.OrdinalIgnoreCase));
+            await WriteStateAsync(updated, _protector, _usesEnvelope, cancellationToken).ConfigureAwait(false);
             _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally
@@ -363,9 +381,10 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         try
         {
             var updated = Clone(_state);
+            if (!updated.ConfigValues.TryGetValue(reference, out var existing) || existing != value)
+                EnsureBatchConfigEditable(reference);
             updated.ConfigValues[reference] = value;
-            _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally
@@ -380,9 +399,9 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         try
         {
             var updated = Clone(_state);
+            if (updated.ConfigValues.ContainsKey(reference)) EnsureBatchConfigEditable(reference);
             updated.ConfigValues.Remove(reference);
-            _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally

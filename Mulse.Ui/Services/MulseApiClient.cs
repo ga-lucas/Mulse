@@ -21,6 +21,12 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
             ?? throw new InvalidOperationException("The API returned an empty flow response.");
     }
 
+    public async Task<IReadOnlyList<FlowCheckpointViewModel>> GetFlowCheckpointsAsync(string flowId, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync($"/api/flows/{Uri.EscapeDataString(flowId)}/checkpoints", cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<FlowCheckpointViewModel[]>(response, cancellationToken, "checkpoint response").ConfigureAwait(false);
+    }
+
     public async Task<FlowViewModel> CreateFlowAsync(CreateFlowRequestViewModel request, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PostAsJsonAsync("/api/flows", request, cancellationToken).ConfigureAwait(false);

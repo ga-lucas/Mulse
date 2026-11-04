@@ -226,6 +226,42 @@ duplicate or reserved `correlationKey` keys, unknown sources/properties and miss
 checkpoint persistence. Limits: 128 captures, 256 characters per state key, 65,536 JSON characters.
 This editor does not implement a general loop/listen/timer workflow or Billing batch collection semantics.
 
+### Durable count-triggered collection
+
+Add **Collect correlated batch** (`durable-batch-augment`) from the toolbox and configure its collector name,
+correlation metadata key and minimum payload count (1-10,000) in node properties. Promote the client/group key
+before this node. Each input execution must contain exactly one nonblank correlation value; values are
+case-insensitive. Mixed-client runs fail rather than guessing how to partition a source receipt. Separate
+clients into source runs/flows first. Empty input does not create a checkpoint or flush another batch.
+
+The collector persists bodies, metadata and source receipts across executions and disk restarts. Below the
+threshold it returns `Suspended`, without acknowledging sources. At or above the threshold it releases the
+**entire** accumulated batch, preserving arrival order; it does not split overflow/remainders into exact-size
+batches. Released payloads have `batch.instanceId`, `batch.correlationKey` and `batch.count` metadata. A renderer
+can combine them into one document, or per-selection dispatch can feed an extensible batch renderer. The
+checkpoint is deleted only after successful downstream processing and source acknowledgements.
+
+Use one unconditional collector per flow, without other stateful orchestration nodes. Limits are 10,000 total
+payloads, 16,000,000 incoming content bytes per execution, and 24,000,000 serialized checkpoint characters.
+Pending batches block processing-definition edits, deletion, bulk deletion, workspace replacement and changes
+to the config/secret references used by their flow. Enable/category changes and unrelated configuration remain
+available. Avoid config or plugin-code changes during execution; this is not transactional snapshot isolation.
+
+**Pending batches / orchestration checkpoints**, on each dashboard card and existing-flow designer, refreshes
+safe counts, correlation, instance, update time and collecting/released status. The backing read-only endpoint
+is `GET /api/flows/{flowId}/checkpoints`; it excludes bodies, filenames, receipt contents and source credentials.
+A released checkpoint blocks new fetches while delivery/source-notification retries resume existing work. If
+retries are exhausted or a crash leaves an ambiguous delivery outcome, the checkpoint stays visible and frozen:
+review destination/source outcomes before recovery. There is deliberately no blind replay/discard button.
+
+This is opt-in **count-only** collection, not the timer-based Billing orchestration. There is no timeout,
+scheduled/manual flush, business-message duplicate detection, distributed transaction or exactly-once guarantee.
+The same persisted execution retry does not append twice, including an acknowledged-write failure; independent
+upstream redelivery can still duplicate messages. A process crash outside a saved continuation is not automatically
+replayed. Sources without receipts cannot receive deferred acknowledgements. Source modules must honor pending
+receipts to avoid refetching held messages. Rebuild custom state-store implementations for the updated
+`IFlowOrchestrationStateStore.GetAllAsync(flowId, ...)` SDK contract. Imported Billing drafts remain disabled.
+
 ### Visual metadata promotion
 
 The `metadata-promotion-augment` node now has rows for metadata key, selector, fallback and multi-value join

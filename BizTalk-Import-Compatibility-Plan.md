@@ -44,6 +44,12 @@ Target behavior: imported workflows must remain disabled until required configur
 - Optional metadata-mode XML policies preserve original bodies and publish actual assignments. Visual
   metadata promotion supplies facts; policy outputs can select real maps without replacing the message
   with a fact document. Multi-client synthetic tests cover the complete native chain.
+- A native count-triggered collector persists correlated batches across executions/restarts and holds source
+  receipts until successful downstream processing/acknowledgements. Descriptor-driven UI settings and a safe
+  dashboard/designer checkpoint inventory expose collection state. Same-execution retry append deduplication,
+  failed-write persistence, delayed acknowledgements, input bounds and pending-data maintenance guards have
+  explicit tests. Released ambiguous/exhausted failures freeze instead of guessing that replay is safe. This
+  does not add timed/manual flush, arbitrary source-batch partitioning or exactly-once delivery.
 - These capabilities are available to imported and scratch-built nodes. No increment auto-translates
   original Billing control flow or clears migration reports. Original dynamic maps, custom helpers/pipelines,
   batch/correlation/timing, request/reply, transaction and failure equivalence still require translation

@@ -57,6 +57,19 @@ behavior; production messages are not necessary to continue the remaining runtim
 The four shared Build DLL references are still absent at their project HintPaths; helper sources exist, but
 source availability alone does not establish a deployed binary identity or verify a replacement pipeline.
 
+A further native increment adds **Collect correlated batch**, configured entirely through descriptor-driven
+node properties. It persists one client's messages across executions/restarts, releases the whole batch when
+its minimum count is met, and defers source acknowledgements until successful delivery. Different correlation
+keys collect independently. One input execution must contain one correlation value, since a source receipt
+may cover all fetched messages. Processing/config-reference edits and destructive flow/workspace operations
+are blocked while messages are held. Dashboard/designer checkpoint inspection shows counts and collecting or
+released/recovery-pending status without exposing message bodies or source settings. Retry tests cover disk
+restarts, ambiguous checkpoint-write acknowledgements, disabled flows and source acknowledgement failures
+without redelivery. Exhausted/ambiguous delivery failures retain a frozen checkpoint, not an automatic replay.
+This count-only native capability does **not** translate Billing's BatchTime/BatchInterval, timer listen loops,
+trailer-count maps, transaction scopes or helper pipelines. No timer/manual flush or business-message deduplication
+is implied, and no imported execution gate has changed.
+
 ## Decision
 
 - **Importable as a disabled analysis/draft:** Yes. The current importer accepts an `.odx` path when exactly one sibling `.btproj` explicitly includes that file. Parent-reported completed verification (not rerun in this documentation task): 314 related tests pass, the full solution build succeeds, and actual Billing analysis assertions pass. The local analysis reported 19 BizTalk projects, 17 custom projects, 20 candidates, all three Billing orchestration candidates, and 574 designer elements for `BillingServiceProcess.odx`.

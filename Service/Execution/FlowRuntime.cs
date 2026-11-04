@@ -52,12 +52,18 @@ public sealed partial class FlowRuntime(
             pipeline = GetConfiguredFlow(flowId);
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
             var pendingSourceWork = (await flowRetryStateStore.GetAllAsync(cancellationToken).ConfigureAwait(false))
-                .FirstOrDefault(state => state.FlowId.Equals(pipeline.Id, StringComparison.OrdinalIgnoreCase) && state.SourceReceipts.Count > 0);
+                .FirstOrDefault(state => state.FlowId.Equals(pipeline.Id, StringComparison.OrdinalIgnoreCase)
+                    && (state.SourceReceipts.Count > 0 || state.CheckpointCorrelationKey is not null
+                        || pipeline.Augments.Any(step => step.Module.Equals("durable-batch-augment", StringComparison.OrdinalIgnoreCase))));
             if (pendingSourceWork?.SourceCompletion?.NotificationsExhausted == true)
                 throw new InvalidOperationException($"Flow '{pipeline.Id}' has failed source outcome notifications: {pendingSourceWork.LastError}. New runs are blocked to prevent resending data. POST /api/flows/{Uri.EscapeDataString(pipeline.Id)}/source-outcomes/retry after resolving the source issue.");
             if (pendingSourceWork is not null)
                 return new FlowExecutionResult(pipeline.Id, pendingSourceWork.ExecutionStartedAt, timeProvider.GetUtcNow(), 0, [],
                     FlowExecutionOutcome.Retrying, "An earlier execution still has pending source processing or notification. No new data was fetched.", null, pendingSourceWork.NextAttemptAt);
+            var frozenBatch = (await orchestrationStateStore.GetAllAsync(pipeline.Id, cancellationToken).ConfigureAwait(false))
+                .FirstOrDefault(checkpoint => checkpoint.Batch?.Ready == true);
+            if (frozenBatch is not null)
+                throw new InvalidOperationException($"Flow '{pipeline.Id}' has released durable batch '{frozenBatch.InstanceId}' awaiting recovery/completion. No new data was fetched. Inspect the checkpoint and delivery outcomes; do not automatically replay a possibly delivered batch.");
             var startedAt = timeProvider.GetUtcNow();
             var context = new FlowExecutionContext(pipeline.Id, Guid.CreateVersion7().ToString(), startedAt)
             {
@@ -712,6 +718,7 @@ public sealed partial class FlowRuntime(
         _ = OrderSourceGraphTopologically(pipeline);
         // Resolve settings before checking dependencies, including mappingJson configuration references.
         var resolved = configValueResolver.Resolve(pipeline);
+        DurableBatchSafety.Validate(resolved);
         FlowModuleDependencies.EnsureAvailable(resolved, moduleCatalog.GetAll());
         return resolved;
     }

@@ -32,6 +32,10 @@
         <div class="status-banner error designer-banner" role="alert">@_errorMessage</div>
     }
 
+    @if (IsExistingFlow)
+    {
+        <FlowCheckpoints @key="FlowId" FlowId="@FlowId" />
+    }
     <div class="workspace-tabs" role="tablist" aria-label="Designer workspace">
         <button @ref="_flowTab" id="flow-workspace-tab" role="tab" type="button" aria-selected="@(!_showMappingDesigner ? "true" : "false")" aria-controls="flow-workspace" tabindex="@(!_showMappingDesigner ? 0 : -1)" @onclick="() => SetMappingWorkspace(false)" @onkeydown="args => HandleWorkspaceKeyAsync(args, false)">Flow</button>
         <button @ref="_mappingTab" id="mapping-workspace-tab" role="tab" type="button" aria-selected="@(_showMappingDesigner ? "true" : "false")" aria-controls="mapping-workspace" tabindex="@(_showMappingDesigner ? 0 : -1)" @onclick="() => SetMappingWorkspace(true)" @onkeydown="args => HandleWorkspaceKeyAsync(args, true)">Mapping</button>

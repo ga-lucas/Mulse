@@ -28,7 +28,7 @@ public sealed partial class FlowRuntime
         if (result.Outcome != FlowExecutionOutcome.Completed) return result;
         if (context.SourceReceipts.Count == 0)
         {
-            if (context.PendingCheckpointCompletion is { } pending)
+            if (context.DeliveryFailures.Count == 0 && context.PendingCheckpointCompletion is { } pending)
                 await orchestrationStateStore.DeleteAsync(pending.FlowId, pending.CorrelationKey, cancellationToken).ConfigureAwait(false);
             await flowRetryStateStore.DeleteAllForExecutionAsync(pipeline.Id, context.ExecutionId, cancellationToken).ConfigureAwait(false);
             return result;

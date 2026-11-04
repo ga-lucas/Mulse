@@ -13,6 +13,13 @@ public sealed class FlowOrchestrationStateStore(IRuntimeConfigurationStore runti
         return Task.FromResult(checkpoint);
     }
 
+    public Task<IReadOnlyList<FlowOrchestrationCheckpoint>> GetAllAsync(string flowId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult<IReadOnlyList<FlowOrchestrationCheckpoint>>(runtimeConfigurationStore.GetState().OrchestrationCheckpoints
+            .Where(checkpoint => checkpoint.FlowId.Equals(flowId, StringComparison.OrdinalIgnoreCase)).ToArray());
+    }
+
     public Task<IReadOnlyList<FetchProcessingReceipt>> GetPendingSourceReceiptsAsync(string flowId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

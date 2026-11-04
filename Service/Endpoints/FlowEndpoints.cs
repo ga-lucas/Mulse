@@ -42,6 +42,22 @@ public static class FlowEndpoints
             .Produces<FlowResponse>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status404NotFound);
 
+        app.MapGet("/api/flows/{flowId}/checkpoints", Ok<FlowCheckpointResponse[]> (string flowId, IFlowDefinitionService flows, IRuntimeConfigurationStore store, CancellationToken cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _ = flows.GetById(flowId);
+                return TypedResults.Ok(store.GetState().OrchestrationCheckpoints
+                    .Where(checkpoint => checkpoint.FlowId.Equals(flowId, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(checkpoint => checkpoint.CorrelationKey, StringComparer.OrdinalIgnoreCase)
+                    .Select(checkpoint => new FlowCheckpointResponse(checkpoint.InstanceId, checkpoint.CorrelationKey, checkpoint.Bookmark,
+                        checkpoint.UpdatedAt, checkpoint.Payloads.Count, checkpoint.SourceReceipts.Count, checkpoint.Batch?.TargetCount, checkpoint.Batch?.Ready)).ToArray());
+            })
+            .WithName("GetFlowCheckpoints")
+            .WithSummary("Inspect pending batch and orchestration checkpoint counts without message bodies or source settings")
+            .WithTags("Flows")
+            .Produces<FlowCheckpointResponse[]>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         app.MapPost("/api/flows", async Task<Created<FlowResponse>> (CreateFlowRequest request, IFlowDefinitionService flowDefinitionService, CancellationToken cancellationToken) =>
             {
                 var created = await flowDefinitionService.CreateAsync(FlowMappings.MapPipeline(request), cancellationToken).ConfigureAwait(false);

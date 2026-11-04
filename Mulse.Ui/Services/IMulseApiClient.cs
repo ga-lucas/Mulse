@@ -12,6 +12,8 @@ public interface IMulseApiClient
 
     Task<FlowViewModel> GetFlowAsync(string flowId, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<FlowCheckpointViewModel>> GetFlowCheckpointsAsync(string flowId, CancellationToken cancellationToken);
+
     Task<FlowViewModel> CreateFlowAsync(CreateFlowRequestViewModel request, CancellationToken cancellationToken);
 
     Task<FlowViewModel> UpdateFlowAsync(UpdateFlowRequestViewModel request, CancellationToken cancellationToken);
