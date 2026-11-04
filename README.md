@@ -254,13 +254,49 @@ A released checkpoint blocks new fetches while delivery/source-notification retr
 retries are exhausted or a crash leaves an ambiguous delivery outcome, the checkpoint stays visible and frozen:
 review destination/source outcomes before recovery. There is deliberately no blind replay/discard button.
 
-This is opt-in **count-only** collection, not the timer-based Billing orchestration. There is no timeout,
-scheduled/manual flush, business-message duplicate detection, distributed transaction or exactly-once guarantee.
-The same persisted execution retry does not append twice, including an acknowledged-write failure; independent
-upstream redelivery can still duplicate messages. A process crash outside a saved continuation is not automatically
-replayed. Sources without receipts cannot receive deferred acknowledgements. Source modules must honor pending
-receipts to avoid refetching held messages. Rebuild custom state-store implementations for the updated
-`IFlowOrchestrationStateStore.GetAllAsync(flowId, ...)` SDK contract. Imported Billing drafts remain disabled.
+The default **CountOnly** mode has no automatic timeout. Neither mode provides business-message duplicate
+detection, distributed transactions or exactly-once delivery. The same persisted execution retry does not append
+twice, including an acknowledged-write failure; independent upstream redelivery can still duplicate messages.
+A process crash outside a saved continuation is not automatically replayed. Sources without receipts cannot
+receive deferred acknowledgements. Source modules must honor pending receipts to avoid refetching held messages.
+Rebuild custom state-store implementations for the updated `IFlowOrchestrationStateStore.GetAllAsync(flowId, ...)`
+SDK contract. Imported Billing drafts remain disabled.
+
+### Explicit-timezone batch deadlines
+
+Select **Minimum count or daily cutoff** (`releaseMode=CountOrDailyCutoff`), enter a 24-hour `HH:mm` cutoff,
+and provide a supported Windows/IANA timezone ID (`timeZoneId`, for example `UTC`). Timed flows cannot be
+enabled or fetch data without a valid explicit clock; the host timezone is never silently assumed. Disabled
+drafts can retain incomplete settings for repair. The first arrival persists the next strictly future daily
+cutoff as UTC; later arrivals do not slide that deadline. A skipped DST time advances to the first valid minute;
+a repeated time uses its later occurrence, once for that date. These are native scheduling choices, not verified
+legacy-host DST behavior.
+
+A dedicated driver checks enabled collectors roughly every two seconds, including manual/push-only flows with
+no new input. It resumes the saved batch at its collector, without re-fetching or repeating upstream maps. A
+normal Run also prioritizes a due batch before fetching. Multiple due groups drain one at a time; retries take
+precedence, and released/frozen batches are never blindly replayed. Disabling a flow retains deadlines/data;
+re-enabling permits overdue collection release. The UI shows the persisted UTC deadline. Polling, a busy flow,
+retries or service downtime can delay release; this is not a hard real-time cutoff or strict transaction boundary.
+An in-flight source run may join the batch when its collector executes. No empty daily batch is synthesized.
+
+This does not translate Billing's policy BatchInterval, changing per-message BatchTime, trailer maps or listen
+loops. Imported orchestration execution remains gated.
+
+### Confirmed early release
+
+For an enabled native flow, checkpoint inspection offers **Release collected batch...**, then **Confirm release**.
+This releases the inspected collecting instance before its count/deadline without fetching or repeating upstream
+maps. The current payload count must still match inspection; new arrivals invalidate confirmation. Other clients'
+collections are not released. This makes an undersized count-only batch finishable without deleting its data or
+changing a pending flow's settings. The UI displays the real `Completed`/`Retrying` outcome and any failure detail.
+
+The API is `POST /api/flows/{flowId}/batches/{instanceId}/release` with `confirmInstanceId` matching the path and
+`expectedPayloadCount` matching inspection. Pending retries, already-released batches, disabled/import-gated flows
+and incompatible collector settings block release. Release intent is persisted **before** downstream effects;
+an interrupted/ambiguous intent write freezes the instance for review rather than making another click replay it.
+Existing delivery/source retries continue normally after release. This is first delivery of a collecting batch,
+not recovery/replay of an already-released instance. No blind replay or destructive discard UI is provided.
 
 ### Visual metadata promotion
 

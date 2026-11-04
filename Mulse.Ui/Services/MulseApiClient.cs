@@ -117,6 +117,13 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<FlowRunViewModel>(response, cancellationToken, "flow run response").ConfigureAwait(false);
     }
 
+    public async Task<FlowRunViewModel> ReleaseCollectedBatchAsync(string flowId, string instanceId, int expectedPayloadCount, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync($"/api/flows/{Uri.EscapeDataString(flowId)}/batches/{Uri.EscapeDataString(instanceId)}/release",
+            new { ConfirmInstanceId = instanceId, ExpectedPayloadCount = expectedPayloadCount }, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<FlowRunViewModel>(response, cancellationToken, "batch release response").ConfigureAwait(false);
+    }
+
     public async Task<FlowViewModel> SetFlowEnabledAsync(string flowId, bool enabled, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PatchAsJsonAsync($"/api/flows/{Uri.EscapeDataString(flowId)}/enabled", new SetFlowEnabledRequestViewModel(enabled), cancellationToken).ConfigureAwait(false);

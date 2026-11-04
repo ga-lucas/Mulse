@@ -48,8 +48,16 @@ Target behavior: imported workflows must remain disabled until required configur
   receipts until successful downstream processing/acknowledgements. Descriptor-driven UI settings and a safe
   dashboard/designer checkpoint inventory expose collection state. Same-execution retry append deduplication,
   failed-write persistence, delayed acknowledgements, input bounds and pending-data maintenance guards have
-  explicit tests. Released ambiguous/exhausted failures freeze instead of guessing that replay is safe. This
-  does not add timed/manual flush, arbitrary source-batch partitioning or exactly-once delivery.
+  explicit tests. Released ambiguous/exhausted failures freeze instead of guessing that replay is safe.
+- Optional daily cutoffs require explicit per-flow timezones and persist the first arrival's UTC deadline.
+  The enabled-flow driver releases due state without source fetch/upstream remapping, including idle manual
+  and push flows. DST gap/fold choices, restart, competing polls and fail-closed ready batches have tests.
+  This is not original policy BatchInterval/variable BatchTime translation, arbitrary source-batch partitioning
+  or exactly-once delivery.
+- Confirmed early release lets an operator finish a collecting instance through UI/API, without fetching or
+  replaying upstream maps. The instance and inspected count must still match; retries, disabled flows and
+  already-released data block confirmation. Release intent is durable before downstream side effects. This
+  does not add replay/discard of ambiguous or partially delivered instances.
 - These capabilities are available to imported and scratch-built nodes. No increment auto-translates
   original Billing control flow or clears migration reports. Original dynamic maps, custom helpers/pipelines,
   batch/correlation/timing, request/reply, transaction and failure equivalence still require translation

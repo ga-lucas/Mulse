@@ -50,7 +50,7 @@ public static class FlowEndpoints
                     .Where(checkpoint => checkpoint.FlowId.Equals(flowId, StringComparison.OrdinalIgnoreCase))
                     .OrderBy(checkpoint => checkpoint.CorrelationKey, StringComparer.OrdinalIgnoreCase)
                     .Select(checkpoint => new FlowCheckpointResponse(checkpoint.InstanceId, checkpoint.CorrelationKey, checkpoint.Bookmark,
-                        checkpoint.UpdatedAt, checkpoint.Payloads.Count, checkpoint.SourceReceipts.Count, checkpoint.Batch?.TargetCount, checkpoint.Batch?.Ready)).ToArray());
+                        checkpoint.UpdatedAt, checkpoint.Payloads.Count, checkpoint.SourceReceipts.Count, checkpoint.Batch?.TargetCount, checkpoint.Batch?.Ready, checkpoint.Batch?.DeadlineUtc)).ToArray());
             })
             .WithName("GetFlowCheckpoints")
             .WithSummary("Inspect pending batch and orchestration checkpoint counts without message bodies or source settings")
@@ -164,6 +164,23 @@ public static class FlowEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
+
+        app.MapPost("/api/flows/{flowId}/batches/{instanceId}/release", async Task<Ok<FlowRunResponse>> (string flowId, string instanceId, ReleaseCollectedBatchRequest request, IFlowRuntime flowRuntime, CancellationToken cancellationToken) =>
+            {
+                if (!string.Equals(instanceId, request.ConfirmInstanceId, StringComparison.Ordinal))
+                    throw new ArgumentException("ConfirmInstanceId must exactly match the inspected batch instance.");
+                var result = await flowRuntime.ReleaseCollectedBatchAsync(flowId, instanceId, request.ExpectedPayloadCount, cancellationToken).ConfigureAwait(false);
+                return TypedResults.Ok(new FlowRunResponse(result.FlowId, result.StartedAt, result.CompletedAt,
+                    result.PayloadCount, result.DeliverModules, result.ResponsePayloads?.Count ?? 0,
+                    result.Outcome.ToString(), result.NextAttemptAt, ToResponsePayloads(result.ResponsePayloads), result.Detail));
+            })
+            .WithName("ReleaseCollectedBatch")
+            .WithSummary("Confirm early release of an inspected collecting batch, never replay a released instance")
+            .WithTags("Flows")
+            .Produces<FlowRunResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
 
         app.MapPost("/api/flows/{flowId}/source-outcomes/retry", async Task<Ok<FlowRunResponse>> (string flowId, IFlowRuntime flowRuntime, CancellationToken cancellationToken) =>
             {

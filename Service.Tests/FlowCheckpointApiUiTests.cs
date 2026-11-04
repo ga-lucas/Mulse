@@ -26,7 +26,7 @@ public sealed class FlowCheckpointApiUiTests
             OrchestrationCheckpoints = [new()
             {
                 FlowId = "batches", InstanceId = "instance-A", CorrelationKey = "A", Bookmark = "Invoices",
-                Batch = new() { TargetCount = 3 },
+                Batch = new() { TargetCount = 3, DeadlineUtc = new DateTimeOffset(2026, 4, 1, 10, 15, 0, TimeSpan.Zero) },
                 Payloads = [new() { Name = "PRIVATE-FILE-NAME", ContentBase64 = Convert.ToBase64String("PRIVATE-BODY"u8.ToArray()) }],
                 SourceReceipts = [new("PRIVATE-RECEIPT", "f", new() { Module = "fetch", Settings = new() { ["password"] = "PRIVATE-SECRET" } }, new() { ["source"] = "PRIVATE-SOURCE" })]
             }, new() { FlowId = "different", InstanceId = "OTHER-INSTANCE", CorrelationKey = "B" }]
@@ -57,6 +57,7 @@ public sealed class FlowCheckpointApiUiTests
             var checkpoint = Assert.Single(await client.GetFlowCheckpointsAsync("batches", default));
             Assert.Equal(1, checkpoint.PayloadCount); Assert.Equal(1, checkpoint.PendingSourceCount);
             Assert.Equal(3, checkpoint.TargetCount); Assert.False(checkpoint.BatchReady);
+            Assert.Equal(new DateTimeOffset(2026, 4, 1, 10, 15, 0, TimeSpan.Zero), checkpoint.DeadlineUtc);
             Assert.Empty(await client.GetFlowCheckpointsAsync("empty", default));
             var missing = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetFlowCheckpointsAsync("missing", default));
             Assert.Contains("No configured flow", missing.Message);
@@ -67,6 +68,7 @@ public sealed class FlowCheckpointApiUiTests
             var html = await Render("batches");
             Assert.Contains("Invoices", html); Assert.Contains("Collecting", html); Assert.Contains("Minimum count: 3", html);
             Assert.Contains("1 payload(s)", html); Assert.DoesNotContain("PRIVATE", html);
+            Assert.Contains("Persisted deadline (UTC): 2026-04-01 10:15:00Z", html);
             Assert.Contains("No pending checkpoints", await Render("empty"));
             Assert.Contains("Unable to read checkpoints", await Render("missing"));
             var ready = store.GetState().OrchestrationCheckpoints[0];

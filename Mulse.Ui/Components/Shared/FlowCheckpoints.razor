@@ -3,8 +3,9 @@
 <details>
     <summary>Pending batches / orchestration checkpoints</summary>
     <p>Inspect saved state without fetching messages or replaying delivery. This view does not expose message bodies or source credentials.</p>
-    <button class="secondary-button" disabled="@_loading" @onclick="RefreshAsync">@(_loading ? "Loading checkpoints..." : "Refresh checkpoints")</button>
+    <button class="secondary-button" disabled="@(_loading || _releasing)" @onclick="RefreshAsync">@(_loading ? "Loading checkpoints..." : "Refresh checkpoints")</button>
     @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (_notice is not null) { <p role="status">@_notice</p> }
     @if (_checkpoints is { Count: 0 }) { <p>No pending checkpoints.</p> }
     @if (_checkpoints is { Count: > 0 })
     {
@@ -16,7 +17,25 @@
                 <p>@checkpoint.PayloadCount payload(s); @checkpoint.PendingSourceCount pending source receipt(s).</p>
                 @if (checkpoint.TargetCount is { } count)
                 {
-                    <p>Minimum count: @count. @(checkpoint.BatchReady == true ? "Released; awaiting completion or recovery. New runs are blocked to prevent replay." : "Collecting; sources remain pending. A count-only batch has no automatic timeout.")</p>
+                    <p>Minimum count: @count. @(checkpoint.BatchReady == true ? "Released; awaiting completion or recovery. New runs are blocked to prevent replay." : "Collecting; sources remain pending.")</p>
+                    @if (checkpoint.DeadlineUtc is { } deadline)
+                    {
+                        <p>Persisted deadline (UTC): @deadline.ToString("u"). Enabled flows release on the first eligible deadline poll; disabled flows retain data.</p>
+                    }
+                    else { <p>This count-only batch has no automatic timeout.</p> }
+                    @if (checkpoint.BatchReady == false && AllowRelease)
+                    {
+                        @if (_confirm?.InstanceId == checkpoint.InstanceId)
+                        {
+                            <p>Release this instance's @(_confirm.PayloadCount) collected payload(s) now, before the count/deadline? This runs downstream processing and delivery, not a preview. Newly arriving input invalidates this confirmation.</p>
+                            <button class="secondary-button" disabled="@(_loading || _releasing)" @onclick="ConfirmReleaseAsync">Confirm release</button>
+                            <button class="secondary-button" disabled="@_releasing" @onclick="() => _confirm = null">Cancel</button>
+                        }
+                        else
+                        {
+                            <button class="secondary-button" disabled="@(_loading || _releasing)" @onclick="() => _confirm = checkpoint">Release collected batch...</button>
+                        }
+                    }
                 }
             </div>
         }
@@ -26,19 +45,46 @@
 
 @code {
     [Parameter, EditorRequired] public string FlowId { get; set; } = "";
+    [Parameter] public bool AllowRelease { get; set; }
     private IReadOnlyList<FlowCheckpointViewModel>? _checkpoints;
-    private string? _error, _loadedFlow;
-    private bool _loading;
+    private FlowCheckpointViewModel? _confirm;
+    private string? _error, _loadedFlow, _notice;
+    private bool _loading, _releasing;
     protected override void OnParametersSet()
     {
         if (_loadedFlow == FlowId) return;
         _loadedFlow = FlowId;
-        _checkpoints = null;
-        _error = null;
+        _checkpoints = null; _confirm = null;
+        _error = null; _notice = null;
+    }
+    private async Task ConfirmReleaseAsync()
+    {
+        if (!AllowRelease || _confirm is not { } selected || _releasing) return;
+        _releasing = true; _error = null; _notice = null;
+        var flow = FlowId;
+        try
+        {
+            var result = await ApiClient.ReleaseCollectedBatchAsync(flow, selected.InstanceId, selected.PayloadCount, CancellationToken.None);
+            if (flow == FlowId)
+            {
+                _notice = $"Batch release: {result.Outcome}. {result.Detail}";
+                await RefreshAsync();
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            if (flow == FlowId)
+            {
+                var releaseError = "Unable to release batch: " + ex.Message;
+                await RefreshAsync();
+                _error = _error is null ? releaseError : $"{releaseError} {_error}";
+            }
+        }
+        finally { _releasing = false; }
     }
     private async Task RefreshAsync()
     {
-        _loading = true; _error = null;
+        _loading = true; _error = null; _confirm = null;
         var flow = FlowId;
         try
         {

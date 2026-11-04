@@ -66,9 +66,17 @@ are blocked while messages are held. Dashboard/designer checkpoint inspection sh
 released/recovery-pending status without exposing message bodies or source settings. Retry tests cover disk
 restarts, ambiguous checkpoint-write acknowledgements, disabled flows and source acknowledgement failures
 without redelivery. Exhausted/ambiguous delivery failures retain a frozen checkpoint, not an automatic replay.
-This count-only native capability does **not** translate Billing's BatchTime/BatchInterval, timer listen loops,
-trailer-count maps, transaction scopes or helper pipelines. No timer/manual flush or business-message deduplication
-is implied, and no imported execution gate has changed.
+An opt-in daily cutoff now adds explicit-timezone idle release: the first arrival persists a fixed UTC deadline,
+and an enabled-flow driver resumes at the collector without fetching/remapping upstream messages. The legacy
+server timezone has not been established, so timed flows require an explicit per-flow timezone rather than
+silently inheriting the host clock. DST gaps advance to the first valid minute; repeated times use the later
+occurrence. Tests cover these native choices, restart, idle manual flows, competing polls and frozen failures.
+Checkpoint inspection also offers confirmed early release of a still-collecting instance at its inspected
+payload count, without a new fetch. Stale counts, pending retries, disabled flows and released instances are
+rejected. Release intent persists before downstream effects; ambiguous intent/delivery is not replayed blindly.
+These capabilities do **not** translate Billing's changing BatchTime, policy BatchInterval, original timer listen
+loops, trailer-count maps, transaction scopes or helper pipelines. No business-message deduplication or
+exactly-once semantics are implied, and no imported execution gate has changed.
 
 ## Decision
 

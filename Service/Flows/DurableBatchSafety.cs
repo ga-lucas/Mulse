@@ -23,5 +23,11 @@ internal static class DurableBatchSafety
             throw new InvalidOperationException($"Flow '{existing.Id}' has pending durable batches. Only enabled/category changes are allowed until they complete; batch data must not be reinterpreted under an edited flow.");
     }
 
+    public static void ValidateResolvedSchedule(PipelineDefinition pipeline)
+    {
+        foreach (var collector in pipeline.Augments.Where(step => IsCollector(step.Module)))
+            _ = DurableBatchSchedule.Read(collector);
+    }
+
     private static bool IsCollector(string module) => module.Equals(DurableBatchAugmentModule.ModuleId, StringComparison.OrdinalIgnoreCase);
 }

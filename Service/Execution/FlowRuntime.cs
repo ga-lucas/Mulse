@@ -60,10 +60,12 @@ public sealed partial class FlowRuntime(
             if (pendingSourceWork is not null)
                 return new FlowExecutionResult(pipeline.Id, pendingSourceWork.ExecutionStartedAt, timeProvider.GetUtcNow(), 0, [],
                     FlowExecutionOutcome.Retrying, "An earlier execution still has pending source processing or notification. No new data was fetched.", null, pendingSourceWork.NextAttemptAt);
-            var frozenBatch = (await orchestrationStateStore.GetAllAsync(pipeline.Id, cancellationToken).ConfigureAwait(false))
-                .FirstOrDefault(checkpoint => checkpoint.Batch?.Ready == true);
+            var checkpoints = await orchestrationStateStore.GetAllAsync(pipeline.Id, cancellationToken).ConfigureAwait(false);
+            var frozenBatch = checkpoints.FirstOrDefault(checkpoint => checkpoint.Batch?.Ready == true);
             if (frozenBatch is not null)
                 throw new InvalidOperationException($"Flow '{pipeline.Id}' has released durable batch '{frozenBatch.InstanceId}' awaiting recovery/completion. No new data was fetched. Inspect the checkpoint and delivery outcomes; do not automatically replay a possibly delivered batch.");
+            if (FindDueBatch(checkpoints) is { } due)
+                return await ReleaseBatchCoreAsync(pipeline, due, cancellationToken).ConfigureAwait(false);
             var startedAt = timeProvider.GetUtcNow();
             var context = new FlowExecutionContext(pipeline.Id, Guid.CreateVersion7().ToString(), startedAt)
             {
@@ -719,6 +721,7 @@ public sealed partial class FlowRuntime(
         // Resolve settings before checking dependencies, including mappingJson configuration references.
         var resolved = configValueResolver.Resolve(pipeline);
         DurableBatchSafety.Validate(resolved);
+        DurableBatchSafety.ValidateResolvedSchedule(resolved);
         FlowModuleDependencies.EnsureAvailable(resolved, moduleCatalog.GetAll());
         return resolved;
     }

@@ -44,6 +44,8 @@ public interface IMulseApiClient
 
     Task<FlowRunViewModel> RunFlowAsync(string flowId, CancellationToken cancellationToken);
 
+    Task<FlowRunViewModel> ReleaseCollectedBatchAsync(string flowId, string instanceId, int expectedPayloadCount, CancellationToken cancellationToken);
+
     Task<FlowViewModel> SetFlowEnabledAsync(string flowId, bool enabled, CancellationToken cancellationToken);
 
     Task<FlowViewModel> DuplicateFlowAsync(string flowId, string newFlowId, CancellationToken cancellationToken);

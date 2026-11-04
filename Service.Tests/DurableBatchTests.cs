@@ -202,6 +202,83 @@ public sealed class DurableBatchTests
     }
 
     [Fact]
+    public async Task ManualReleaseUsesInspectedInstanceAndCount_WithoutFetchingOrReleasingOtherClients()
+    {
+        var checkpoints = new InMemoryFlowOrchestrationStateStore();
+        var source = new Source(new([Payload("A", "a1")]), new([Payload("B", "b1")]), new([Payload("A", "a2")]));
+        var delivered = new List<IntegrationBatch>();
+        var runtime = Runtime(Pipeline(10), Catalog(source, checkpoints, delivered), checkpoints, new InMemoryFlowRetryStateStore());
+        await runtime.ExecuteAsync("batches", default); await runtime.ExecuteAsync("batches", default); await runtime.ExecuteAsync("batches", default);
+        var selected = checkpoints.Checkpoints.Single(checkpoint => checkpoint.CorrelationKey == "A");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.ReleaseCollectedBatchAsync("batches", selected.InstanceId, 1, default));
+        Assert.Empty(delivered); Assert.False(selected.Batch!.Ready);
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => runtime.ReleaseCollectedBatchAsync("batches", "stale", 2, default));
+        var edited = Runtime(Pipeline(9), Catalog(source, checkpoints, delivered), checkpoints, new InMemoryFlowRetryStateStore());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => edited.ReleaseCollectedBatchAsync("batches", selected.InstanceId, 2, default));
+        Assert.False(checkpoints.Checkpoints.Single(checkpoint => checkpoint.CorrelationKey == "A").Batch!.Ready);
+        Assert.Equal(FlowExecutionOutcome.Completed, (await runtime.ReleaseCollectedBatchAsync("batches", selected.InstanceId, 2, default)).Outcome);
+        Assert.Equal("a1|a2", Assert.Single(Assert.Single(delivered).Payloads).GetText());
+        Assert.Equal(2, source.Outcomes.Count); Assert.Equal(3, source.FetchCount);
+        var remaining = Assert.Single(checkpoints.Checkpoints); Assert.Equal("B", remaining.CorrelationKey);
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => runtime.ReleaseCollectedBatchAsync("batches", selected.InstanceId, 2, default));
+        Assert.Equal(FlowExecutionOutcome.Completed, (await runtime.ReleaseCollectedBatchAsync("batches", remaining.InstanceId, 1, default)).Outcome);
+        Assert.Equal("b1", delivered[1].Payloads[0].GetText()); Assert.Equal(3, source.FetchCount); Assert.Empty(checkpoints.Checkpoints);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ManualReleaseDeliveryRetryCannotBeConfirmedAgain_AndCompletesWithoutFetching(bool receipts)
+    {
+        var checkpoints = new InMemoryFlowOrchestrationStateStore(); var retries = new InMemoryFlowRetryStateStore();
+        var source = new Source(new IntegrationBatch([Payload("A", "one")])) { WithReceipts = receipts };
+        var delivered = new List<IntegrationBatch>(); var flow = Pipeline(10, new() { MaxAttempts = 2, Delay = TimeSpan.Zero });
+        var catalog = Catalog(source, checkpoints, delivered).AddDeliver(DelegateModuleFactory.Deliver("destination", delivered, call => call == 1));
+        var runtime = Runtime(flow, catalog, checkpoints, retries);
+        await runtime.ExecuteAsync("batches", default); var selected = Assert.Single(checkpoints.Checkpoints);
+        Assert.Equal(FlowExecutionOutcome.Retrying, (await runtime.ReleaseCollectedBatchAsync("batches", selected.InstanceId, 1, default)).Outcome);
+        Assert.True(Assert.Single(checkpoints.Checkpoints).Batch!.Ready);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.ReleaseCollectedBatchAsync("batches", selected.InstanceId, 1, default));
+        Assert.Equal(FlowExecutionOutcome.Completed, (await runtime.ResumeRetryAsync(Assert.Single(retries.States), default))!.Outcome);
+        Assert.Equal(1, source.FetchCount); Assert.Single(delivered); Assert.Empty(checkpoints.Checkpoints);
+        Assert.Equal(receipts ? 1 : 0, source.Outcomes.Count);
+    }
+
+    [Fact]
+    public async Task AmbiguousManualReleaseIntentFreezesWithoutDeliveryOrSourceCallbacks_AndDisabledFlowsCannotRelease()
+    {
+        var inner = new InMemoryFlowOrchestrationStateStore(); var source = new Source(new IntegrationBatch([Payload("A", "one")]));
+        var delivered = new List<IntegrationBatch>(); var flow = Pipeline(10);
+        await Runtime(flow, Catalog(source, inner, delivered), inner, new InMemoryFlowRetryStateStore()).ExecuteAsync("batches", default);
+        var selected = Assert.Single(inner.Checkpoints);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Runtime(FlowMappings.WithEnabled(flow, false), Catalog(source, inner, delivered), inner, new InMemoryFlowRetryStateStore())
+            .ReleaseCollectedBatchAsync("batches", selected.InstanceId, 1, default));
+        Assert.False(Assert.Single(inner.Checkpoints).Batch!.Ready);
+        var ambiguous = new WriteThenFail(inner);
+        var runtime = Runtime(flow, Catalog(source, ambiguous, delivered), ambiguous, new InMemoryFlowRetryStateStore());
+        await Assert.ThrowsAsync<IOException>(() => runtime.ReleaseCollectedBatchAsync("batches", selected.InstanceId, 1, default));
+        Assert.True(Assert.Single(inner.Checkpoints).Batch!.Ready);
+        Assert.Empty(delivered); Assert.Empty(source.Outcomes); Assert.Equal(1, source.FetchCount);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.ReleaseCollectedBatchAsync("batches", selected.InstanceId, 1, default));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.ExecuteAsync("batches", default));
+    }
+
+    [Fact]
+    public async Task ConcurrentManualConfirmationsDeliverOnce()
+    {
+        var checkpoints = new InMemoryFlowOrchestrationStateStore(); var source = new Source(new IntegrationBatch([Payload("A", "one")]));
+        var delivered = new List<IntegrationBatch>(); var runtime = Runtime(Pipeline(10), Catalog(source, checkpoints, delivered), checkpoints, new InMemoryFlowRetryStateStore());
+        await runtime.ExecuteAsync("batches", default); var selected = Assert.Single(checkpoints.Checkpoints);
+        async Task<bool> Release()
+        {
+            try { await runtime.ReleaseCollectedBatchAsync("batches", selected.InstanceId, 1, default); return true; }
+            catch (KeyNotFoundException) { return false; }
+        }
+        var results = await Task.WhenAll(Release(), Release());
+        Assert.Single(results, result => result); Assert.Single(delivered); Assert.Equal(1, source.FetchCount);
+    }
+
+    [Fact]
     public async Task MixedClientsOrEditedCollectorsFailWithoutOverwritingPendingData()
     {
         var store = new InMemoryFlowOrchestrationStateStore();

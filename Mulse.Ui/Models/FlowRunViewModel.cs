@@ -7,4 +7,6 @@ public sealed record FlowRunViewModel(
     int PayloadCount,
     IReadOnlyList<string> DeliverModules,
     int ResponsePayloadCount = 0,
-    string? Detail = null);
+    string? Detail = null,
+    string Outcome = "Completed",
+    DateTimeOffset? NextAttemptAt = null);

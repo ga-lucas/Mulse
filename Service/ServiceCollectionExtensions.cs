@@ -26,6 +26,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<ScheduledFlowService>();
         services.AddHostedService<PushTriggeredFlowService>();
         services.AddHostedService<RetryDrivenFlowService>();
+        services.AddHostedService<BatchDeadlineFlowService>();
 
         return services;
     }

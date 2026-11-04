@@ -34,7 +34,7 @@
 
     @if (IsExistingFlow)
     {
-        <FlowCheckpoints @key="FlowId" FlowId="@FlowId" />
+        <FlowCheckpoints @key="FlowId" FlowId="@FlowId" AllowRelease="@(_enabled && _migration is null)" />
     }
     <div class="workspace-tabs" role="tablist" aria-label="Designer workspace">
         <button @ref="_flowTab" id="flow-workspace-tab" role="tab" type="button" aria-selected="@(!_showMappingDesigner ? "true" : "false")" aria-controls="flow-workspace" tabindex="@(!_showMappingDesigner ? 0 : -1)" @onclick="() => SetMappingWorkspace(false)" @onkeydown="args => HandleWorkspaceKeyAsync(args, false)">Flow</button>

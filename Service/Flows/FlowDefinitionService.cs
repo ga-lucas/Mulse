@@ -98,6 +98,8 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
 
         ValidateSourceGraph(pipeline);
         DurableBatchSafety.Validate(pipeline);
+        if (pipeline.Enabled && pipeline.Augments.Any(step => step.Module.Equals("durable-batch-augment", StringComparison.OrdinalIgnoreCase)))
+            DurableBatchSafety.ValidateResolvedSchedule(new ConfigValueResolver(runtimeConfigurationStore).Resolve(pipeline));
         FlowModuleDependencies.EnsureAvailable(pipeline, available, runtimeConfigurationStore.GetState().ConfigValues);
         if (existingFlow is not null)
             DurableBatchSafety.EnsureUnchanged(existingFlow, pipeline, runtimeConfigurationStore.GetState().OrchestrationCheckpoints);

@@ -6,5 +6,7 @@ public sealed class FlowBatchCheckpointState
     public string MetadataKey { get; init; } = "";
     public int TargetCount { get; init; }
     public string LastExecutionId { get; init; } = "";
+    public string ScheduleKey { get; init; } = "";
+    public DateTimeOffset? DeadlineUtc { get; init; }
     public bool Ready { get; init; }
 }

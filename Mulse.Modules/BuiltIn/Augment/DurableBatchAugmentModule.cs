@@ -12,11 +12,14 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
     private const int MaxSnapshotCharacters = 24000000;
 
     public ModuleDescriptor Descriptor { get; } = new(ModuleId, "Collect correlated batch", ModuleKind.OrchestrationAugment,
-        "Persists messages across runs until the minimum payload count is reached. Each run must contain one correlation value. Sources remain pending until delivery. No timer or automatic replay of failed ready batches.",
+        "Persists messages across runs until the minimum payload count or an optional explicit-timezone daily cutoff. Each run must contain one correlation value. Sources remain pending until delivery. Failed ready batches are not automatically replayed.",
         [
             new("collectorId", "Collector name", "Stable name for this checkpoint. Use only one durable collector per flow; do not combine it with stateful orchestration nodes.", true),
             new("metadataKey", "Correlation metadata key", "All incoming payloads must have the same nonblank value. Correlation values are case-insensitive, like orchestration checkpoint keys. Promote the client/batch group before this step.", true),
-            new("targetCount", "Minimum payload count", "Release the entire accumulated batch at or above this count (1-10000). An incoming run is never split; overflow beyond 10000 fails. No deadline or timed flush is implied.", true, ModuleSettingInputKind.Number, "100")
+            new("targetCount", "Minimum payload count", "Release the entire accumulated batch at or above this count (1-10000). An incoming run is never split; overflow beyond 10000 fails.", true, ModuleSettingInputKind.Number, "100"),
+            new("releaseMode", "Release trigger", "CountOnly preserves count-only behavior. CountOrDailyCutoff releases at the first count threshold or daily deadline. Deadlines stay fixed from the first arrival.", false, ModuleSettingInputKind.Select, "CountOnly", [new("CountOnly", "Minimum count only"), new("CountOrDailyCutoff", "Minimum count or daily cutoff")]),
+            new("dailyCutoff", "Daily cutoff (HH:mm)", "Required for timed mode. A skipped DST time advances to the first valid minute; a repeated time uses its later occurrence. No timezone is inferred.", false),
+            new("timeZoneId", "Cutoff timezone", "Required for timed mode, e.g. UTC or a supported Windows/IANA timezone ID. Enabled flows release due batches even without new source data, on a best-effort two-second poll.", false)
         ]);
 
     public async Task<IntegrationBatch> AugmentAsync(FlowExecutionContext context, IntegrationBatch batch, ModuleStepDefinition step, CancellationToken cancellationToken)
@@ -24,11 +27,7 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
         cancellationToken.ThrowIfCancellationRequested();
         if (context.PendingCheckpointCompletion is not null || context.OrchestrationInstanceId is not null)
             throw new InvalidOperationException("Durable batch collection cannot share an execution with another orchestration checkpoint.");
-        var collector = ModuleSettingReader.GetRequired(step.Settings, "collectorId", ModuleId);
-        var key = ModuleSettingReader.GetRequired(step.Settings, "metadataKey", ModuleId);
-        var rawCount = ModuleSettingReader.GetRequired(step.Settings, "targetCount", ModuleId);
-        if (collector.Length > 256 || key.Length > 256 || !int.TryParse(rawCount, NumberStyles.None, CultureInfo.InvariantCulture, out var target) || target is < 1 or > MaxPayloads)
-            throw new ArgumentException("Durable batch requires collector/key names of at most 256 characters and targetCount from 1 to 10000.");
+        var (collector, key, target, schedule) = ReadSettings(step);
         if (batch.Count == 0) return batch;
         var correlations = batch.Payloads.Select(payload => payload.Metadata.TryGetValue(key, out var value) ? value : null)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -36,8 +35,7 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
             throw new ArgumentException("Every input in a durable batch run must have one identical nonblank correlation value of at most 1024 characters. Split clients into separate source runs/flows before collecting.");
         var correlation = correlations[0]!;
         var existing = await store.GetAsync(context.FlowId, correlation, cancellationToken).ConfigureAwait(false);
-        if (existing is not null && (existing.Batch is not { } state || state.CollectorId != collector || state.MetadataKey != key || state.TargetCount != target))
-            throw new InvalidOperationException("The persisted batch belongs to another collector/configuration. Restore the original configuration; pending data has not been replaced.");
+        if (existing is not null) EnsureCheckpointMatches(existing, collector, key, target, schedule);
         if (existing?.Batch is { Ready: true } ready && ready.LastExecutionId != context.ExecutionId)
             throw new InvalidOperationException("This batch is already released or requires failure recovery. Resume its pending retry; new input cannot be appended or deliveries replayed automatically.");
         var sameExecution = existing?.Batch?.LastExecutionId == context.ExecutionId;
@@ -46,12 +44,19 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
             throw new ArgumentException("Durable batch exceeds 10000 payloads or 16000000 incoming content bytes; the pending batch was not changed.");
         var payloads = sameExecution ? existing!.Payloads : (existing?.Payloads ?? []).Concat(batch.Payloads.Select(FlowOrchestrationPayloadSnapshot.Capture)).ToList();
         var receipts = (existing?.SourceReceipts ?? []).Concat(context.SourceReceipts).DistinctBy(receipt => receipt.Id).ToList();
+        var now = timeProvider.GetUtcNow();
+        var deadline = existing?.Batch?.DeadlineUtc ?? schedule?.NextDeadline(now);
         var checkpoint = new FlowOrchestrationCheckpoint
         {
             FlowId = context.FlowId, CorrelationKey = existing?.CorrelationKey ?? correlation,
             InstanceId = existing?.InstanceId ?? Guid.CreateVersion7().ToString(), Bookmark = collector,
-            UpdatedAt = timeProvider.GetUtcNow(), Payloads = payloads, SourceReceipts = receipts,
-            Batch = new() { CollectorId = collector, MetadataKey = key, TargetCount = target, LastExecutionId = context.ExecutionId, Ready = payloads.Count >= target }
+            UpdatedAt = now, Payloads = payloads, SourceReceipts = receipts,
+            Batch = new()
+            {
+                CollectorId = collector, MetadataKey = key, TargetCount = target, LastExecutionId = context.ExecutionId,
+                ScheduleKey = schedule?.Key ?? "", DeadlineUtc = deadline,
+                Ready = existing?.Batch?.Ready == true || payloads.Count >= target || deadline <= now
+            }
         };
         if (JsonSerializer.Serialize(checkpoint).Length > MaxSnapshotCharacters)
             throw new ArgumentException("Durable batch checkpoint exceeds 24000000 JSON characters; the pending batch was not changed.");
@@ -76,5 +81,27 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
             };
             return restored with { Metadata = metadata };
         }).ToArray());
+    }
+
+    public static void ValidateCheckpointSettings(FlowOrchestrationCheckpoint checkpoint, ModuleStepDefinition step)
+    {
+        var (collector, key, target, schedule) = ReadSettings(step);
+        EnsureCheckpointMatches(checkpoint, collector, key, target, schedule);
+    }
+
+    private static (string Collector, string Key, int Target, DurableBatchSchedule? Schedule) ReadSettings(ModuleStepDefinition step)
+    {
+        var collector = ModuleSettingReader.GetRequired(step.Settings, "collectorId", ModuleId);
+        var key = ModuleSettingReader.GetRequired(step.Settings, "metadataKey", ModuleId);
+        var rawCount = ModuleSettingReader.GetRequired(step.Settings, "targetCount", ModuleId);
+        if (collector.Length > 256 || key.Length > 256 || !int.TryParse(rawCount, NumberStyles.None, CultureInfo.InvariantCulture, out var target) || target is < 1 or > MaxPayloads)
+            throw new ArgumentException("Durable batch requires collector/key names of at most 256 characters and targetCount from 1 to 10000.");
+        return (collector, key, target, DurableBatchSchedule.Read(step));
+    }
+
+    private static void EnsureCheckpointMatches(FlowOrchestrationCheckpoint checkpoint, string collector, string key, int target, DurableBatchSchedule? schedule)
+    {
+        if (checkpoint.Batch is not { } state || state.CollectorId != collector || state.MetadataKey != key || state.TargetCount != target || state.ScheduleKey != (schedule?.Key ?? ""))
+            throw new InvalidOperationException("The persisted batch belongs to another collector/configuration. Restore the original configuration; pending data has not been replaced.");
     }
 }
