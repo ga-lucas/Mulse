@@ -90,6 +90,24 @@ Two ways to ship a module:
   **Configuration > Module Packages**. Loading uses a collectible `AssemblyLoadContext` so packages can
   later be reloaded or unloaded without restarting the service, subject to dependency/active-use guards.
 
+Field transforms use `ITransformModule` and `AddTransform<T>()`; no UI code or central transform-name list
+is required. Their descriptors provide settings, defaults and choices to the mapper. The sample package now
+includes `regex-replace-transform`: one text input, bounded pattern evaluation, and literal replacement.
+Load the trusted package in **Module Packages**, then **Refresh modules** in the open designer. This updates
+transform/renderer choices without replacing the canvas or unsaved mappings. Plugins execute trusted server
+code; they are not sandboxed. Built-in implementations still require a host update to change.
+
+Plugin constructors can use shared host services and `ILogger<YourPluginType>` without retaining collectible
+types in host DI caches. Construct plugin-local dependencies inside the module; plugin-owned service types
+and keyed plugin-owned services are not registered/resolved through the host container. Avoid static host
+caches or event subscriptions containing plugin types/delegates, and dispose resources on module release.
+For typed modules, use a package-local source-generated `JsonSerializerContext` and override
+`SerializerOptions` with its options (see `SamplePluginJsonContext`). Reflection-based System.Text.Json
+can retain plugin types in process-wide emission caches until subsequent cache eviction; generated contracts
+avoid this root. Include every input/output/nested contract and preserve the SDK's camel-case JSON convention.
+`IRenderModuleInvoker` lets modules invoke registered renderers under host-managed leases; value transforms
+use `IModuleInvoker`. Loading/unloading stays operator-controlled and active/saved dependencies are protected.
+
 ### Shipped module families
 
 | Package | Modules and purpose | Availability |
@@ -100,7 +118,7 @@ Two ways to ship a module:
 | `Mulse.Dbms.SqlServer` | `sql-server-lookup-fetch` uses upstream parsed IDs for a parameterized lookup; `sql-server-execute-deliver` executes SQL text/stored procedures with JSON-to-parameter binding per payload. | Build and load plugin. |
 | `Mulse.Hl7` | `hl7-parse` and `hl7-render` for HL7 v2 ER7 text/normalized JSON. | Build and load plugin. |
 | `Mulse.Excel` | `excel-parse` and `excel-render` for XLS/XLSX worksheets. | Build and load plugin. |
-| `Mulse.SamplePlugin` | Reference raw/typed modules illustrating custom fetch, parse, augment, render and deliver implementations. | Build and load plugin; examples, not required for normal flows. |
+| `Mulse.SamplePlugin` | Reference raw/typed fetch, parse, augment, render and deliver modules, `regex-replace-transform`, and the `sample-text-batch-render` UTF-8 header/body/trailer combiner. | Build and load plugin; examples, not required for normal flows. |
 
 The **Modules** page and `GET /api/modules` expose the loaded catalog, setting descriptors, defaults,
 formats/protocols/capabilities and package ownership. They are the reference for each module's accepted
@@ -199,6 +217,77 @@ remove the checkpoint. This is focused persisted correlation, not general-purpos
 A crash during ordinary processing is not automatically recoverable unless an appropriate retry or
 checkpoint snapshot was persisted. Source-notification recovery has its own durable continuation,
 described below.
+
+In the stateful node's properties, **Checkpoint state to remember** visually adds/removes capture rows:
+state key, source (metadata, JSON payload path, literal, payload name or content type), and path/value.
+These settings persist as `stateCaptureJson`; advanced JSON remains available without discarding unknown
+content. Captures read the first payload; absent/empty values are not stored. Invalid/null definitions,
+duplicate or reserved `correlationKey` keys, unknown sources/properties and missing source paths fail before
+checkpoint persistence. Limits: 128 captures, 256 characters per state key, 65,536 JSON characters.
+This editor does not implement a general loop/listen/timer workflow or Billing batch collection semantics.
+
+### Visual metadata promotion
+
+The `metadata-promotion-augment` node now has rows for metadata key, selector, fallback and multi-value join
+separator, plus editable XML namespace prefix/URI entries. JSON selectors use the existing `$` dot-path
+syntax and `[]` array expansion (for example `$.groups[]`), not full JSONPath. XML uses XPath expressions
+with explicit namespace prefixes. This reads each payload and preserves its body. Blank selected values are
+filtered out; fallback applies only when no values remain. Blank final values are skipped. Existing keys
+are preserved unless **Overwrite existing metadata** is enabled; row order still matters for duplicate keys.
+
+For example, promote `/s:Order/s:Group` into `rules.GroupID`, configure `s` to the input namespace, evaluate
+a metadata-mode policy, then render-dispatch using `rules.MapName`. All settings are saved with the flow;
+no JSON editing is needed for this chain. Advanced promotion/namespace JSON remains available. Unsupported
+shapes/properties are preserved for repair rather than silently replaced. Visual editing is bounded to 512
+rows, 1,000,000 promotion JSON characters and 65,536 namespace JSON characters; these are editor limits,
+not a claim that arbitrary advanced definitions have been validated by opening the editor.
+
+### Dynamic map / renderer selection
+
+Add/select the **Select map / renderer** render module (`render-dispatch`). Configure its metadata key and
+visual renderer choices: exact selection value, loaded renderer, and descriptor-driven settings. XML mapping
+choices reuse the visual XML mapper. A preceding decision, metadata promotion, or metadata-mode XML policy
+sets the selection key. By default (`batchMode=PerPayload`), each payload is rendered separately in input
+order; renderers that combine inputs therefore combine only that one payload. No implicit batch grouping or
+first-match/default route is applied. All selections are checked before invoking any renderer;
+missing/unknown values fail explicitly. Renderer failures propagate; delivery remains the responsibility
+of the route after rendering.
+
+Optionally choose **Group current batch by selection** (`batchMode=PerSelection`). Each distinct selection
+value is passed to its renderer once, with its input messages in original order. Groups execute in first-seen
+order, so nonadjacent messages can be reordered in the output. Choices that use the same renderer remain
+separate. Use distinct selection values for client groups that must not mix. The renderer determines whether
+to combine, drop or expand its inputs; grouping alone does not force a single output document. All inputs
+still prevalidate before any group is rendered. Unsupported grouping modes fail explicitly. This only groups
+inputs already in the current execution: no cross-run buffering, timer, count threshold or durable batch
+completion is implied.
+
+The hot-loadable sample package supplies **Combine UTF-8 text with header / trailer**
+(`sample-text-batch-render`) as a concrete combining renderer. Select it with per-selection grouping to
+produce one text document per choice, with descriptor-driven literal header/separator/trailer controls.
+Bodies must be valid UTF-8; invalid bytes fail, rather than being replaced. Header/trailer include exactly
+the configured text (no automatic newline, counts, totals, field expansion or encoding conversion); the
+separator appears only between bodies. Each literal is limited to 65,536 characters and total output to
+4,000,000 characters, including literals. Empty batches produce no file. An optional single output filename
+can be set; otherwise the first input filename gets `.batch.txt`. Use distinct filenames/destinations for
+separate groups when needed. Only identically shared metadata is retained; per-message IDs are not copied
+from an arbitrary first message. `batch.count` and `renderedBy` identify the actual combination. This example
+does not execute the original Billing batch orchestrations or custom pipelines.
+
+Choices persist as `casesJson` with `value`, `module`, and `settings`. Advanced JSON preserves unsupported
+content for repair. Changing a renderer explicitly clears that choice's settings. Limits: 1-128 choices,
+262,144 JSON characters, 2,048 characters per selection value, 128 settings per choice. Values are ordinal,
+case-sensitive. Nested `render-dispatch` is rejected. All renderer choices, including config-backed IDs,
+participate in missing-module preflight, package pinning and unload protection, not just the current selection.
+This is native configurable dispatch, not automatic translation of BizTalk dynamic map classes or pipelines.
+
+For mapping before later processing, add **Select map during processing** (`map-dispatch-augment`) instead.
+It uses the same visual choices editor, leases and dependency protection. Its selected renderer's output
+becomes the working payload for subsequent augments; output format, filename and metadata are determined
+by that renderer. It performs no delivery. A flow can normalize with one map, promote facts from the new
+body, run a metadata policy, and select another map at final rendering. Later nodes must accept the chosen
+format. Zero/multiple renderer outputs drop/expand the working batch just as they do at final rendering.
+This does not add loops, automatic grouping, transactional message scopes or BizTalk pipeline execution.
 
 ## Stored values in module parameters
 
@@ -569,9 +658,23 @@ types, condition/write dependencies, unsafe XML, and limit violations fail expli
 single-pass native rule engine, **not** BRE agenda/forward-chaining equivalence. Import diagnostics flag
 potential overlapping conflicting rules. A native proposal never clears an imported flow's execution gate.
 
-Preview: `POST /api/biztalk-import/rules/preview` with `policyJson` and `inputXml` returns `outputXml` and
-`matchedRules` using the exact runtime evaluator. It performs no fetch, delivery, schema-file loading,
-external code execution, or configuration/secret resolution. Limits: 32 export paths; 32 million XML
+The node's **Policy input / output** defaults to **XML fact document**, preserving existing behavior.
+Choose **Metadata facts; preserve message body** to build facts from metadata and return only actual rule
+assignments to metadata. With prefix `rules.`, conditions read `rules.GroupID`, `rules.IsBatch`, etc., and
+assignments write `rules.MapName`, etc. Blank prefix uses unprefixed field names. Every active condition
+field must be present; assignment-only fields are created internally. Field local names must be distinct
+case-insensitively, including across namespaces; collisions fail instead of overwriting one another.
+Existing assigned keys are overwritten intentionally; unassigned metadata, original bytes, filename and
+content type are preserved. Inactive/statically-false rules require no facts. Prefixes are limited to 128
+characters; fact limits still apply. Connect `rules.MapName` to `render-dispatch` for a native policy-to-map
+chain without replacing the message with the IntegrationRules fact document. Populate input metadata and
+configure every allowed renderer/map explicitly; importing alone does not wire the Billing orchestration.
+
+Preview: `POST /api/biztalk-import/rules/preview` with `policyJson` and `inputXml` returns `outputXml`,
+`matchedRules` and actual typed `assignments` using the exact runtime evaluator. The editor displays applied
+assignments. Preview accepts synthetic XML facts even when the node uses metadata mode; it does not fetch
+metadata from live messages. It performs no fetch, delivery, schema-file loading, external code execution,
+or configuration/secret resolution. Limits: 32 export paths; 32 million XML
 characters and 256 versions per export; 2 million policy JSON characters; 512 rules, 32 conditions and
 64 assignments per rule; 1 million XML input/output characters and 4,096 fact-root children.
 

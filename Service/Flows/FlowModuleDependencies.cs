@@ -20,6 +20,7 @@ internal static class FlowModuleDependencies
         foreach (var step in flow.Augments)
         {
             yield return (step.Module, ModuleKind.OrchestrationAugment);
+            foreach (var choice in DispatchChoices(flow.Id, step, configValues)) yield return (choice.Module, ModuleKind.Render);
             var isJoin = string.Equals(step.Module, "multi-source-join-map-augment", StringComparison.OrdinalIgnoreCase);
             var isParsedMap = string.Equals(step.Module, "parsed-data-map-augment", StringComparison.OrdinalIgnoreCase);
             if ((isJoin || isParsedMap) && step.Settings.TryGetValue("mappingJson", out var json) && !string.IsNullOrWhiteSpace(json))
@@ -41,6 +42,7 @@ internal static class FlowModuleDependencies
         foreach (var route in flow.Deliveries)
         {
             yield return (route.Render.Module, ModuleKind.Render);
+            foreach (var choice in DispatchChoices(flow.Id, route.Render, configValues)) yield return (choice.Module, ModuleKind.Render);
             foreach (var action in route.Delivers)
             {
                 yield return (action.Deliver.Module, ModuleKind.Deliver);
@@ -68,6 +70,15 @@ internal static class FlowModuleDependencies
         var missing = FindMissing(flow, available, configValues);
         if (missing.Count > 0)
             throw new InvalidOperationException($"Flow '{flow.Id}' has unknown or unloaded module dependencies: {string.Join(", ", missing)}. Load the required packages or correct the module references before enabling or running it.");
+    }
+
+    private static IEnumerable<RenderDispatchCase> DispatchChoices(string flowId, ModuleStepDefinition step, IReadOnlyDictionary<string, string>? configValues)
+    {
+        if (!string.Equals(step.Module, RenderDispatchDefinition.ModuleId, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(step.Module, RenderDispatchDefinition.AugmentModuleId, StringComparison.OrdinalIgnoreCase)) yield break;
+        var json = ConfigValueResolver.Substitute(step.Settings.GetValueOrDefault("casesJson", ""), configValues, reference =>
+            throw new ArgumentException($"Flow '{flowId}' requires configuration '{reference}' to determine its render dispatch dependencies."));
+        foreach (var choice in RenderDispatchDefinition.Read(json)) yield return choice;
     }
 
     private static WorkflowFieldMappingDefinition[] ParseMappings(string flowId, string json)

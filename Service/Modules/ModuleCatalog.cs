@@ -374,7 +374,8 @@ public sealed class ModuleCatalog : IModuleCatalog
 
         try
         {
-            var instance = (TModule)ActivatorUtilities.CreateInstance(_serviceProvider, moduleState.ImplementationType);
+            var provider = moduleState.ImplementationType.IsCollectible ? new PluginServiceProvider(_serviceProvider) : _serviceProvider;
+            var instance = (TModule)ActivatorUtilities.CreateInstance(provider, moduleState.ImplementationType);
             return new ModuleLease<TModule>(instance, moduleState.Entry, async () =>
             {
                 await DisposeModuleAsync(instance).ConfigureAwait(false);
@@ -613,7 +614,8 @@ public sealed class ModuleCatalog : IModuleCatalog
 
         foreach (var registration in builder.Registrations)
         {
-            var module = (IModule)ActivatorUtilities.CreateInstance(_serviceProvider, registration.ImplementationType);
+            var provider = registration.ImplementationType.IsCollectible ? new PluginServiceProvider(_serviceProvider) : _serviceProvider;
+            var module = (IModule)ActivatorUtilities.CreateInstance(provider, registration.ImplementationType);
             try
             {
                 if (module.Descriptor.Kind != registration.Kind)

@@ -38,9 +38,24 @@ The UI separates named policies and versions; choosing a name defaults to its la
 For this export that is 1.52, an accepted initial assumption, not proof of the deployed version. Review/preview
 before explicitly applying. Existing rule nodes can choose another imported policy/version in node properties.
 Each node saves its own pinned, editable snapshot; reimporting never silently upgrades it. The editor explains
-conditions and assignments. Constructing the correct IntegrationRules fact document and replacing the original
-CallRules execution remain manual work; policy selection does not complete orchestration translation.
+conditions and assignments. An optional metadata-facts mode now preserves the original message body while
+reading/writing prefixed fact fields. Native render-dispatch can use the resulting MapName metadata to choose
+an explicitly configured renderer/map. Both are visually configurable for scratch and imported nodes; neither
+auto-translates the original message assignments, maps or CallRules site. Checkpoint state capture also has a
+visual editor, but Billing batch collection/timers, transaction semantics and full source translation remain
+unfinished. These building blocks are not a runnable Billing migration or an execution-gate override.
 No external export files or literal rule/configuration values are committed to this repository.
+
+Additional native increments provide visual metadata promotion, mid-flow map dispatch, explicit current-run
+per-selection grouping, and a hot-loadable UTF-8 header/body/trailer renderer example. These can compose
+scratch workflows without JSON editing and without modifying the host to add another renderer. They do not
+replace the source batch orchestration: its trailer flow waits across messages until a calculated local-time
+boundary, can override that boundary using policy BatchInterval, handles later BatchTime changes, and maps
+a trailer from the accumulated message count. A literal trailer/current-run group is deliberately not labeled
+as equivalent. Deployed host timezone/culture and approved synthetic outputs are still needed to verify that
+behavior; production messages are not necessary to continue the remaining runtime/translation engineering.
+The four shared Build DLL references are still absent at their project HintPaths; helper sources exist, but
+source availability alone does not establish a deployed binary identity or verify a replacement pipeline.
 
 ## Decision
 

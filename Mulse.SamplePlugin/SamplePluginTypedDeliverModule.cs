@@ -17,6 +17,8 @@ public sealed class SamplePluginTypedDeliverModule(ILogger<SamplePluginTypedDeli
         [ModuleProtocol.Plugin],
         [ModuleCapability.Logging, ModuleCapability.Delivery]);
 
+    protected override System.Text.Json.JsonSerializerOptions SerializerOptions => SamplePluginJsonContext.Default.Options;
+
     public override ModuleDescriptor Descriptor { get; } = new(
         "sample-plugin-typed-deliver",
         "Sample plugin typed deliver",

@@ -865,6 +865,7 @@
                 {
                     <label class="field-label">Input source (blank means all payloads)</label>
                     <ReferenceInput Value="@node.Settings.GetValueOrDefault("sourceId", "")" ValueChanged="@(value => node.Settings["sourceId"] = value)" Label="Rule input source" References="_configReferences" />
+                    @RenderSettingsEditor(catalogModule?.Settings.Where(setting => setting.Key is not ("sourceId" or "policyJson")).ToArray(), node.Settings)
                     <details @key="node">
                         <summary>Choose an imported policy / version for this node</summary>
                         @if (_bizTalkAnalysis is { RulePolicies.Count: > 0 })
@@ -877,6 +878,24 @@
                         }
                     </details>
                     <XmlRulePolicyEditor @key="node.Id" PolicyJson="@node.Settings.GetValueOrDefault("policyJson", "")" PolicyJsonChanged="@(value => node.Settings["policyJson"] = value)" />
+                }
+                else if (node.ModuleId == "stateful-orchestration-augment")
+                {
+                    @RenderSettingsEditor(catalogModule?.Settings.Where(setting => setting.Key != "stateCaptureJson").ToArray(), node.Settings)
+                    <OrchestrationStateEditor @key="node.Id" Settings="node.Settings" References="_configReferences" />
+                }
+                else if (node.ModuleId == "metadata-promotion-augment")
+                {
+                    @RenderSettingsEditor(catalogModule?.Settings.Where(setting => setting.Key is not ("promotionsJson" or "namespacesJson")).ToArray(), node.Settings)
+                    <MetadataPromotionEditor @key="node.Id" Settings="node.Settings" References="_configReferences" />
+                }
+                else if (node.ModuleId is "render-dispatch" or "map-dispatch-augment")
+                {
+                    @if (node.ModuleId == "map-dispatch-augment")
+                    {
+                        <p>The selected map replaces the working payload here. Later augments must accept its output format; this step does not deliver messages.</p>
+                    }
+                    <RenderDispatchEditor @key="node.Id" Settings="node.Settings" Modules="_modules" References="_configReferences" />
                 }
                 else
                 {

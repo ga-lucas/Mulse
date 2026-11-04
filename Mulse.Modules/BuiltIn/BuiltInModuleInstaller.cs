@@ -15,8 +15,10 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
         builder.AddOrchestrationAugment<ParsedDataMapAugmentModule>();
         builder.AddOrchestrationAugment<StatefulOrchestrationAugmentModule>();
         builder.AddOrchestrationAugment<DebatchAugmentModule>();
+        builder.AddOrchestrationAugment<MapDispatchAugmentModule>();
         builder.AddRender<JsonRenderModule>();
         builder.AddRender<XmlRenderModule>();
+        builder.AddRender<RenderDispatchModule>();
         builder.AddDeliver<LoggingDeliverModule>();
         builder.AddDeliver<FileSystemDeliverModule>();
         builder.AddDeliver<HttpDeliverModule>();

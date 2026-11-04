@@ -14,6 +14,8 @@ public sealed class SamplePluginTypedParseModule : TypedParseModule<SamplePlugin
         [ModuleProtocol.Plugin],
         [ModuleCapability.Transformation]);
 
+    protected override System.Text.Json.JsonSerializerOptions SerializerOptions => SamplePluginJsonContext.Default.Options;
+
     public override ModuleDescriptor Descriptor { get; } = new(
         "sample-plugin-typed-parse",
         "Sample plugin typed parse",

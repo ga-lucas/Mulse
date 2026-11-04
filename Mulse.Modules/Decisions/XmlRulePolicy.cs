@@ -32,7 +32,10 @@ public sealed record XmlRulePolicy
     public List<XmlFieldRule> Rules { get; set; } = [];
 }
 
-public sealed record XmlRuleResult(string OutputXml, IReadOnlyList<string> MatchedRules);
+public sealed record XmlRuleResult(string OutputXml, IReadOnlyList<string> MatchedRules)
+{
+    public IReadOnlyList<XmlRuleField> Assignments { get; init; } = [];
+}
 
 /// <summary>Single-pass XML field rules, not a forward-chaining implementation of the BizTalk rules engine.</summary>
 public static class XmlRuleRuntime
@@ -132,7 +135,13 @@ public static class XmlRuleRuntime
         }
         var output = document.ToString(SaveOptions.DisableFormatting);
         if (output.Length > MaxXmlCharacters) throw new ArgumentException("XML rule output exceeds 1000000 characters.");
-        return new(output, matched);
+        return new(output, matched)
+        {
+            Assignments = assignments.Select(entry => new XmlRuleField
+            {
+                Name = entry.Key.LocalName, Namespace = entry.Key.NamespaceName, Type = entry.Value.Type, Value = entry.Value.Value
+            }).ToArray()
+        };
 
         bool Matches(XmlRuleField field)
         {

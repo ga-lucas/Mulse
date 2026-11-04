@@ -1,0 +1,117 @@
+@using System.Text.Json
+@using System.Text.Json.Serialization
+
+<fieldset>
+    <legend>Dynamic map / renderer choices</legend>
+    <p>A preceding decision or metadata promotion sets the selection value. Each payload uses exactly one configured choice. Selection values are case-sensitive; unknown values fail.</p>
+    <label>Selection metadata key</label>
+    <ReferenceInput Label="Renderer selection metadata key" Value="@Settings.GetValueOrDefault("metadataKey", "")" ValueChanged="@(value => Settings["metadataKey"] = value)" References="References" />
+    <label>Renderer input grouping</label>
+    <ReferenceInput Label="Renderer input grouping" InputKind="Select" Options="BatchModes" Value="@Settings.GetValueOrDefault("batchMode", "PerPayload")" ValueChanged="@(value => Settings["batchMode"] = value)" References="References" />
+    <p>Default: process each payload separately in order. Grouping sends all current inputs with the same selection to one renderer call, in first-seen group order; it can reorder nonadjacent messages. The renderer decides whether to combine outputs. This does not collect messages across runs or wait for batch boundaries. Use distinct selection values for client groups that must remain separate, even when they use the same renderer.</p>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (!_loadFailed)
+    {
+        @foreach (var choice in _choices)
+        {
+            var descriptor = Modules.FirstOrDefault(module => module.Kind == "Render" && string.Equals(module.Id, choice.Module, StringComparison.OrdinalIgnoreCase));
+            <div class="setting-row" @key="choice">
+                <label>Selection value <input class="mapping-input" aria-label="Renderer selection value" @bind="choice.Value" @bind:after="Persist" /></label>
+                <label>Renderer
+                    <select class="selector" aria-label="Selected renderer module" value="@choice.Module" @onchange="args => ChangeModule(choice, args)">
+                        <option value="">Choose a renderer</option>
+                        @foreach (var module in Modules.Where(module => module.Kind == "Render" && module.Id != "render-dispatch"))
+                        { <option value="@module.Id">@module.DisplayName (@module.Id)</option> }
+                        @if (choice.Module.Length > 0 && descriptor is null) { <option value="@choice.Module">@choice.Module (not loaded)</option> }
+                    </select>
+                </label>
+                <p class="field-hint">Changing this renderer clears this choice's renderer settings. Other choices are unchanged.</p>
+                @if (descriptor is not null)
+                {
+                    <p>@descriptor.Description</p>
+                    @foreach (var setting in descriptor.Settings)
+                    {
+                        @if (choice.Module.Equals("xml-mapping-render", StringComparison.OrdinalIgnoreCase) && setting.Key == "mappingJson")
+                        {
+                            <XmlMappingEditor Value="@choice.Settings.GetValueOrDefault(setting.Key, "")" ValueChanged="value => SetSetting(choice, setting.Key, value)" />
+                        }
+                        else
+                        {
+                            <label>@setting.Label @(setting.IsRequired ? "*" : "")</label>
+                            <ReferenceInput @key="(choice.Module, setting.Key)" Label="@setting.Label" InputKind="@setting.InputKind" Options="setting.Options" References="References" DefaultValue="@setting.DefaultValue"
+                                Value="@choice.Settings.GetValueOrDefault(setting.Key, setting.DefaultValue ?? "")" ValueChanged="value => SetSetting(choice, setting.Key, value)" />
+                            <p class="field-hint">@setting.Description</p>
+                        }
+                    }
+                }
+                <button class="secondary-button" @onclick="() => Remove(choice)">Remove renderer choice</button>
+            </div>
+        }
+        <button class="secondary-button" disabled="@(_choices.Count >= 128)" @onclick="Add">Add renderer choice</button>
+    }
+    <details>
+        <summary>Advanced renderer choices JSON</summary>
+        <textarea class="mapping-input" aria-label="Renderer choices JSON" value="@Settings.GetValueOrDefault("casesJson", "[]")" @onchange="ReplaceJson"></textarea>
+    </details>
+</fieldset>
+
+@code {
+    [Parameter, EditorRequired] public Dictionary<string, string> Settings { get; set; } = [];
+    [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+    private static readonly IReadOnlyList<ModuleSettingOptionViewModel> BatchModes = [new("PerPayload", "Each payload separately"), new("PerSelection", "Group current batch by selection")];
+    private List<RendererChoice> _choices = [];
+    private string? _loaded, _error;
+    private bool _loadFailed;
+    protected override void OnParametersSet()
+    {
+        var json = Settings.GetValueOrDefault("casesJson", "[]");
+        if (_loaded == json) return;
+        _loaded = json;
+        _error = null;
+        _loadFailed = false;
+        try
+        {
+            if (json.Length > 262144) throw new JsonException("Choices JSON exceeds 262144 characters.");
+            _choices = JsonSerializer.Deserialize<List<RendererChoice>>(json, Options) ?? throw new JsonException("Expected a choices array, not null.");
+            if (_choices.Count > 128 || _choices.Any(choice => choice is null || choice.Value is null || choice.Module is null
+                || choice.Settings is null || choice.Settings.Any(setting => setting.Value is null))) throw new JsonException("Supply at most 128 non-null choices with non-null fields and settings.");
+        }
+        catch (JsonException ex) { _loadFailed = true; _error = "Unable to edit renderer choices: " + ex.Message + " Repair the original JSON below; it has not been replaced."; }
+    }
+    private void Persist()
+    {
+        _loaded = JsonSerializer.Serialize(_choices, Options);
+        Settings["casesJson"] = _loaded;
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        _error = _loaded.Length > 262144 ? "Choices JSON exceeds 262144 characters." :
+            _choices.Count == 0 || _choices.Any(choice => string.IsNullOrWhiteSpace(choice.Value) || choice.Value.Length > 2048 || !values.Add(choice.Value)
+                || string.IsNullOrWhiteSpace(choice.Module) || choice.Module.Length > 256 || choice.Module != choice.Module.Trim()
+                || choice.Module.Equals("render-dispatch", StringComparison.OrdinalIgnoreCase)
+                || choice.Settings.Count > 128 || choice.Settings.Any(setting => string.IsNullOrWhiteSpace(setting.Key)))
+            ? "Supply 1 to 128 choices with unique nonblank values and loaded renderer IDs; nested render-dispatch is not allowed. Invalid choices cannot execute." : null;
+    }
+    private void Add()
+    {
+        if (_choices.Count >= 128) { _error = "At most 128 choices are supported."; return; }
+        _choices.Add(new()); Persist();
+    }
+    private void Remove(RendererChoice choice) { _choices.Remove(choice); Persist(); }
+    private void SetSetting(RendererChoice choice, string key, string value) { choice.Settings[key] = value; Persist(); }
+    private void ChangeModule(RendererChoice choice, ChangeEventArgs args)
+    {
+        var module = args.Value?.ToString() ?? "";
+        if (module == choice.Module) return;
+        choice.Module = module;
+        choice.Settings.Clear();
+        Persist();
+    }
+    private void ReplaceJson(ChangeEventArgs args) { Settings["casesJson"] = args.Value?.ToString() ?? ""; _loaded = null; OnParametersSet(); }
+    private sealed class RendererChoice
+    {
+        public string Value { get; set; } = "";
+        public string Module { get; set; } = "";
+        public Dictionary<string, string> Settings { get; set; } = [];
+    }
+}

@@ -31,4 +31,7 @@ public sealed class XmlRuleFieldViewModel
 }
 
 public sealed record XmlRulePreviewRequestViewModel(string PolicyJson, string InputXml);
-public sealed record XmlRulePreviewResultViewModel(string OutputXml, IReadOnlyList<string> MatchedRules);
+public sealed record XmlRulePreviewResultViewModel(string OutputXml, IReadOnlyList<string> MatchedRules)
+{
+    public IReadOnlyList<XmlRuleFieldViewModel> Assignments { get; init; } = [];
+}

@@ -1,0 +1,105 @@
+@using System.Text.Json
+@using System.Text.Json.Serialization
+
+<fieldset>
+    <legend>Checkpoint state to remember</legend>
+    <p>Remember values from the first payload while waiting for a correlated message. On resume they are restored under the configured metadata prefix. Payload snapshots are stored separately. Missing or empty values are not captured.</p>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (!_loadFailed)
+    {
+        @foreach (var entry in _entries)
+        {
+            <div class="setting-row" @key="entry">
+                <label>State key <input class="mapping-input" aria-label="Checkpoint state key" @bind="entry.Key" @bind:after="Persist" /></label>
+                <label>Read from
+                    <select class="selector" aria-label="Checkpoint value source" @bind="entry.Source" @bind:after="Persist">
+                        <option value="Metadata">Metadata</option><option value="Payload">JSON payload path</option>
+                        <option value="Literal">Literal value</option><option value="PayloadName">Payload name</option><option value="ContentType">Content type</option>
+                        @if (!Sources.Contains(entry.Source)) { <option value="@entry.Source">Unsupported: @entry.Source</option> }
+                    </select>
+                </label>
+                @if (entry.Source is "Metadata" or "Payload")
+                {
+                    <label>Metadata key / JSON path</label>
+                    <ReferenceInput Label="Checkpoint source path" Value="@(entry.Path ?? "")" ValueChanged="value => SetPath(entry, value)" References="References" />
+                }
+                else if (entry.Source == "Literal")
+                {
+                    <label>Literal value</label>
+                    <ReferenceInput Label="Checkpoint literal value" Value="@(entry.Value ?? "")" ValueChanged="value => SetValue(entry, value)" References="References" />
+                }
+                <button class="secondary-button" @onclick="() => Remove(entry)">Remove captured value</button>
+            </div>
+        }
+        <button class="secondary-button" disabled="@(_entries.Count >= 128)" @onclick="Add">Add captured value</button>
+    }
+    <details>
+        <summary>Advanced checkpoint state JSON</summary>
+        <textarea class="mapping-input" aria-label="Checkpoint state JSON" value="@Settings.GetValueOrDefault("stateCaptureJson", "[]")" @onchange="ReplaceJson"></textarea>
+    </details>
+</fieldset>
+
+@code {
+    [Parameter, EditorRequired] public Dictionary<string, string> Settings { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+    private static readonly string[] Sources = ["Metadata", "Payload", "Literal", "PayloadName", "ContentType"];
+    private List<CapturedValue> _entries = [];
+    private string? _loaded, _error;
+    private bool _loadFailed;
+
+    protected override void OnParametersSet()
+    {
+        var json = Settings.GetValueOrDefault("stateCaptureJson", "[]");
+        if (_loaded == json) return;
+        _loaded = json;
+        _error = null;
+        _loadFailed = false;
+        try
+        {
+            if (json.Length > 65536) throw new JsonException("State capture JSON exceeds 65536 characters.");
+            _entries = JsonSerializer.Deserialize<List<CapturedValue>>(json, Options) ?? throw new JsonException("Expected an array, not null.");
+            if (_entries.Count > 128 || _entries.Any(entry => entry is null)) throw new JsonException("Supply at most 128 non-null captures.");
+            foreach (var entry in _entries)
+                entry.Source = Sources.FirstOrDefault(source => string.Equals(source, entry.Source, StringComparison.OrdinalIgnoreCase)) ?? entry.Source;
+            Validate(json);
+        }
+        catch (JsonException ex) { _loadFailed = true; _error = "Unable to edit checkpoint state: " + ex.Message + " Repair the original JSON below; it has not been replaced."; }
+    }
+    private void Persist()
+    {
+        var json = JsonSerializer.Serialize(_entries, Options);
+        _loaded = json;
+        Settings["stateCaptureJson"] = json;
+        Validate(json);
+    }
+    private void Validate(string json)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _error = json.Length > 65536 ? "State capture JSON exceeds 65536 characters." :
+            _entries.Any(entry => string.IsNullOrWhiteSpace(entry.Key) || entry.Key.Length > 256 || entry.Key.Equals("correlationKey", StringComparison.OrdinalIgnoreCase)
+                || !keys.Add(entry.Key) || !Sources.Contains(entry.Source)
+                || (entry.Source is "Metadata" or "Payload" && string.IsNullOrWhiteSpace(entry.Path)))
+            ? "Each capture needs a unique nonblank key of at most 256 characters (not correlationKey), a supported source, and a path when reading metadata or JSON. Invalid captures cannot execute."
+            : null;
+    }
+    private void Add()
+    {
+        if (_entries.Count >= 128) { _error = "At most 128 captures are supported."; return; }
+        var index = 1;
+        while (_entries.Any(entry => string.Equals(entry.Key, "value" + index, StringComparison.OrdinalIgnoreCase))) index++;
+        _entries.Add(new() { Key = "value" + index, Source = "Literal", Value = "" });
+        Persist();
+    }
+    private void Remove(CapturedValue entry) { _entries.Remove(entry); Persist(); }
+    private void SetPath(CapturedValue entry, string value) { entry.Path = value; Persist(); }
+    private void SetValue(CapturedValue entry, string value) { entry.Value = value; Persist(); }
+    private void ReplaceJson(ChangeEventArgs args) { Settings["stateCaptureJson"] = args.Value?.ToString() ?? ""; _loaded = null; OnParametersSet(); }
+    private sealed class CapturedValue
+    {
+        public string Key { get; set; } = "";
+        public string Source { get; set; } = "Metadata";
+        public string? Path { get; set; }
+        public string? Value { get; set; }
+    }
+}

@@ -161,6 +161,7 @@ public sealed class ModulePackageLifecycleTests : IDisposable
         Assert.DoesNotContain(catalog.GetAll(), entry => entry.Descriptor.Id == "regex-replace-transform");
         await catalog.UpsertManagedPackageAsync(new() { Id = "Mulse.SamplePlugin", AssemblyPath = assemblyPath, Enabled = true }, default);
         using var services = new ServiceCollection().AddSingleton<IModuleCatalog>(catalog)
+            .AddSingleton<Mulse.Modules.Abstractions.IRenderModuleInvoker, Service.Modules.RenderModuleInvoker>()
             .AddSingleton<IModuleInvoker, Service.Modules.ModuleInvoker>().BuildServiceProvider();
         var invoker = services.GetRequiredService<IModuleInvoker>();
         const string mapping = """
@@ -182,6 +183,30 @@ public sealed class ModulePackageLifecycleTests : IDisposable
                 File.SetLastWriteTimeUtc(assemblyPath, File.GetLastWriteTimeUtc(assemblyPath).AddSeconds(2));
                 await catalog.ReloadPackageAsync("Mulse.SamplePlugin", default);
                 Assert.Equal("[{\"code\":\"45\"}]", await Mulse.Modules.Mapping.ParsedDataMapping.MapAsync(mapping, "{\"id\":\"B-45\"}", "Json", default, invoker, context));
+                var dispatch = new Mulse.Modules.BuiltIn.Render.RenderDispatchModule(services.GetRequiredService<Mulse.Modules.Abstractions.IRenderModuleInvoker>());
+                var rendered = await dispatch.RenderAsync(context, new([new("order.json",
+                    BinaryData.FromString("{\"orderId\":\"O1\",\"lineCount\":1,\"total\":12,\"summarizedAtUtc\":\"2026-01-01T00:00:00Z\"}"),
+                    "application/json", new Dictionary<string, string> { ["map"] = "receipt" })]), new()
+                    {
+                        Settings = new() { ["metadataKey"] = "map", ["casesJson"] = "[{\"value\":\"receipt\",\"module\":\"sample-plugin-typed-render\"}]" }
+                    }, default);
+                Assert.Contains("Order: O1", rendered.Payloads.Single().GetText());
+                var receipt = rendered.Payloads.Single();
+                var combined = await dispatch.RenderAsync(context, new([receipt, receipt]), new() { Settings = new()
+                {
+                    ["metadataKey"] = "map", ["batchMode"] = "PerSelection",
+                    ["casesJson"] = "[{\"value\":\"receipt\",\"module\":\"sample-text-batch-render\",\"settings\":{\"header\":\"H\",\"separator\":\"|\",\"trailer\":\"T\"}}]"
+                } }, default);
+                Assert.Equal("H" + receipt.GetText() + "|" + receipt.GetText() + "T", combined.Payloads.Single().GetText());
+                Assert.Equal("2", combined.Payloads.Single().Metadata["batch.count"]);
+                RecordTransformContext(catalog);
+                await store.UpsertFlowAsync(new() { Id = "plugin-map", Enabled = false, Augments = [new()
+                {
+                    Module = "map-dispatch-augment", Settings = new() { ["metadataKey"] = "map", ["casesJson"] = "[{\"value\":\"receipt\",\"module\":\"sample-text-batch-render\"}]" }
+                }] }, default);
+                var rendererDependency = await Assert.ThrowsAsync<InvalidOperationException>(() => catalog.UpsertManagedPackageAsync(
+                    new() { Id = "Mulse.SamplePlugin", AssemblyPath = assemblyPath, Enabled = false }, default));
+                Assert.Contains("plugin-map", rendererDependency.Message);
             }
         }
         finally
@@ -330,7 +355,6 @@ public sealed class ModulePackageLifecycleTests : IDisposable
             if (attempt > 0 && _unloadingContexts.All(context => !context.IsAlive)) break;
             Thread.Sleep(20);
         }
-        if (Environment.GetEnvironmentVariable("MULSE_TEST_DUMP") == "1" && _unloadingContexts.Any(context => context.IsAlive)) Thread.Sleep(120000);
         Assert.All(_unloadingContexts, context => Assert.False(context.IsAlive, "The unloaded plugin context is still rooted."));
         if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
     }

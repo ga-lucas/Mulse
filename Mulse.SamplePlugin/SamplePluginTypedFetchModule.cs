@@ -14,6 +14,8 @@ public sealed class SamplePluginTypedFetchModule(TimeProvider timeProvider) : Ty
         [ModuleProtocol.Plugin],
         [ModuleCapability.Ingestion]);
 
+    protected override System.Text.Json.JsonSerializerOptions SerializerOptions => SamplePluginJsonContext.Default.Options;
+
     public override ModuleDescriptor Descriptor { get; } = new(
         "sample-plugin-typed-fetch",
         "Sample plugin typed fetch",

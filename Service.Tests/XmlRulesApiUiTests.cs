@@ -54,6 +54,10 @@ public sealed class XmlRulesApiUiTests
             var preview = await client.PreviewXmlRulesAsync(new(policy, sample), default);
             Assert.Equal(XmlRuleRuntime.Evaluate(Policy(), sample).OutputXml, preview.OutputXml);
             Assert.Equal(new[] { "Client A" }, preview.MatchedRules);
+            var assignment = Assert.Single(preview.Assignments);
+            Assert.Equal("MapName", assignment.Name);
+            Assert.Equal("Map.A", assignment.Value);
+            Assert.Equal("string", assignment.Type);
             Assert.Null(flows.Created);
             Assert.Empty(importer.Requests);
             using var invalid = await http.PostAsJsonAsync("/api/biztalk-import/rules/preview", new XmlRulePreviewRequestViewModel(policy, "<!DOCTYPE x SYSTEM 'file:///not-read'><x/>"));

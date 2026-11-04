@@ -1,0 +1,121 @@
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using System.Xml
+
+<fieldset>
+    <legend>Promote message fields to metadata</legend>
+    <p>Read JSON dot paths (starting with $, for example $.groups[] to expand an array) or XML XPath expressions without replacing the message body. Policies can read keys such as rules.GroupID. Multiple values are joined in selection order; a default is used only when no values are selected. Blank results are skipped.</p>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (!_loadFailed)
+    {
+        @foreach (var entry in _entries)
+        {
+            <div class="setting-row" @key="entry">
+                <label>Metadata key <input class="mapping-input" aria-label="Promoted metadata key" @bind="entry.MetadataKey" @bind:after="Persist" /></label>
+                <label>JSON path / XPath</label>
+                <ReferenceInput Label="Promotion selector" Value="@entry.Selector" ValueChanged="value => SetSelector(entry, value)" References="References" />
+                <label>Default when no values are selected</label>
+                <ReferenceInput Label="Promotion default" Value="@(entry.DefaultValue ?? "")" ValueChanged="value => SetDefault(entry, value)" References="References" />
+                <label>Join multiple values with <input class="mapping-input" aria-label="Promotion join separator" value="@(entry.JoinWith ?? ";")" @onchange="@(args => SetJoin(entry, args.Value?.ToString() ?? string.Empty))" /></label>
+                <button class="secondary-button" @onclick="() => Remove(entry)">Remove promotion</button>
+            </div>
+        }
+        <button class="secondary-button" disabled="@(_entries.Count >= 512)" @onclick="Add">Add promoted field</button>
+        <h4>XML namespace prefixes</h4>
+        <p>Use explicit prefixes for namespaced XML, for example /s:Order/s:Group. Remove and add a prefix to rename it.</p>
+        @foreach (var prefix in _namespaces.Keys.ToArray())
+        {
+            <div class="setting-row" @key="prefix">
+                <label>Prefix: <code>@prefix</code></label>
+                <ReferenceInput Label="@($"Namespace URI for {prefix}")" Value="@_namespaces[prefix]" ValueChanged="value => SetNamespace(prefix, value)" References="References" />
+                <button class="secondary-button" @onclick="() => RemoveNamespace(prefix)">Remove namespace</button>
+            </div>
+        }
+        <label>New prefix <input class="mapping-input" aria-label="New namespace prefix" @bind="_newPrefix" /></label>
+        <label>Namespace URI <input class="mapping-input" aria-label="New namespace URI" @bind="_newUri" /></label>
+        <button class="secondary-button" @onclick="AddNamespace">Add namespace</button>
+    }
+    <details>
+        <summary>Advanced metadata promotion JSON</summary>
+        <label>Promotions <textarea class="mapping-input" aria-label="Promotions JSON" value="@Settings.GetValueOrDefault("promotionsJson", "[]")" @onchange="ReplacePromotions"></textarea></label>
+        <label>Namespaces <textarea class="mapping-input" aria-label="Promotion namespaces JSON" value="@Settings.GetValueOrDefault("namespacesJson", "{}")" @onchange="ReplaceNamespaces"></textarea></label>
+    </details>
+</fieldset>
+
+@code {
+    [Parameter, EditorRequired] public Dictionary<string, string> Settings { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+    private List<Promotion> _entries = [];
+    private Dictionary<string, string> _namespaces = [];
+    private string? _loadedPromotions, _loadedNamespaces, _error;
+    private string _newPrefix = "", _newUri = "";
+    private bool _loadFailed;
+
+    protected override void OnParametersSet()
+    {
+        var promotions = Settings.GetValueOrDefault("promotionsJson", "[]");
+        var namespaces = Settings.GetValueOrDefault("namespacesJson", "{}");
+        if (_loadedPromotions == promotions && _loadedNamespaces == namespaces) return;
+        _loadedPromotions = promotions;
+        _loadedNamespaces = namespaces;
+        _loadFailed = false;
+        _error = null;
+        try
+        {
+            if (promotions.Length > 1000000 || namespaces.Length > 65536) throw new JsonException("Visual editing supports at most 1000000 promotion JSON characters and 65536 namespace JSON characters.");
+            _entries = JsonSerializer.Deserialize<List<Promotion>>(promotions, Options) ?? throw new JsonException("Promotions must be an array, not null.");
+            if (_entries.Count > 512 || _entries.Any(entry => entry is null)) throw new JsonException("Visual editing supports at most 512 non-null promotions.");
+            _namespaces = string.IsNullOrWhiteSpace(namespaces) ? [] : JsonSerializer.Deserialize<Dictionary<string, string>>(namespaces, Options) ?? throw new JsonException("Namespaces must be an object, not null.");
+            if (_namespaces.Values.Any(value => value is null)) throw new JsonException("Namespace URIs must be text, not null.");
+            Validate();
+        }
+        catch (JsonException ex) { _loadFailed = true; _error = "Unable to edit promotions: " + ex.Message + " Repair the original JSON below; it has not been replaced."; }
+    }
+    private void Validate()
+    {
+        _error = _loadedPromotions?.Length > 1000000 || _loadedNamespaces?.Length > 65536
+            ? "Visual editing limits exceeded; the saved JSON is retained for advanced editing."
+            : _namespaces.Keys.Distinct(StringComparer.OrdinalIgnoreCase).Count() != _namespaces.Count
+            ? "Namespace prefixes must be unique (case-insensitive)."
+            : _entries.Any(entry => string.IsNullOrWhiteSpace(entry.MetadataKey) || string.IsNullOrWhiteSpace(entry.Selector))
+            ? "Each promotion needs a metadata key and a JSON path / XPath. Incomplete promotions cannot execute." : null;
+    }
+    private void Persist()
+    {
+        Settings["promotionsJson"] = _loadedPromotions = JsonSerializer.Serialize(_entries, Options);
+        Validate();
+    }
+    private void Add() { if (_entries.Count >= 512) { _error = "Visual editing supports at most 512 promotions."; return; } _entries.Add(new()); Persist(); }
+    private void Remove(Promotion entry) { _entries.Remove(entry); Persist(); }
+    private void SetSelector(Promotion entry, string value) { entry.Selector = value; Persist(); }
+    private void SetDefault(Promotion entry, string value) { entry.DefaultValue = value; Persist(); }
+    private void SetJoin(Promotion entry, string value) { entry.JoinWith = value; Persist(); }
+    private void PersistNamespaces()
+    {
+        Settings["namespacesJson"] = _loadedNamespaces = JsonSerializer.Serialize(_namespaces, Options);
+        Validate();
+    }
+    private void SetNamespace(string prefix, string value) { _namespaces[prefix] = value; PersistNamespaces(); }
+    private void RemoveNamespace(string prefix) { _namespaces.Remove(prefix); PersistNamespaces(); }
+    private void AddNamespace()
+    {
+        try { XmlConvert.VerifyNCName(_newPrefix); }
+        catch (Exception ex) when (ex is XmlException or ArgumentException) { _error = "Namespace prefix must be a nonblank XML name: " + ex.Message; return; }
+        if (_newPrefix is "xml" or "xmlns" || _namespaces.Keys.Contains(_newPrefix, StringComparer.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(_newUri))
+        { _error = "Use a unique, non-reserved prefix and a nonblank namespace URI."; return; }
+        _namespaces.Add(_newPrefix, _newUri);
+        _newPrefix = _newUri = "";
+        PersistNamespaces();
+        Validate();
+    }
+    private void ReplacePromotions(ChangeEventArgs args) { Settings["promotionsJson"] = args.Value?.ToString() ?? ""; _loadedPromotions = null; OnParametersSet(); }
+    private void ReplaceNamespaces(ChangeEventArgs args) { Settings["namespacesJson"] = args.Value?.ToString() ?? ""; _loadedNamespaces = null; OnParametersSet(); }
+    private sealed class Promotion
+    {
+        public string MetadataKey { get; set; } = "";
+        public string Selector { get; set; } = "";
+        public string? DefaultValue { get; set; }
+        public string? JoinWith { get; set; }
+    }
+}

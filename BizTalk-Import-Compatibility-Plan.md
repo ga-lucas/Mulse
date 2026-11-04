@@ -27,6 +27,28 @@ Target behavior: imported workflows must remain disabled until required configur
 - Actual beta export validation and remaining Billing gaps are recorded in the Billing migration guide.
   Full orchestration, dynamic-map, pipeline and operational compatibility remains unfinished.
 
+## Native visual building-block increment
+
+- External field transforms expose descriptor-driven mapping controls and can be loaded/reloaded without
+  restarting the host. A real sample regex transform and collectible lifecycle tests exercise invocation,
+  reload, saved-flow protection and unloading. Plugin activation isolates collectible logger resolution;
+  typed plugin examples use package-local generated JSON contracts to avoid process-wide reflection roots.
+- Checkpoint state captures now have a visual source/key/path editor, advanced repair, strict runtime
+  validation and suspend/resume tests. This is not a general orchestration interpreter or batch collector.
+- Native render-dispatch allowlists per-payload renderer choices and settings, invokes extensible renderers
+  under leases, and tracks every choice for module dependencies and unload protection. XML choices use the
+  existing visual mapper. Its map-dispatch-augment counterpart supports the same choices mid-flow, allowing
+  normalization before later promotions/policies/maps. Optional per-selection grouping supplies same-selection
+  inputs to one renderer call within the current execution only; per-payload behavior remains the default.
+  Neither mode is durable cross-run batching. Nested dispatch is deliberately unsupported.
+- Optional metadata-mode XML policies preserve original bodies and publish actual assignments. Visual
+  metadata promotion supplies facts; policy outputs can select real maps without replacing the message
+  with a fact document. Multi-client synthetic tests cover the complete native chain.
+- These capabilities are available to imported and scratch-built nodes. No increment auto-translates
+  original Billing control flow or clears migration reports. Original dynamic maps, custom helpers/pipelines,
+  batch/correlation/timing, request/reply, transaction and failure equivalence still require translation
+  and independent verification; the existing fail-closed execution gate is unchanged.
+
 ## Product surfaces
 
 ### Flow Designer

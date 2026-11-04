@@ -50,6 +50,13 @@
     @if (_preview is not null)
     {
         <p>Matched rules: @string.Join(", ", _preview.MatchedRules)</p>
+        <p>Applied assignments (also written to prefixed metadata in Metadata facts mode):</p>
+        <ul>
+            @foreach (var assignment in _preview.Assignments)
+            {
+                <li><code>@assignment.Name</code> (@assignment.Type; namespace: @assignment.Namespace) = @assignment.Value</li>
+            }
+        </ul>
         <pre>@_preview.OutputXml</pre>
     }
 </div>

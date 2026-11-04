@@ -309,9 +309,22 @@ public sealed class StatefulOrchestrationAugmentModule(
             return [];
         }
 
+        if (json.Length > 65536) throw new ArgumentException($"Module '{ModuleId}' stateCaptureJson exceeds 65536 characters.");
         try
         {
-            return JsonSerializer.Deserialize<OrchestrationStateCaptureDefinition[]>(json, SerializerOptions) ?? [];
+            var definitions = JsonSerializer.Deserialize<OrchestrationStateCaptureDefinition[]>(json, SerializerOptions)
+                ?? throw new ArgumentException($"Module '{ModuleId}' requires a state capture array, not null.");
+            if (definitions.Length > 128) throw new ArgumentException($"Module '{ModuleId}' supports at most 128 state captures.");
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var definition in definitions)
+            {
+                if (definition is null || string.IsNullOrWhiteSpace(definition.Key) || definition.Key.Length > 256
+                    || definition.Key.Equals("correlationKey", StringComparison.OrdinalIgnoreCase) || !keys.Add(definition.Key)
+                    || !Enum.IsDefined(definition.Source)
+                    || (definition.Source is DecisionValueSourceKind.Metadata or DecisionValueSourceKind.Payload && string.IsNullOrWhiteSpace(definition.Path)))
+                    throw new ArgumentException($"Module '{ModuleId}' requires unique nonblank capture keys (not correlationKey), supported sources, and paths for metadata/payload captures.");
+            }
+            return definitions;
         }
         catch (JsonException exception)
         {
@@ -383,8 +396,8 @@ public sealed class StatefulOrchestrationAugmentModule(
 
     private static JsonSerializerOptions CreateSerializerOptions()
     {
-        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-        options.Converters.Add(new JsonStringEnumConverter());
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+        options.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false));
         return options;
     }
 }

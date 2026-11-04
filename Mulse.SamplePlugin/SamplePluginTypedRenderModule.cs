@@ -14,6 +14,8 @@ public sealed class SamplePluginTypedRenderModule : TypedRenderModule<SamplePlug
         [ModuleProtocol.Plugin],
         [ModuleCapability.Transformation]);
 
+    protected override System.Text.Json.JsonSerializerOptions SerializerOptions => SamplePluginJsonContext.Default.Options;
+
     public override ModuleDescriptor Descriptor { get; } = new(
         "sample-plugin-typed-render",
         "Sample plugin typed render",
