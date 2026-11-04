@@ -38,6 +38,8 @@ public interface IMulseApiClient
 
     Task<DownloadedFileViewModel> DownloadBizTalkScaffoldedModulesAsync(CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken);
 
+    Task<DownloadedFileViewModel> DownloadBizTalkControlFlowAsync(CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken);
+
     Task<DownloadedFileViewModel> DownloadBizTalkScaffoldedModuleAsync(string moduleId, CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken);
 
     Task<FlowViewModel> CreateDesignedFlowAsync(CreateDesignedFlowRequestViewModel request, CancellationToken cancellationToken);

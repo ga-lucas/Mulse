@@ -230,6 +230,11 @@
                                 {
                                     <p><strong>Open questions:</strong> @FormatList(candidate.OpenQuestions)</p>
                                 }
+                                @if (candidate.DraftFlow.Migration?.SourceOrchestration is not null)
+                                {
+                                    <p><button class="secondary-button" @onclick="() => DownloadBizTalkControlFlowAsync(candidate)">Download developer control-flow model (.json)</button></p>
+                                    <p class="field-hint">Explicit source export includes expressions and literal property values. Handle as private source code. The SDK can execute bound branches/loops/local catches, but activities, durable waits and transaction boundaries require developer implementation. Downloading does not approve execution.</p>
+                                }
                                 @if (candidate.ScaffoldedModules.Count > 0)
                                 {
                                     <div class="scaffolded-modules">

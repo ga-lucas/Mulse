@@ -99,6 +99,12 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadDownloadedFileAsync(response, cancellationToken, "scaffolded modules zip").ConfigureAwait(false);
     }
 
+    public async Task<DownloadedFileViewModel> DownloadBizTalkControlFlowAsync(CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/biztalk-import/control-flow/download", request, cancellationToken).ConfigureAwait(false);
+        return await ReadDownloadedFileAsync(response, cancellationToken, "ODX source control-flow model").ConfigureAwait(false);
+    }
+
     public async Task<DownloadedFileViewModel> DownloadBizTalkScaffoldedModuleAsync(string moduleId, CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PostAsJsonAsync($"/api/biztalk-import/scaffolded-modules/{Uri.EscapeDataString(moduleId)}/download", request, cancellationToken).ConfigureAwait(false);

@@ -6,6 +6,8 @@ namespace Service.Endpoints;
 
 public static class BizTalkMigrationEndpoints
 {
+    private static readonly System.Text.Json.JsonSerializerOptions ControlFlowJsonOptions = new(System.Text.Json.JsonSerializerDefaults.Web) { WriteIndented = true };
+
     public static WebApplication MapBizTalkMigrationEndpoints(this WebApplication app)
     {
         app.MapPost("/api/biztalk-import/rules/preview", (XmlRulePreviewRequest request, CancellationToken ct) =>
@@ -53,6 +55,24 @@ public static class BizTalkMigrationEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
+
+        app.MapPost("/api/biztalk-import/control-flow/download", async Task<FileContentHttpResult> (CreateImportedBizTalkFlowRequest request, IBizTalkImportService bizTalkImportService, CancellationToken cancellationToken) =>
+            {
+                var candidate = await ResolveFlowCandidateAsync(request, bizTalkImportService, cancellationToken).ConfigureAwait(false);
+                var paths = candidate.DraftFlow.Migration?.Artifacts.Where(artifact => artifact.Kind == "Orchestration").Select(artifact => artifact.SourcePath).ToArray() ?? [];
+                if (paths.Length != 1) throw new InvalidOperationException("Select a candidate with exactly one owned orchestration before downloading its control-flow source model.");
+                var program = await Mulse.Modules.Orchestration.OdxProgramReader.ReadFileAsync(paths[0], cancellationToken).ConfigureAwait(false);
+                return TypedResults.File(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(program, ControlFlowJsonOptions),
+                    "application/json", $"{candidate.SuggestedFlowId}-control-flow.json");
+            })
+            .WithName("DownloadBizTalkControlFlow")
+            .WithSummary("Download a structured developer ODX source model, including expressions; not executable translation approval")
+            .WithDescription("Explicit source-code export preserves shape order, nesting, OIDs, source lines and property values for SDK developer bindings. Unlike the saved names-only migration inventory, it includes source expressions and literals; handle as private source code. Nothing is executed or approved.")
+            .WithTags("BizTalk Migration")
+            .Produces(StatusCodes.Status200OK, contentType: "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
 
         app.MapPost("/api/biztalk-import/scaffolded-modules/download", async Task<Results<FileContentHttpResult, NotFound<string>>> (CreateImportedBizTalkFlowRequest request, IBizTalkImportService bizTalkImportService, CancellationToken cancellationToken) =>
             {

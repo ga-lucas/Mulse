@@ -79,6 +79,9 @@ happens at this boundary, not during Fetch. Notification retries do not resend d
 
 ## Module extensibility
 
+See the [Module developer guide](Module-Developer-Guide.md) for SDK objects, typed/raw contracts, helper wrapping,
+registration, hot loading, source receipts, retries, generated migration stubs and verification requirements.
+
 Modules implement one of the core interfaces in `Mulse.Modules` and are registered via an `IModuleInstaller`.
 Two ways to ship a module:
 
@@ -254,7 +257,7 @@ A released checkpoint blocks new fetches while delivery/source-notification retr
 retries are exhausted or a crash leaves an ambiguous delivery outcome, the checkpoint stays visible and frozen:
 review destination/source outcomes before recovery. There is deliberately no blind replay/discard button.
 
-The default **CountOnly** mode has no automatic timeout. Neither mode provides business-message duplicate
+The default **CountOnly** mode has no automatic timeout. No collection mode provides business-message duplicate
 detection, distributed transactions or exactly-once delivery. The same persisted execution retry does not append
 twice, including an acknowledged-write failure; independent upstream redelivery can still duplicate messages.
 A process crash outside a saved continuation is not automatically replayed. Sources without receipts cannot
@@ -280,8 +283,59 @@ re-enabling permits overdue collection release. The UI shows the persisted UTC d
 retries or service downtime can delay release; this is not a hard real-time cutoff or strict transaction boundary.
 An in-flight source run may join the batch when its collector executes. No empty daily batch is synthesized.
 
-This does not translate Billing's policy BatchInterval, changing per-message BatchTime, trailer maps or listen
-loops. Imported orchestration execution remains gated.
+The fixed daily mode does not read policy intervals or per-message cutoff changes. Imported orchestration
+execution remains gated; a separate opt-in message/policy mode is described below.
+
+### Message/policy batch deadlines and counted XML output
+
+Select **Minimum count or message/policy deadline** (`releaseMode=CountOrMetadataDeadline`) and configure
+**BatchTime metadata key**, **BatchInterval metadata key** and an explicit **Cutoff timezone**. Promote the
+message's BatchTime into metadata before collection; metadata-mode XML rules can supply BatchInterval.
+The first message requires a strict `HH:mm` BatchTime and an interval of `NONE` or positive `N:D`, `N:H`,
+`N:M` (days/hours/minutes, at most 366 days). Invalid/missing facts fail before changing the checkpoint.
+
+- The first interval is pinned across messages/restarts. A non-NONE interval overrides BatchTime, using
+  local wall-clock arithmetic in the configured timezone, not necessarily an elapsed UTC duration across DST.
+  Later message times/policy intervals cannot slide or change that override.
+- Without an override, the first message selects the next strictly future BatchTime. A later BatchTime
+  different from the **first** message replaces the time on the **existing deadline's local date**. It does
+  not pick a new date from the current clock. An earlier replacement can therefore release immediately.
+  Returning to the original BatchTime does not reset a previous change. These rules reflect the inspected
+  trailer orchestration's timing structure, not an arbitrary inactivity timeout.
+- The saved UTC deadline, original BatchTime and pinned interval survive retry/restart/manual release.
+  Retry does not reapply historical timing changes. Idle release and deferred source acknowledgements use
+  the same driver/safety gates as fixed daily collection. The count threshold still applies.
+
+Native parsing deliberately rejects culture-dependent date strings, nonpositive/oversized intervals and
+unknown units instead of reproducing legacy fallback guesses. DST uses the documented native gap/fold rules;
+legacy-host equivalence remains unverified. Inputs are never split into multiple deadline windows within one
+source run. This mode is not automatically wired into imported orchestrations or a durable ODX listen engine.
+
+After collection, add **Wrap XML batch with message count** (`xml-batch-envelope-augment`). It produces one
+XML payload with this default shape, retaining document roots in input order and only identical shared metadata:
+
+```xml
+<Batch xmlns="urn:mulse:batch">
+  <MessageCount>2</MessageCount>
+  <Messages>
+    <Message><Invoice xmlns="urn:original">first</Invoice></Message>
+    <Message><Invoice xmlns="urn:original">second</Invoice></Message>
+  </Messages>
+</Batch>
+```
+
+Root name, namespace and output filename are editable in node properties. `MessageCount` and `batch.count`
+count **input payloads**, not records nested within a payload; no header/trailer is counted unless supplied as
+an input payload. Empty input stays empty. Inputs are bounded to 10,000 payloads / 16,000,000 bytes, output to
+24,000,000 characters; XML DTDs/external entities are prohibited, and original XML encodings/namespaces are read.
+Map MessageCount into a trailer using a visual scalar map or an explicitly configured XSLT/renderer. A dynamic
+allowlisted renderer can consume the whole envelope and produce header, repeated bodies and a counted trailer.
+The scalar Mapping Designer still does not support repeated body mappings; use reviewed XSLT or a plugin there.
+
+`MetadataDurableBatchTests` exercises real metadata rules, independent client deadlines, disk restart, counted
+XML wrapping, leased dynamic XSLT selection, exact header/body/trailer text, delivery and deferred acknowledgements.
+These are synthetic native-flow checks, not automatic translation of Billing's separate maps/custom pipelines
+or BizTalk golden-output equivalence. Helpers, response/transaction semantics and imported execution remain gated.
 
 ### Confirmed early release
 

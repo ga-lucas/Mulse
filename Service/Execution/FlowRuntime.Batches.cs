@@ -53,12 +53,14 @@ public sealed partial class FlowRuntime
                 Batch = new()
                 {
                     CollectorId = state.CollectorId, MetadataKey = state.MetadataKey, TargetCount = state.TargetCount,
-                    LastExecutionId = state.LastExecutionId, ScheduleKey = state.ScheduleKey, DeadlineUtc = state.DeadlineUtc, Ready = true
+                    LastExecutionId = state.LastExecutionId, ScheduleKey = state.ScheduleKey, DeadlineUtc = state.DeadlineUtc,
+                    OriginalBatchTime = state.OriginalBatchTime, PolicyBatchInterval = state.PolicyBatchInterval, Ready = true
                 }
             };
             // Commit release intent before delivery. A crash/ambiguous write freezes this instance instead of making a second click replay it.
             await orchestrationStateStore.UpsertAsync(prepared, cancellationToken).ConfigureAwait(false);
-            logger.LogInformation("Operator confirmed early release of flow {FlowId} batch {InstanceId} with {Count} payloads.", pipeline.Id, instanceId, expectedPayloadCount);
+            if (logger.IsEnabled(LogLevel.Information))
+                logger.LogInformation("Operator confirmed early release of flow {FlowId} batch {InstanceId} with {Count} payloads.", pipeline.Id, instanceId, expectedPayloadCount);
             return await ReleaseBatchCoreAsync(pipeline, prepared, cancellationToken).ConfigureAwait(false);
         }
         finally { gate.Release(); }
@@ -79,8 +81,9 @@ public sealed partial class FlowRuntime
         {
             PendingSourceReceipts = await orchestrationStateStore.GetPendingSourceReceiptsAsync(pipeline.Id, cancellationToken).ConfigureAwait(false)
         };
-        logger.LogInformation("Releasing due batch {InstanceId} for flow {FlowId} at persisted deadline {Deadline}; no source fetch or upstream mapping is invoked.",
-            checkpoint.InstanceId, pipeline.Id, batch.DeadlineUtc);
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation("Releasing due batch {InstanceId} for flow {FlowId} at persisted deadline {Deadline}; no source fetch or upstream mapping is invoked.",
+                checkpoint.InstanceId, pipeline.Id, batch.DeadlineUtc);
         try
         {
             return await RunWithSourceOutcomesAsync(pipeline, context,

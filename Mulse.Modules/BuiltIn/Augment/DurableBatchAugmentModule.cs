@@ -12,14 +12,16 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
     private const int MaxSnapshotCharacters = 24000000;
 
     public ModuleDescriptor Descriptor { get; } = new(ModuleId, "Collect correlated batch", ModuleKind.OrchestrationAugment,
-        "Persists messages across runs until the minimum payload count or an optional explicit-timezone daily cutoff. Each run must contain one correlation value. Sources remain pending until delivery. Failed ready batches are not automatically replayed.",
+        "Persists messages across runs until the minimum payload count or an optional explicit-timezone daily/message/policy deadline. Each run must contain one correlation value. Sources remain pending until delivery. Failed ready batches are not automatically replayed.",
         [
             new("collectorId", "Collector name", "Stable name for this checkpoint. Use only one durable collector per flow; do not combine it with stateful orchestration nodes.", true),
             new("metadataKey", "Correlation metadata key", "All incoming payloads must have the same nonblank value. Correlation values are case-insensitive, like orchestration checkpoint keys. Promote the client/batch group before this step.", true),
             new("targetCount", "Minimum payload count", "Release the entire accumulated batch at or above this count (1-10000). An incoming run is never split; overflow beyond 10000 fails.", true, ModuleSettingInputKind.Number, "100"),
-            new("releaseMode", "Release trigger", "CountOnly preserves count-only behavior. CountOrDailyCutoff releases at the first count threshold or daily deadline. Deadlines stay fixed from the first arrival.", false, ModuleSettingInputKind.Select, "CountOnly", [new("CountOnly", "Minimum count only"), new("CountOrDailyCutoff", "Minimum count or daily cutoff")]),
-            new("dailyCutoff", "Daily cutoff (HH:mm)", "Required for timed mode. A skipped DST time advances to the first valid minute; a repeated time uses its later occurrence. No timezone is inferred.", false),
-            new("timeZoneId", "Cutoff timezone", "Required for timed mode, e.g. UTC or a supported Windows/IANA timezone ID. Enabled flows release due batches even without new source data, on a best-effort two-second poll.", false)
+            new("releaseMode", "Release trigger", "Choose count only, a fixed daily cutoff, or message BatchTime with a pinned first-message policy interval override. The count threshold remains active in all modes.", false, ModuleSettingInputKind.Select, "CountOnly", [new("CountOnly", "Minimum count only"), new("CountOrDailyCutoff", "Minimum count or daily cutoff"), new("CountOrMetadataDeadline", "Minimum count or message/policy deadline")]),
+            new("dailyCutoff", "Daily cutoff (HH:mm)", "Required only for daily-cutoff mode. A skipped DST time advances to the first valid minute; a repeated time uses its later occurrence. No timezone is inferred.", false),
+            new("timeZoneId", "Cutoff timezone", "Required for timed modes, e.g. UTC or a supported Windows/IANA timezone ID. Enabled flows release due batches even without new source data, on a best-effort two-second poll.", false),
+            new("batchTimeMetadataKey", "BatchTime metadata key", "Required for message/policy mode. Promote HH:mm from the message before this collector. Without an interval override, later values different from the first message replace the time on the existing deadline's local date; this can release immediately.", false),
+            new("batchIntervalMetadataKey", "BatchInterval metadata key", "Required for message/policy mode. The first message pins NONE (use BatchTime) or positive N:D/H/M up to 366 days. Intervals use local wall-clock arithmetic in the configured timezone and do not slide. Later policy values are ignored.", false)
         ]);
 
     public async Task<IntegrationBatch> AugmentAsync(FlowExecutionContext context, IntegrationBatch batch, ModuleStepDefinition step, CancellationToken cancellationToken)
@@ -45,7 +47,9 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
         var payloads = sameExecution ? existing!.Payloads : (existing?.Payloads ?? []).Concat(batch.Payloads.Select(FlowOrchestrationPayloadSnapshot.Capture)).ToList();
         var receipts = (existing?.SourceReceipts ?? []).Concat(context.SourceReceipts).DistinctBy(receipt => receipt.Id).ToList();
         var now = timeProvider.GetUtcNow();
-        var deadline = existing?.Batch?.DeadlineUtc ?? schedule?.NextDeadline(now);
+        (DateTimeOffset? DeadlineUtc, string? OriginalBatchTime, string? PolicyBatchInterval) timing = (existing?.Batch?.DeadlineUtc, null, null);
+        if (schedule is not null) timing = schedule.ResolveDeadline(now, existing?.Batch, batch.Payloads, sameExecution);
+        var deadline = timing.DeadlineUtc;
         var checkpoint = new FlowOrchestrationCheckpoint
         {
             FlowId = context.FlowId, CorrelationKey = existing?.CorrelationKey ?? correlation,
@@ -55,6 +59,7 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
             {
                 CollectorId = collector, MetadataKey = key, TargetCount = target, LastExecutionId = context.ExecutionId,
                 ScheduleKey = schedule?.Key ?? "", DeadlineUtc = deadline,
+                OriginalBatchTime = timing.OriginalBatchTime, PolicyBatchInterval = timing.PolicyBatchInterval,
                 Ready = existing?.Batch?.Ready == true || payloads.Count >= target || deadline <= now
             }
         };
@@ -66,11 +71,13 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
         if (!checkpoint.Batch.Ready)
         {
             context.Suspend($"Batch '{collector}' has {payloads.Count}/{target} payloads; waiting for correlation '{checkpoint.CorrelationKey}'.");
-            logger.LogInformation("Flow {FlowId} collected batch {InstanceId}: {Count}/{Target}; sources remain pending.", context.FlowId, checkpoint.InstanceId, payloads.Count, target);
+            if (logger.IsEnabled(LogLevel.Information))
+                logger.LogInformation("Flow {FlowId} collected batch {InstanceId}: {Count}/{Target}; sources remain pending.", context.FlowId, checkpoint.InstanceId, payloads.Count, target);
             return IntegrationBatch.Empty;
         }
         context.MarkCheckpointForCompletion(checkpoint.FlowId, checkpoint.CorrelationKey);
-        logger.LogInformation("Flow {FlowId} released durable batch {InstanceId} with {Count} payloads. Checkpoint remains until successful completion.", context.FlowId, checkpoint.InstanceId, payloads.Count);
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation("Flow {FlowId} released durable batch {InstanceId} with {Count} payloads. Checkpoint remains until successful completion.", context.FlowId, checkpoint.InstanceId, payloads.Count);
         return new IntegrationBatch(payloads.Select(snapshot =>
         {
             var restored = snapshot.Restore();
@@ -103,5 +110,6 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
     {
         if (checkpoint.Batch is not { } state || state.CollectorId != collector || state.MetadataKey != key || state.TargetCount != target || state.ScheduleKey != (schedule?.Key ?? ""))
             throw new InvalidOperationException("The persisted batch belongs to another collector/configuration. Restore the original configuration; pending data has not been replaced.");
+        schedule?.ValidateSavedTiming(state);
     }
 }

@@ -53,6 +53,19 @@ public partial class Designer
         }
     }
 
+    private async Task DownloadBizTalkControlFlowAsync(BizTalkFlowCandidateViewModel candidate)
+    {
+        try
+        {
+            var request = new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths), SplitPaths(_additionalBindingPaths), SplitPaths(_additionalRulePaths));
+            await TriggerBrowserDownloadAsync(await ApiClient.DownloadBizTalkControlFlowAsync(request, CancellationToken.None));
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to download ODX control-flow source model: {exception.Message}";
+        }
+    }
+
     private async Task DownloadBizTalkScaffoldedModuleAsync(BizTalkFlowCandidateViewModel candidate, BizTalkScaffoldedModuleViewModel module)
     {
         try

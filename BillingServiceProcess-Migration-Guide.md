@@ -78,6 +78,32 @@ These capabilities do **not** translate Billing's changing BatchTime, policy Bat
 loops, trailer-count maps, transaction scopes or helper pipelines. No business-message deduplication or
 exactly-once semantics are implied, and no imported execution gate has changed.
 
+## Developer extension/control-flow update
+
+The [module developer guide](Module-Developer-Guide.md) describes the public SDK and hot-loadable extension
+seams. Import UI source-model downloads now expose the selected orchestration's full ordered hierarchy,
+properties/expressions and stable source IDs to developers, separately from the names-only saved report.
+The SDK can execute explicitly bound ordered decisions, bounded loops, sequential bodies and local CLR
+exception handlers, with complete binding preflight before effects. Activities/waits and transaction boundaries
+need explicit implementations; there is no persisted ODX program counter or inferred BizTalk transaction manager.
+Synthetic composed-flow tests verify this subset, not the full Billing services. Existing helpers/pipelines
+have not been rewritten, and imported drafts remain blocked.
+
+The SDK reader was also exercised against all three actual source files: 574 elements for the main service,
+192 for double-body batching and 196 for trailer batching. This proves structural source accessibility, not
+execution equivalence. **Minimum count or message/policy deadline** now offers a native UI-configurable subset
+of trailer timing: the first N:D/H/M policy interval overrides BatchTime; without an interval, later times
+that differ from the first message update the time on the existing deadline's local date. Timing facts persist
+across restart/retry/manual release. Strict HH:mm, positive bounded intervals and explicit timezone/DST choices
+are intentional native constraints, not legacy culture/invalid-input fallback emulation.
+
+**Wrap XML batch with message count** supplies ordered original XML roots and a payload-count field to a
+subsequent renderer. Synthetic composed tests exercise metadata rules, multiple clients, persisted intervals,
+idle restart release, allowlisted dynamic XSLT maps, exact header/body/trailer counts, delivery and deferred
+source acknowledgement. These establish working native composition, not installation/verification of Billing's
+original individual maps or custom pipelines. Full ODX listen/correlation continuation, replies and transaction
+recovery still require implementation, and original helper conversion remains explicitly deferred.
+
 ## Decision
 
 - **Importable as a disabled analysis/draft:** Yes. The current importer accepts an `.odx` path when exactly one sibling `.btproj` explicitly includes that file. Parent-reported completed verification (not rerun in this documentation task): 314 related tests pass, the full solution build succeeds, and actual Billing analysis assertions pass. The local analysis reported 19 BizTalk projects, 17 custom projects, 20 candidates, all three Billing orchestration candidates, and 574 designer elements for `BillingServiceProcess.odx`.

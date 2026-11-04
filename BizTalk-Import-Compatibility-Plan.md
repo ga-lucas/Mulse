@@ -63,6 +63,26 @@ Target behavior: imported workflows must remain disabled until required configur
   batch/correlation/timing, request/reply, transaction and failure equivalence still require translation
   and independent verification; the existing fail-closed execution gate is unchanged.
 
+## Developer SDK/control-flow increment
+
+- [Module developer guide](Module-Developer-Guide.md) documents payloads/context, native module interfaces,
+  hot-loadable packages, leased renderer/transform invocation, callbacks, retries and migration scaffolds.
+- Public structured ODX reading preserves the original ordered tree and expressions. An explicit import-UI
+  source-model download is scoped to the selected orchestration and kept separate from saved sanitized reports.
+- Explicit developer bindings can execute first-match decisions, bounded loops, sequential bodies and local
+  exception catches inside native flows. Missing bindings anywhere in the selected service fail before effects;
+  declarations, activities/waits and transaction boundaries require implementation, not automatic pass-through.
+- There is no durable ODX program counter/listen/correlation interpreter or inferred transaction implementation.
+  Existing runtime helpers/pipelines are deliberately not rewritten. This advances developer tooling, not full
+  Billing translation or imported-flow execution approval.
+- An opt-in UI-configurable metadata deadline now pins first-message N:D/H/M policy intervals or updates
+  BatchTime on the existing deadline's local date using the source's first-message comparison. Explicit
+  timezone, strict parsing, native DST choices and persisted timing state prevent silent clock guesses.
+- A native counted XML envelope supplies ordered roots and MessageCount to subsequent maps. A synthetic
+  multi-client composed test verifies metadata rules, independent deadlines across disk restart, idle release,
+  leased dynamic XSLT selection, exact header/body/trailer output and source acknowledgements. This does not
+  install the original separate header/body/trailer maps or implement their custom pipeline/transaction behavior.
+
 ## Product surfaces
 
 ### Flow Designer

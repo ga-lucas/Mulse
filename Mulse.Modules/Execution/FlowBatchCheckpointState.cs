@@ -8,5 +8,7 @@ public sealed class FlowBatchCheckpointState
     public string LastExecutionId { get; init; } = "";
     public string ScheduleKey { get; init; } = "";
     public DateTimeOffset? DeadlineUtc { get; init; }
+    public string? OriginalBatchTime { get; init; }
+    public string? PolicyBatchInterval { get; init; }
     public bool Ready { get; init; }
 }
