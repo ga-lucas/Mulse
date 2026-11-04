@@ -136,6 +136,10 @@
             <input id="additional-binding-paths" class="mapping-input" @bind="_additionalBindingPaths" @bind:event="oninput" placeholder="C:\Exports\Bindings; C:\Exports\Prod.BindingInfo.xml" />
             <HelpTooltip Label="Binding exports">Semicolon-separated files or folders containing bindings exported from the BizTalk Administration Console.</HelpTooltip>
 
+            <label class="field-label" for="additional-rule-paths">Rule policy XML exports (optional)</label>
+            <input id="additional-rule-paths" class="mapping-input" @bind="_additionalRulePaths" @bind:event="oninput" placeholder="C:\Exports\rules.xml" />
+            <p class="field-hint">Semicolon-separated BRL export files. Versions and client rules are separate: each version can contain rules for many clients. No deployed version is inferred.</p>
+
             <div class="action-row">
                 <button class="run-button" @onclick="AnalyzeBizTalkAsync" disabled="@_isAnalyzingBizTalk">@(_isAnalyzingBizTalk ? "Analyzing..." : "Analyze source")</button>
                 <button class="secondary-button" @onclick="ClearBizTalk" disabled="@_isAnalyzingBizTalk">Clear</button>
@@ -184,6 +188,8 @@
                 }
 
                 <BizTalkDependencyReport Projects="_bizTalkAnalysis.BizTalkProjects" />
+
+                <BizTalkRulePolicies Policies="_bizTalkAnalysis.RulePolicies" OnAddPolicy="AddImportedRulePolicy" />
 
                 @if (_bizTalkAnalysis.FlowCandidates.Count == 0)
                 {
@@ -855,6 +861,23 @@
                 {
                     <button class="secondary-button" @onclick="() => OpenMappingDesigner(node)">Edit parsed-data mapping</button>
                 }
+                else if (node.ModuleId == "xml-rules-augment")
+                {
+                    <label class="field-label">Input source (blank means all payloads)</label>
+                    <ReferenceInput Value="@node.Settings.GetValueOrDefault("sourceId", "")" ValueChanged="@(value => node.Settings["sourceId"] = value)" Label="Rule input source" References="_configReferences" />
+                    <details @key="node">
+                        <summary>Choose an imported policy / version for this node</summary>
+                        @if (_bizTalkAnalysis is { RulePolicies.Count: > 0 })
+                        {
+                            <BizTalkRulePolicies Policies="_bizTalkAnalysis.RulePolicies" ReplaceExisting="true" OnAddPolicy="@(value => node.Settings["policyJson"] = value)" />
+                        }
+                        else
+                        {
+                            <p>Analyze rule exports in Import from BizTalk to make their policies available here. This node's saved rules remain available below without the original export.</p>
+                        }
+                    </details>
+                    <XmlRulePolicyEditor @key="node.Id" PolicyJson="@node.Settings.GetValueOrDefault("policyJson", "")" PolicyJsonChanged="@(value => node.Settings["policyJson"] = value)" />
+                }
                 else
                 {
                     @RenderSettingsEditor(catalogModule?.Settings, node.Settings)
@@ -1037,7 +1060,7 @@
                     <div @key="mapNode.Id" hidden="@(mapNode.Id != ActiveMappingNodeId)">
                         @if (IsParsedMappingNode(mapNode))
                         {
-                            <ParsedDataMappingEditor Settings="mapNode.Settings" Sources="ParsedMappingSources" />
+                            <ParsedDataMappingEditor Settings="mapNode.Settings" Sources="ParsedMappingSources" TransformModules="TransformModules" References="_configReferences" />
                         }
                         else
                         {

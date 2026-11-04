@@ -136,6 +136,7 @@ public sealed partial class BizTalkImportService
             .ToArray();
         var relatedBindings = bindingFiles
             .Where(binding => IsBindingRelatedToProject(binding, project.Response))
+            .Select(binding => ScopeBindingPorts(binding, project.Response, split))
             .ToArray();
 
         var augmentGuidance = new List<string>();
@@ -206,6 +207,8 @@ public sealed partial class BizTalkImportService
             "This draft is disabled by default so imported addresses, credentials, and map paths can be reviewed safely before execution."
         };
         draftWarnings.AddRange(project.DependencyWarnings);
+        if (relatedBindings.Any(binding => binding.Services.Count > 0))
+            draftWarnings.Add("Physical ports were scoped using explicit assembly/orchestration references in the binding export. Direct MessageBox receive subscriptions, dynamic destinations, distribution lists, and unreferenced send-port filters are not inferred; review them in the original export.");
         if (!string.Equals(flowId, suggestedId, StringComparison.Ordinal))
         {
             draftWarnings.Add($"The suggested flow id '{suggestedId}' collides with another candidate. A source-path-derived suffix was added to keep the draft and its configuration references distinct.");

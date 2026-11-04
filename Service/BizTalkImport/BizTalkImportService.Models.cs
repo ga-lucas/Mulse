@@ -34,7 +34,13 @@ public sealed partial class BizTalkImportService
         string Name,
         string FilePath,
         IReadOnlyList<ReceivePortAnalysis> ReceivePorts,
-        IReadOnlyList<SendPortAnalysis> SendPorts);
+        IReadOnlyList<SendPortAnalysis> SendPorts)
+    {
+        public IReadOnlyList<BindingServiceAnalysis> Services { get; init; } = [];
+    }
+
+    internal sealed record BindingServiceAnalysis(string AssemblyName, string ServiceName,
+        IReadOnlyList<string> SendPortNames, IReadOnlyList<string> ReceivePortNames);
 
     internal sealed record ReceivePortAnalysis(
         string Name,

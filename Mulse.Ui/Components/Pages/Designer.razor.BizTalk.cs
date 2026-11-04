@@ -25,9 +25,9 @@ public partial class Designer
         try
         {
             _bizTalkAnalysis = await ApiClient.AnalyzeBizTalkSolutionAsync(
-                new AnalyzeBizTalkSolutionRequestViewModel(_sourcePath, SplitPaths(_additionalBindingPaths), SplitPaths(_additionalSourcePaths)),
+                new AnalyzeBizTalkSolutionRequestViewModel(_sourcePath, SplitPaths(_additionalBindingPaths), SplitPaths(_additionalSourcePaths), SplitPaths(_additionalRulePaths)),
                 CancellationToken.None);
-            _statusMessage = $"Loaded {_bizTalkAnalysis.BizTalkProjectCount} BizTalk project(s), {_bizTalkAnalysis.BindingFiles.Count} binding file(s), and {_bizTalkAnalysis.FlowCandidates.Count} draft flow candidate(s).";
+            _statusMessage = $"Loaded {_bizTalkAnalysis.BizTalkProjectCount} BizTalk project(s), {_bizTalkAnalysis.BindingFiles.Count} binding file(s), {_bizTalkAnalysis.RulePolicies.Count} rule policy version(s), and {_bizTalkAnalysis.FlowCandidates.Count} draft flow candidate(s).";
         }
         catch (Exception exception)
         {
@@ -43,7 +43,7 @@ public partial class Designer
     {
         try
         {
-            var request = new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths));
+            var request = new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths), SplitPaths(_additionalBindingPaths), SplitPaths(_additionalRulePaths));
             var file = await ApiClient.DownloadBizTalkScaffoldedModulesAsync(request, CancellationToken.None);
             await TriggerBrowserDownloadAsync(file);
         }
@@ -57,7 +57,7 @@ public partial class Designer
     {
         try
         {
-            var request = new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths));
+            var request = new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths), SplitPaths(_additionalBindingPaths), SplitPaths(_additionalRulePaths));
             var file = await ApiClient.DownloadBizTalkScaffoldedModuleAsync(module.ModuleId, request, CancellationToken.None);
             await TriggerBrowserDownloadAsync(file);
         }
@@ -133,11 +133,19 @@ public partial class Designer
         _statusMessage = $"Loaded BizTalk draft flow '{candidate.SuggestedFlowId}' onto the canvas with {ParseNodes.Count} source lane(s) ({FetchNodes.Count} fetch node(s)). Save it disabled; execution remains blocked until verified translation support exists.";
     }
 
+    private void AddImportedRulePolicy(string policyJson)
+    {
+        CreateNode(NodeStage.Augment, "xml-rules-augment", new Dictionary<string, string> { ["policyJson"] = policyJson }, order: AugmentNodes.Count);
+        AutoLayout();
+        _statusMessage = "Added the explicitly selected native XML rule proposal. Configure its input source and position after constructing its fact document; this does not wire or approve the original CallRules orchestration.";
+    }
+
     private void ClearBizTalk()
     {
         _sourcePath = string.Empty;
         _additionalSourcePaths = string.Empty;
         _additionalBindingPaths = string.Empty;
+        _additionalRulePaths = string.Empty;
         _bizTalkAnalysis = null;
     }
 }

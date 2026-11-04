@@ -1,0 +1,107 @@
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@inject IMulseApiClient ApiClient
+
+<div class="xml-rule-policy-editor">
+    <details>
+        <summary>What do policies do?</summary>
+        <p>A rule is an IF / THEN instruction. Conditions read fields from the incoming XML document; assignments write the chosen output values. All conditions in a rule must match. Every active matching rule applies, not just the first.</p>
+        <p>For example, IF GroupID equals a client group and IsBatch is true, THEN choose MapName and batch settings. In Billing these values tell later orchestration steps which maps, formats and destinations to use. The policy does not itself run those maps or deliver messages.</p>
+        <p>You can select an imported policy without rewriting its rules. Use this editor when you need to inspect or change client conditions and output settings. Preview with synthetic facts before saving changes.</p>
+    </details>
+    <p class="field-hint">Single-pass rules on one XML fact document. Multiple clients can share this policy. No-match, conflicting assignments, or condition/assignment dependencies fail explicitly; this is not a full BRE agenda. Priority orders evaluation; it does not choose a winning rule.</p>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (_policy is not null)
+    {
+        <p><strong>Current snapshot:</strong> @_policy.Name / @_policy.Version (@_policy.Rules.Count rules)</p>
+        <p class="field-hint">Name and version below label this editable snapshot. Changing a label does not load another policy or version. Use the imported policy selectors to replace the rules.</p>
+        <label class="field-label">Policy name label</label>
+        <input class="mapping-input" @bind="_policy.Name" @bind:after="SaveAsync" />
+        <label class="field-label">Policy version label</label>
+        <input class="mapping-input" @bind="_policy.Version" @bind:after="SaveAsync" />
+        <label class="field-label">Fact root local name</label>
+        <input class="mapping-input" @bind="_policy.RootName" @bind:after="SaveAsync" />
+        <label class="field-label">Fact root namespace</label>
+        <input class="mapping-input" @bind="_policy.RootNamespace" @bind:after="SaveAsync" />
+        @foreach (var rule in _policy.Rules)
+        {
+            <details @key="rule">
+                <summary>@rule.Name (@(rule.Active ? "active" : "inactive"))</summary>
+                <label class="field-label">Rule name</label>
+                <input class="mapping-input" @bind="rule.Name" @bind:after="SaveAsync" />
+                <label class="field-label"><input type="checkbox" @bind="rule.Active" @bind:after="SaveAsync" /> Active</label>
+                <label class="field-label"><input type="checkbox" @bind="rule.ConstantCondition" @bind:after="SaveAsync" /> Constant guard passes (folded literal comparisons)</label>
+                <label class="field-label">Priority (ordering only; never resolves conflicting assignments)</label>
+                <input class="mapping-input" type="number" @bind="rule.Priority" @bind:after="SaveAsync" />
+                <XmlRuleFieldsEditor Fields="rule.Conditions" Label="Equality conditions (all; empty means unconditional)" Changed="SaveAsync" />
+                <XmlRuleFieldsEditor Fields="rule.Assignments" Label="Literal assignments" Changed="SaveAsync" />
+                <button class="secondary-button" @onclick="async () => { _policy.Rules.Remove(rule); await SaveAsync(); }">Remove rule</button>
+            </details>
+        }
+        <button class="secondary-button" @onclick="AddRuleAsync">Add rule</button>
+    }
+    <details>
+        <summary>Advanced policy JSON</summary>
+        <textarea class="mapping-input" aria-label="XML rule policy JSON" value="@PolicyJson" @onchange="JsonChangedAsync"></textarea>
+    </details>
+    <label class="field-label">Synthetic XML facts (not saved with flow)</label>
+    <textarea class="mapping-input" aria-label="Synthetic XML facts" @bind="_sample"></textarea>
+    <button class="secondary-button" disabled="@(_busy || _policy is null)" @onclick="PreviewAsync">Preview rules without delivery</button>
+    @if (_preview is not null)
+    {
+        <p>Matched rules: @string.Join(", ", _preview.MatchedRules)</p>
+        <pre>@_preview.OutputXml</pre>
+    }
+</div>
+
+@code {
+    [Parameter] public string PolicyJson { get; set; } = "";
+    [Parameter] public EventCallback<string> PolicyJsonChanged { get; set; }
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+    private XmlRulePolicyViewModel? _policy;
+    private string? _loaded, _error;
+    private string _sample = "";
+    private bool _busy;
+    private XmlRulePreviewResultViewModel? _preview;
+
+    protected override void OnParametersSet()
+    {
+        if (_loaded == PolicyJson) return;
+        _loaded = PolicyJson;
+        _preview = null;
+        _error = null;
+        try
+        {
+            _policy = JsonSerializer.Deserialize<XmlRulePolicyViewModel>(PolicyJson, Options);
+            if (_policy is null || _policy.Rules is null || _policy.Rules.Any(rule => rule is null || rule.Conditions is null || rule.Assignments is null
+                || rule.Conditions.Concat(rule.Assignments).Any(entry => entry is null)))
+                throw new JsonException("Rules, fields, and their lists cannot be null.");
+        }
+        catch (JsonException ex) { _policy = null; _error = "Invalid policy: " + ex.Message; }
+    }
+    private async Task SaveAsync()
+    {
+        _preview = null;
+        var json = JsonSerializer.Serialize(_policy, Options);
+        _loaded = json;
+        await PolicyJsonChanged.InvokeAsync(json);
+    }
+    private async Task JsonChangedAsync(ChangeEventArgs args)
+    {
+        await PolicyJsonChanged.InvokeAsync(args.Value?.ToString() ?? "");
+    }
+    private async Task AddRuleAsync()
+    {
+        _policy!.Rules.Add(new() { Name = "New client rule", Conditions = [new()], Assignments = [new()] });
+        await SaveAsync();
+    }
+    private async Task PreviewAsync()
+    {
+        _busy = true;
+        _error = null;
+        _preview = null;
+        try { _preview = await ApiClient.PreviewXmlRulesAsync(new(PolicyJson, _sample), CancellationToken.None); }
+        catch (Exception ex) { _error = "Rule preview failed: " + ex.Message; }
+        finally { _busy = false; }
+    }
+}

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Mulse.Modules;
+using Mulse.Modules.Mapping;
 using Mulse.Modules.Workflow;
 
 namespace Service.Flows;
@@ -19,13 +20,22 @@ internal static class FlowModuleDependencies
         foreach (var step in flow.Augments)
         {
             yield return (step.Module, ModuleKind.OrchestrationAugment);
-            if (string.Equals(step.Module, "multi-source-join-map-augment", StringComparison.OrdinalIgnoreCase)
-                && step.Settings.TryGetValue("mappingJson", out var json) && !string.IsNullOrWhiteSpace(json))
+            var isJoin = string.Equals(step.Module, "multi-source-join-map-augment", StringComparison.OrdinalIgnoreCase);
+            var isParsedMap = string.Equals(step.Module, "parsed-data-map-augment", StringComparison.OrdinalIgnoreCase);
+            if ((isJoin || isParsedMap) && step.Settings.TryGetValue("mappingJson", out var json) && !string.IsNullOrWhiteSpace(json))
             {
                 json = ConfigValueResolver.Substitute(json, configValues, reference =>
                     throw new ArgumentException($"Flow '{flow.Id}' requires configuration '{reference}' to determine its mapping module dependencies."));
-                foreach (var mapping in ParseMappings(flow.Id, json).Where(mapping => mapping.SourceKind == WorkflowFieldSourceKind.Transform))
-                    yield return (mapping.TransformModule?.Trim() ?? string.Empty, ModuleKind.Transform);
+                if (isParsedMap)
+                {
+                    foreach (var module in ParsedDataMapping.TransformModules(ParsedDataMapping.ReadMap(json)))
+                        yield return (module, ModuleKind.Transform);
+                }
+                else
+                {
+                    foreach (var mapping in ParseMappings(flow.Id, json).Where(mapping => mapping.SourceKind == WorkflowFieldSourceKind.Transform))
+                        yield return (mapping.TransformModule?.Trim() ?? string.Empty, ModuleKind.Transform);
+                }
             }
         }
         foreach (var route in flow.Deliveries)

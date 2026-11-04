@@ -15,4 +15,7 @@ public sealed record BizTalkSolutionAnalysisViewModel(
     IReadOnlyList<BizTalkProjectViewModel> BizTalkProjects,
     IReadOnlyList<BizTalkCustomAssemblyViewModel> CustomAssemblies,
     IReadOnlyList<BizTalkFlowCandidateViewModel> FlowCandidates,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings)
+{
+    public IReadOnlyList<BizTalkRulePolicyViewModel> RulePolicies { get; init; } = [];
+}

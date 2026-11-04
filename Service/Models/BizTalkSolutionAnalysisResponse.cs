@@ -16,4 +16,7 @@ public sealed record BizTalkSolutionAnalysisResponse(
     IReadOnlyList<BizTalkProjectResponse> BizTalkProjects,
     IReadOnlyList<BizTalkCustomAssemblyResponse> CustomAssemblies,
     IReadOnlyList<BizTalkFlowCandidateResponse> FlowCandidates,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings)
+{
+    public IReadOnlyList<BizTalkRulePolicyResponse> RulePolicies { get; init; } = [];
+}

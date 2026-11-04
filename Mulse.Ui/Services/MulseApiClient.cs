@@ -75,6 +75,12 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<BizTalkSolutionAnalysisViewModel>(response, cancellationToken, "BizTalk migration analysis response").ConfigureAwait(false);
     }
 
+    public async Task<XmlRulePreviewResultViewModel> PreviewXmlRulesAsync(XmlRulePreviewRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync("/api/biztalk-import/rules/preview", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<XmlRulePreviewResultViewModel>(response, cancellationToken, "XML rule preview").ConfigureAwait(false);
+    }
+
     public async Task<FlowViewModel> ImportBizTalkDraftFlowAsync(CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PostAsJsonAsync("/api/biztalk-import/flows", request, cancellationToken).ConfigureAwait(false);

@@ -2,7 +2,7 @@ using Mulse.Modules.Mapping;
 
 namespace Mulse.Modules.BuiltIn.Augment;
 
-public sealed class ParsedDataMapAugmentModule : IOrchestrationAugmentModule
+public sealed class ParsedDataMapAugmentModule(IModuleInvoker? moduleInvoker = null) : IOrchestrationAugmentModule
 {
     public ModuleDescriptor Descriptor { get; } = new(
         "parsed-data-map-augment", "Map parsed data", ModuleKind.OrchestrationAugment,
@@ -15,7 +15,7 @@ public sealed class ParsedDataMapAugmentModule : IOrchestrationAugmentModule
         ],
         new ModuleRecommendationProfile([ModuleDataFormat.Json, ModuleDataFormat.Xml, ModuleDataFormat.Text], capabilities: [ModuleCapability.Mapping, ModuleCapability.Transformation]));
 
-    public Task<IntegrationBatch> AugmentAsync(FlowExecutionContext context, IntegrationBatch batch, ModuleStepDefinition step, CancellationToken cancellationToken)
+    public async Task<IntegrationBatch> AugmentAsync(FlowExecutionContext context, IntegrationBatch batch, ModuleStepDefinition step, CancellationToken cancellationToken)
     {
         var mapping = ModuleSettingReader.GetRequired(step.Settings, "mappingJson", Descriptor.Id);
         ParsedDataMapping.ReadMap(mapping);
@@ -30,10 +30,10 @@ public sealed class ParsedDataMapAugmentModule : IOrchestrationAugmentModule
                 outputs.Add(payload);
                 continue;
             }
-            var mapped = ParsedDataMapping.Map(mapping, payload.GetText(), format, cancellationToken);
+            var mapped = await ParsedDataMapping.MapAsync(mapping, payload.GetText(), format, cancellationToken, moduleInvoker, context).ConfigureAwait(false);
             var metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.OrdinalIgnoreCase) { ["mappedBy"] = Descriptor.Id };
             outputs.Add(new(Path.ChangeExtension(payload.Name, ".json"), BinaryData.FromString(mapped), "application/json", metadata));
         }
-        return Task.FromResult(new IntegrationBatch(outputs));
+        return new IntegrationBatch(outputs);
     }
 }

@@ -13,6 +13,20 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 
 Target behavior: imported workflows must remain disabled until required configuration and unsupported behavior are resolved and verified. Flows carrying migration reports now have a fail-closed enable/run gate: they remain editable as disabled drafts, but cannot execute until verified translation support exists. Report statuses and configuration review are not approvals. Older flows without migration metadata cannot be identified retroactively and need reanalysis/re-import to receive the gate. The same Mulse modules, mappings, transforms, routes, and diagnostics must also be available when creating a workflow from scratch in the UI.
 
+## 2026-11-04 increment: application bindings and BRL exports
+
+- Generic import requests accept explicit external BRL XML exports and preserve all versions/client rules.
+- Application-wide bindings are matched by `ModuleRef` assembly evidence and scoped to each orchestration's
+  physical port references, rather than relying only on export filenames or assigning every application port.
+- Supported direct-child XML string/boolean equality rules and literal assignments become editable native
+  proposals with explicit version selection, graphical node editing and a no-I/O runtime-identical preview.
+- Unsupported rules are reported without partial executable policies. Potential client-rule assignment conflicts
+  are diagnosed; runtime conflicts fail explicitly. Native evaluation is single-pass, not a BRE agenda emulator.
+- Called policy/version evidence survives draft persistence. Additional source/binding/rule paths survive API
+  import/download reanalysis. No policy proposal auto-wires or approves a CallRules orchestration.
+- Actual beta export validation and remaining Billing gaps are recorded in the Billing migration guide.
+  Full orchestration, dynamic-map, pipeline and operational compatibility remains unfinished.
+
 ## Product surfaces
 
 ### Flow Designer

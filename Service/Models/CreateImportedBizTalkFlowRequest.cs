@@ -17,6 +17,9 @@ public sealed record CreateImportedBizTalkFlowRequest
     /// </summary>
     public IReadOnlyList<string> AdditionalSourcePaths { get; init; } = [];
 
+    public IReadOnlyList<string> AdditionalBindingPaths { get; init; } = [];
+    public IReadOnlyList<string> AdditionalRulePaths { get; init; } = [];
+
     /// <summary>The suggested flow id of the generated draft flow to import.</summary>
     [Required]
     public required string SuggestedFlowId { get; init; }

@@ -17,8 +17,9 @@ public static class ParsedDataMappingEndpoints
         app.MapPost("/api/flow-designer/parsed-mapping/inspect", InspectAsync)
             .WithTags("Designer").WithSummary("Discover fields from supplied parsed data or an explicitly selected sample parser")
             .Produces<ParsedDataInspection>().ProducesProblem(StatusCodes.Status400BadRequest);
-        app.MapPost("/api/flow-designer/parsed-mapping/preview", (ParsedDataPreviewRequest request, CancellationToken ct) =>
-            TypedResults.Ok(new ParsedDataPreviewResponse(ParsedDataMapping.Map(request.MappingJson, request.ParsedData, request.Format, ct))))
+        app.MapPost("/api/flow-designer/parsed-mapping/preview", async (ParsedDataPreviewRequest request, IServiceProvider services, CancellationToken ct) =>
+            TypedResults.Ok(new ParsedDataPreviewResponse(await ParsedDataMapping.MapAsync(request.MappingJson, request.ParsedData, request.Format, ct,
+                services.GetService<IModuleInvoker>(), new("mapping-preview", Guid.NewGuid().ToString("n"), DateTimeOffset.UtcNow)))))
             .WithTags("Designer").WithSummary("Preview a parsed-data map without fetching or delivering")
             .ProducesProblem(StatusCodes.Status400BadRequest);
     }

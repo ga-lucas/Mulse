@@ -1,0 +1,71 @@
+@using System.Text.Json
+
+<div class="mapping-value">
+    <select class="selector" aria-label="@($"{Label} type")" value="@_type" @onchange="TypeChangedAsync">
+        <option value="Text">Text</option><option value="Number">Number</option><option value="Boolean">Boolean</option><option value="Null">Null</option><option value="Json">Advanced JSON</option>
+    </select>
+    @if (_type == "Boolean")
+    {
+        <select class="selector" aria-label="@Label" value="@_text" @onchange="ValueChangedAsync"><option value="true">true</option><option value="false">false</option></select>
+    }
+    else if (_type != "Null")
+    {
+        <input class="mapping-input" aria-label="@Label" inputmode="@(_type == "Number" ? "decimal" : null)" value="@_text" @onchange="ValueChangedAsync" />
+    }
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+</div>
+
+@code {
+    [Parameter] public string Value { get; set; } = "null";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "Constant value";
+    private string? _loaded, _error;
+    private string _type = "Null", _text = "";
+
+    protected override void OnParametersSet()
+    {
+        if (_loaded == Value) return;
+        _loaded = Value;
+        _error = null;
+        try
+        {
+            using var document = JsonDocument.Parse(Value);
+            var value = document.RootElement;
+            _type = value.ValueKind switch
+            {
+                JsonValueKind.String => "Text", JsonValueKind.Number => "Number",
+                JsonValueKind.True or JsonValueKind.False => "Boolean", JsonValueKind.Null => "Null", _ => "Json"
+            };
+            _text = _type == "Text" ? value.GetString()! : Value;
+        }
+        catch (JsonException ex) { _type = "Json"; _text = Value; _error = $"Invalid constant: {ex.Message}"; }
+    }
+
+    private async Task TypeChangedAsync(ChangeEventArgs args)
+    {
+        _type = args.Value?.ToString() ?? "Null";
+        _text = _type switch { "Boolean" => "true", "Number" => "0", "Json" => "{}", _ => "" };
+        await SaveAsync();
+    }
+
+    private async Task ValueChangedAsync(ChangeEventArgs args)
+    {
+        _text = args.Value?.ToString() ?? "";
+        await SaveAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        var json = _type switch { "Text" => JsonSerializer.Serialize(_text), "Null" => "null", _ => _text };
+        _error = null;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (_type == "Number" && document.RootElement.ValueKind != JsonValueKind.Number)
+            { _error = "Enter a valid JSON number."; json = ""; }
+        }
+        catch (JsonException ex) { _error = $"Invalid constant: {ex.Message}"; }
+        _loaded = json;
+        await ValueChanged.InvokeAsync(json);
+    }
+}

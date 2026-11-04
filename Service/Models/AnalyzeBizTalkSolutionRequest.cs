@@ -27,4 +27,7 @@ public sealed record AnalyzeBizTalkSolutionRequest
     /// fetch/deliver transport settings instead of falling back to placeholders.
     /// </summary>
     public IReadOnlyList<string> AdditionalBindingPaths { get; init; } = [];
+
+    /// <summary>Explicit BRL XML policy/vocabulary exports. All policy versions are retained; none is silently selected as deployed.</summary>
+    public IReadOnlyList<string> AdditionalRulePaths { get; init; } = [];
 }

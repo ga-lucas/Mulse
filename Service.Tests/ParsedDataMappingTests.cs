@@ -1,7 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Mulse.Excel;
+using Mulse.Modules.Abstractions;
 using Mulse.Modules.BuiltIn.Augment;
+using Mulse.Modules.BuiltIn.Transform;
 using Mulse.Modules.Mapping;
 
 namespace Service.Tests;
@@ -143,6 +148,121 @@ public sealed class ParsedDataMappingTests
         Assert.Equal(2, result.Count);
         Assert.Equal("001", JsonNode.Parse(result.Payloads[0].GetText())![0]!["Identifier"]!.GetValue<string>());
         Assert.Equal("002", JsonNode.Parse(result.Payloads[1].GetText())![0]!["Identifier"]!.GetValue<string>());
+    }
+
+    internal static IModuleInvoker TransformInvoker() => new ModuleInvoker(new ServiceCollection()
+        .AddSingleton<IModuleCatalog>(new FakeExecutableModuleCatalog()
+            .AddTransform(new ConcatTransformModule()).AddTransform(new MultiplyTransformModule()).AddTransform(new UpperCaseTransformModule()))
+        .BuildServiceProvider());
+
+    [Fact]
+    public async Task Transforms_CombineOrderedFieldsAndTypedConstants_WithRuntimePreviewParity()
+    {
+        var mapping = MapJson(new ParsedDataFieldMap
+        {
+            Kind = "Transform", TargetPath = "/name", TransformModule = "concat-transform", TransformSettings = new() { ["separator"] = "-" },
+            TransformInputs = [new() { SourcePath = "/first" }, new() { Kind = "Constant", ConstantJson = "\"fixed\"" }, new() { SourcePath = "/last" }]
+        }, new ParsedDataFieldMap
+        {
+            Kind = "Transform", TargetPath = "/total", TransformModule = "multiply-transform",
+            TransformInputs = [new() { SourcePath = "/amount" }, new() { Kind = "Constant", ConstantJson = "2" }]
+        });
+        const string input = """[{"first":"A","last":"B","amount":12.5},{"first":"C","last":"D","amount":3}]""";
+        var invoker = TransformInvoker();
+        var preview = await ParsedDataMapping.MapAsync(mapping, input, moduleInvoker: invoker, context: Context);
+        var unrelated = Payload("{}", "other");
+        var runtime = await new ParsedDataMapAugmentModule(invoker).AugmentAsync(Context, new([Payload(input), unrelated]),
+            new() { Settings = new() { ["mappingJson"] = mapping, ["sourceId"] = "sheet" } }, default);
+        Assert.Equal("""[{"name":"A-fixed-B","total":25.0},{"name":"C-fixed-D","total":6}]""", preview);
+        Assert.Equal(preview, runtime.Payloads[0].GetText());
+        Assert.Equal("kept", runtime.Payloads[0].Metadata["correlationId"]);
+        Assert.Same(unrelated, runtime.Payloads[1]);
+        Assert.Throws<InvalidOperationException>(() => ParsedDataMapping.Map(mapping, input));
+    }
+
+    [Fact]
+    public async Task HostContainer_InjectsInvokerIntoParsedMap_AndExecutesCatalogTransforms()
+    {
+        var services = new ServiceCollection().AddLogging();
+        services.AddMulsePlatform(new ConfigurationBuilder().Build(), AppContext.BaseDirectory);
+        services.AddSingleton<IHostEnvironment>(new FakeHostEnvironment());
+        services.AddSingleton<IRuntimeConfigurationStore>(new FakeRuntimeConfigurationStore(new RuntimeMulseState()));
+        await using var provider = services.BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IModuleCatalog>();
+        await using var lease = await catalog.LeaseOrchestrationAugmentAsync("parsed-data-map-augment", default);
+        var mapping = MapJson(new ParsedDataFieldMap
+        {
+            Kind = "Transform", TargetPath = "/value", TransformModule = "uppercase-transform", TransformInputs = [new() { SourcePath = "/name" }]
+        });
+        var output = await lease.Module.AugmentAsync(Context, new([Payload("{\"name\":\"Ada\"}")]), new() { Settings = new() { ["mappingJson"] = mapping } }, default);
+        Assert.Equal("[{\"value\":\"ADA\"}]", Assert.Single(output.Payloads).GetText());
+    }
+
+    [Fact]
+    public async Task TransformMissingInputs_ApplyMappingPolicy_WithoutInvokingOmittedMappings()
+    {
+        var field = new ParsedDataFieldMap
+        {
+            Kind = "Transform", TargetPath = "/value", TransformModule = "observed",
+            TransformInputs = [new() { SourcePath = "/absent" }]
+        };
+        var calls = 0;
+        var invoker = new ObservedInvoker((inputs, _) => { calls++; return Task.FromResult(inputs[0]); });
+        Assert.Contains("record 1", (await Assert.ThrowsAsync<ArgumentException>(() => ParsedDataMapping.MapAsync(MapJson(field), "{}", moduleInvoker: invoker, context: Context))).Message);
+        field.Missing = "Omit";
+        Assert.Equal("[{}]", await ParsedDataMapping.MapAsync(MapJson(field), "{}", moduleInvoker: invoker, context: Context));
+        Assert.Equal(0, calls);
+        field.Missing = "Null";
+        Assert.Equal("[{\"value\":null}]", await ParsedDataMapping.MapAsync(MapJson(field), "{}", moduleInvoker: invoker, context: Context));
+        field.Missing = "Error";
+        Assert.Equal("[{\"value\":null}]", await ParsedDataMapping.MapAsync(MapJson(field), "{\"absent\":null}", moduleInvoker: invoker, context: Context));
+        Assert.Equal(2, calls);
+    }
+
+    [Theory]
+    [InlineData("\"transformModule\":\"\"")]
+    [InlineData("\"transformInputs\":null")]
+    [InlineData("\"transformInputs\":[null]")]
+    [InlineData("\"transformInputs\":[{\"kind\":\"Transform\"}]")]
+    [InlineData("\"transformInputs\":[{\"sourcePath\":\"bad\"}]")]
+    [InlineData("\"transformInputs\":[{\"kind\":\"Constant\",\"constantJson\":null}]")]
+    [InlineData("\"transformSettings\":null")]
+    [InlineData("\"transformSettings\":{\"separator\":null}")]
+    public void InvalidTransforms_AreRejected(string property)
+    {
+        var json = "{\"fields\":[{\"kind\":\"Transform\",\"targetPath\":\"/v\",\"transformModule\":\"concat-transform\"," + property + "}]}";
+        Assert.Throws<ArgumentException>(() => ParsedDataMapping.ReadMap(json));
+    }
+
+    [Fact]
+    public async Task Transforms_RespectCancellationFailuresSizeLimitsAndInputIsolation()
+    {
+        var field = new ParsedDataFieldMap
+        {
+            Kind = "Transform", TargetPath = "/changed", TransformModule = "observed", TransformInputs = [new()]
+        };
+        var mapping = MapJson(field, new() { SourcePath = "/value", TargetPath = "/original" });
+        var invoker = new ObservedInvoker((inputs, _) =>
+        {
+            inputs[0]!["value"] = 2;
+            return Task.FromResult(inputs[0]!["value"]);
+        });
+        Assert.Equal("[{\"changed\":2,\"original\":1}]", await ParsedDataMapping.MapAsync(mapping, "{\"value\":1}", moduleInvoker: invoker, context: Context));
+        invoker = new ObservedInvoker((_, _) => throw new ArgumentException("transform failed"));
+        Assert.Equal("transform failed", (await Assert.ThrowsAsync<ArgumentException>(() => ParsedDataMapping.MapAsync(mapping, "{}", moduleInvoker: invoker, context: Context))).Message);
+        invoker = new ObservedInvoker((_, _) => Task.FromResult<JsonNode?>(JsonValue.Create(new string('x', 4_000_000))));
+        Assert.Contains("4000000", (await Assert.ThrowsAsync<ArgumentException>(() => ParsedDataMapping.MapAsync(mapping, "{}", moduleInvoker: invoker, context: Context))).Message);
+        using var cts = new CancellationTokenSource();
+        invoker = new ObservedInvoker(async (_, token) => { cts.Cancel(); await Task.Delay(1, token); return null; });
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ParsedDataMapping.MapAsync(mapping, "{}", cancellationToken: cts.Token, moduleInvoker: invoker, context: Context));
+        field.TransformInputs = Enumerable.Range(0, 257).Select(_ => new ParsedDataTransformInput()).ToList();
+        Assert.Throws<ArgumentException>(() => ParsedDataMapping.ReadMap(MapJson(field)));
+    }
+
+    private sealed class ObservedInvoker(Func<IReadOnlyList<JsonNode?>, CancellationToken, Task<JsonNode?>> invoke) : IModuleInvoker
+    {
+        public Task<JsonNode?> InvokeTransformAsync(string id, FlowExecutionContext context, IReadOnlyList<JsonNode?> inputs,
+            IReadOnlyDictionary<string, string> settings, CancellationToken ct) => invoke(inputs, ct);
     }
 
     [Theory]

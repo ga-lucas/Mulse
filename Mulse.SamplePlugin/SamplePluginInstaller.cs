@@ -12,5 +12,6 @@ public sealed class SamplePluginInstaller : IModuleInstaller
         builder.AddParse<SamplePluginTypedParseModule>();
         builder.AddRender<SamplePluginTypedRenderModule>();
         builder.AddDeliver<SamplePluginTypedDeliverModule>();
+        builder.AddTransform<RegexReplaceTransformModule>();
     }
 }

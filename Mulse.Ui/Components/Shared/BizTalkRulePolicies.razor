@@ -1,0 +1,81 @@
+@if (Policies.Count > 0)
+{
+    <section aria-label="Imported rule policies">
+        <h3>Rule policies (@Policies.Count versions)</h3>
+        <p>A policy contains rules: when the input fields match, set output fields. One policy can serve many clients. Different nodes can use different policies and versions.</p>
+        <label class="field-label">Policy name</label>
+        <select class="selector" aria-label="Policy name" value="@_selectedName" @onchange="SelectName">
+            <option value="">Select a policy</option>
+            @foreach (var name in PolicyNames)
+            {
+                <option value="@name">@name</option>
+            }
+        </select>
+        <label class="field-label">Exported policy version</label>
+        <select class="selector" aria-label="Policy version" value="@_selected" @onchange="SelectPolicy" disabled="@(string.IsNullOrEmpty(_selectedName))">
+            <option value="">Select a policy version</option>
+            @foreach (var index in VersionIndices)
+            {
+                var policy = Policies[index];
+                <option value="@index">@policy.MajorVersion.@policy.MinorVersion (@policy.RuleCount rules) - @policy.SourcePath</option>
+            }
+        </select>
+        <p class="field-hint">Choosing a policy initially selects its latest exported version by numeric major/minor number, even if unsupported. This is a starting assumption, not evidence of the deployed version. Review before applying; nothing is applied automatically.</p>
+        @if (Selected is { } selected)
+        {
+            <p class="path-value">@selected.SourcePath</p>
+            <p>Fact types: @string.Join(", ", selected.FactTypes)</p>
+            @foreach (var diagnostic in selected.Diagnostics) { <p class="field-hint">@diagnostic</p> }
+            @if (_draft is not null)
+            {
+                @if (!ReplaceExisting)
+                {
+                    <XmlRulePolicyEditor @key="selected" PolicyJson="_draft" PolicyJsonChanged="value => _draft = value" />
+                }
+                <button class="secondary-button" @onclick="() => OnAddPolicy.InvokeAsync(_draft)">@(ReplaceExisting ? "Replace this node's rules with selected policy" : "Add edited rule proposal to current canvas")</button>
+                <p class="field-hint">@(ReplaceExisting ? "Applying replaces all rules in this node, including local edits. Other nodes are unchanged." : "Load the desired flow first, then add rules. Construct the correct XML fact document and configure source/order explicitly.") The saved node contains a pinned, editable snapshot; later imports do not upgrade it. This does not translate or approve the original CallRules shape.</p>
+            }
+            else
+            {
+                <p role="alert">This version cannot be applied as native rules. Review its diagnostics; an older version is not substituted automatically.</p>
+            }
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<BizTalkRulePolicyViewModel> Policies { get; set; } = [];
+    [Parameter] public EventCallback<string> OnAddPolicy { get; set; }
+    [Parameter] public bool ReplaceExisting { get; set; }
+    private IReadOnlyList<BizTalkRulePolicyViewModel>? _loaded;
+    private string _selectedName = "", _selected = "";
+    private string? _draft;
+    private string[] PolicyNames => Policies.Select(policy => policy.Name).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+    private IEnumerable<int> VersionIndices => Enumerable.Range(0, Policies.Count)
+        .Where(index => Policies[index].Name == _selectedName)
+        .OrderByDescending(index => Policies[index].MajorVersion).ThenByDescending(index => Policies[index].MinorVersion);
+    private BizTalkRulePolicyViewModel? Selected => int.TryParse(_selected, out var index) && index >= 0 && index < Policies.Count
+        && Policies[index].Name == _selectedName ? Policies[index] : null;
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_loaded, Policies)) return;
+        _loaded = Policies;
+        _selectedName = PolicyNames.Length == 1 ? PolicyNames[0] : "";
+        SelectLatest();
+    }
+    private void SelectName(ChangeEventArgs args)
+    {
+        _selectedName = args.Value?.ToString() ?? "";
+        SelectLatest();
+    }
+    private void SelectLatest()
+    {
+        _selected = VersionIndices.Select(index => index.ToString(System.Globalization.CultureInfo.InvariantCulture)).FirstOrDefault() ?? "";
+        _draft = Selected?.ProposedPolicyJson;
+    }
+    private void SelectPolicy(ChangeEventArgs args)
+    {
+        _selected = args.Value?.ToString() ?? "";
+        _draft = Selected?.ProposedPolicyJson;
+    }
+}

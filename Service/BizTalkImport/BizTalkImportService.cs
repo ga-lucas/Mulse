@@ -43,6 +43,9 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
     public Task<BizTalkSolutionAnalysisResponse> AnalyzeAsync(AnalyzeBizTalkSolutionRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (request.AdditionalRulePaths is null || request.AdditionalRulePaths.Count > 32
+            || request.AdditionalRulePaths.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("Supply at most 32 nonblank rule export file paths.");
 
         var resolvedPath = Path.GetFullPath(request.SourcePath);
 
@@ -232,11 +235,18 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             warnings.Add("No draft flows were generated: every analyzed project looks like a shared schema library (no orchestrations, maps, pipelines, or matching binding file). Point the importer at the project or solution that owns the orchestration/pipeline, or supply its binding export via AdditionalBindingPaths.");
         }
 
+        var rulePolicies = request.AdditionalRulePaths
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase)
+            .SelectMany(path => BizTalkRulePolicyAnalyzer.Analyze(path, cancellationToken)).ToArray();
+        if (rulePolicies.Length > 0)
+            warnings.Add($"{rulePolicies.Length} rule policy versions were inventoried. Select versions explicitly; exports do not prove which version is deployed. Native XML rule proposals do not translate CallRules wiring or approve orchestration execution.");
         var mapInventory = CreateMigrationMapInventory(hydratedAnalyses);
         var reservedFlowIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var flowCandidates = candidateProjects
             .OrderBy(static project => project.Response.ProjectPath, StringComparer.OrdinalIgnoreCase)
             .SelectMany(project => CreateFlowCandidates(project, customAssemblies, bindingAnalyses, mapInventory, reservedFlowIds))
+            .Select(candidate => AttachRuleEvidence(candidate, rulePolicies))
             .ToArray();
 
         return Task.FromResult(new BizTalkSolutionAnalysisResponse(
@@ -254,7 +264,7 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             hydratedProjects,
             customAssemblies,
             flowCandidates,
-            warnings));
+            warnings) { RulePolicies = rulePolicies });
     }
 
     private static AnalysisScope ResolveScope(string sourcePath)

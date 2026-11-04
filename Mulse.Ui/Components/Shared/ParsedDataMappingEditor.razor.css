@@ -11,6 +11,12 @@
 .field-node[aria-pressed="true"] { outline: 2px solid var(--accent-color, #60a5fa); outline-offset: -2px; }
 .connection { display: grid; grid-template-columns: minmax(0, 1fr); gap: .4rem; border-top: 1px solid var(--border-color, #64748b); padding: .75rem 0; }
 .connection label { display: grid; gap: .25rem; }
+.mapping-scope { border: 1px solid var(--border-color, #64748b); border-radius: .5rem; padding: .75rem; margin-bottom: 1rem; overflow-wrap: anywhere; }
+.condition-row, .chain-step { display: grid; gap: .4rem; border-left: 2px solid var(--border-color, #64748b); padding: .5rem; margin: .5rem 0; }
+.connection ::deep .transform-input, .connection ::deep .transform-editor, .connection ::deep .mapping-value { display: grid; gap: .4rem; }
+.connection ::deep .transform-input { border-left: 2px solid var(--border-color, #64748b); padding: .5rem; }
+.connection ::deep label { display: grid; gap: .25rem; }
+.field-node[draggable="true"] { cursor: grab; }
 .connection-selection { overflow-wrap: anywhere; }
 .parsed-map textarea { width: 100%; box-sizing: border-box; }
 .parsed-map pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; }

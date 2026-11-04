@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Mulse.Excel;
 using Mulse.Modules.Abstractions;
 using Mulse.Modules.BuiltIn.Parse;
+using Mulse.Modules.BuiltIn.Transform;
 using Mulse.Modules.Mapping;
 using Mulse.Ui.Models;
 using Mulse.Ui.Services;
@@ -30,6 +31,7 @@ public sealed class ParsedDataMappingApiTests
         builder.Services.AddExceptionHandler<ApiExceptionHandler>();
         ApiTestValidation.Register(builder.Services);
         builder.Services.AddSingleton<IModuleCatalog>(catalog);
+        builder.Services.AddSingleton<IModuleInvoker, ModuleInvoker>();
         builder.Services.AddSingleton<IFlowDesignService>(_ => throw new InvalidOperationException("Sample mapping must not create flows or run source fetching."));
         await using var app = builder.Build();
         app.UseExceptionHandler(); app.MapDesignerEndpoints();
@@ -70,13 +72,50 @@ public sealed class ParsedDataMappingApiTests
             Assert.Equal(HttpStatusCode.BadRequest, dtd.StatusCode);
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.InspectParsedDataAsync(new("", ParserModule: "excel-parse", BinaryContent: "not base64"), default));
             Assert.Contains("base64", error.Message);
+            var transformMap = ParsedDataMappingTests.MapJson(new ParsedDataFieldMap
+            {
+                Kind = "Transform", TargetPath = "/value", TransformModule = "concat-transform", TransformSettings = new() { ["separator"] = "-" },
+                TransformInputs = [new() { SourcePath = "/id" }, new() { Kind = "Constant", ConstantJson = "\"mapped\"" }]
+            });
+            var parserCalls = catalog.ParserCalls;
+            var releases = catalog.Releases;
+            var transformed = await client.PreviewParsedDataMappingAsync(new(transformMap, data.ParsedData), default);
+            Assert.Equal("[{\"value\":\"001-mapped\"},{\"value\":\"002-mapped\"}]", transformed.OutputJson);
+            Assert.Equal(2, catalog.TransformCalls);
+            Assert.Equal(releases + 2, catalog.Releases);
+            Assert.Equal(parserCalls, catalog.ParserCalls);
+            using var invalidTransform = await http.PostAsJsonAsync("/api/flow-designer/parsed-mapping/preview", new ParsedDataPreviewRequestViewModel(transformMap, "{}"));
+            Assert.Equal(HttpStatusCode.BadRequest, invalidTransform.StatusCode);
+            Assert.Equal(2, catalog.TransformCalls);
+            var nested = ParsedDataMappingTests.MapJson(new ParsedDataFieldMap
+            {
+                Kind = "Array", SourcePath = "/items", TargetPath = "/rows", Fields = [new()
+                {
+                    SourcePath = "/name", TargetPath = "/label", Conditions = [new() { SourcePath = "/active", Operator = "Equals", ValueJson = "true" }],
+                    Otherwise = "Constant", OtherwiseJson = "\"skipped\"",
+                    TransformChain = [new()
+                    {
+                        Module = "concat-transform", Settings = new() { ["separator"] = "-" },
+                        Inputs = [new() { Kind = "Previous" }, new() { SourceScope = "Root", SourcePath = "/id" }]
+                    }, new() { Module = "concat-transform" }]
+                }]
+            });
+            const string nestedInput = """{"id":"001","items":[{"name":"Ada","active":true},{"active":false}]}""";
+            var nestedPreview = await client.PreviewParsedDataMappingAsync(new(nested, nestedInput), default);
+            Assert.Equal("""[{"rows":[{"label":"Ada-001"},{"label":"skipped"}]}]""", nestedPreview.OutputJson);
+            Assert.Equal(4, catalog.TransformCalls);
+            Assert.Equal(releases + 4, catalog.Releases);
+            Assert.Equal(parserCalls, catalog.ParserCalls);
+            using var invalidArray = await http.PostAsJsonAsync("/api/flow-designer/parsed-mapping/preview", new ParsedDataPreviewRequestViewModel(nested, "{\"items\":1}"));
+            Assert.Equal(HttpStatusCode.BadRequest, invalidArray.StatusCode);
+            Assert.Contains("must be an array", await invalidArray.Content.ReadAsStringAsync());
         }
         finally { await app.StopAsync(); }
     }
 
     private sealed class SampleCatalog : IModuleCatalog
     {
-        public int ParserCalls, Releases;
+        public int ParserCalls, TransformCalls, Releases;
         public Dictionary<string, string>? LastSettings;
         public ValueTask<ModuleLease<IParseModule>> LeaseParseAsync(string moduleId, CancellationToken cancellationToken)
         {
@@ -104,7 +143,14 @@ public sealed class ParsedDataMappingApiTests
         public ValueTask<ModuleLease<IOrchestrationAugmentModule>> LeaseOrchestrationAugmentAsync(string id, CancellationToken ct) => throw new NotSupportedException();
         public ValueTask<ModuleLease<IRenderModule>> LeaseRenderAsync(string id, CancellationToken ct) => throw new NotSupportedException();
         public ValueTask<ModuleLease<IDeliverModule>> LeaseDeliverAsync(string id, CancellationToken ct) => throw new NotSupportedException();
-        public ValueTask<ModuleLease<ITransformModule>> LeaseTransformAsync(string id, CancellationToken ct) => throw new NotSupportedException();
+        public ValueTask<ModuleLease<ITransformModule>> LeaseTransformAsync(string id, CancellationToken ct)
+        {
+            if (id != "concat-transform") throw new KeyNotFoundException(id);
+            TransformCalls++;
+            var module = new ConcatTransformModule();
+            return ValueTask.FromResult(new ModuleLease<ITransformModule>(module,
+                new("sample", RuntimePackageSourceKind.BuiltIn, "", module.Descriptor), () => { Releases++; return ValueTask.CompletedTask; }));
+        }
         public Task SynchronizeAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<ModulePackageInfo> UpsertManagedPackageAsync(ManagedModulePackageDefinition package, CancellationToken ct) => throw new NotSupportedException();
         public Task<ModulePackageInfo> ReloadPackageAsync(string id, CancellationToken ct) => throw new NotSupportedException();

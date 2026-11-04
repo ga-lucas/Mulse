@@ -51,7 +51,11 @@ public sealed partial class BizTalkImportService
 
     private static BindingFileAnalysis AnalyzeBindingFile(string filePath)
     {
-        var document = XDocument.Load(filePath, LoadOptions.None);
+        using var reader = XmlReader.Create(filePath, new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 16_000_000
+        });
+        var document = XDocument.Load(reader, LoadOptions.None);
         if (!string.Equals(document.Root?.Name.LocalName, "BindingInfo", StringComparison.Ordinal))
         {
             throw new InvalidOperationException("The XML root element was not BindingInfo.");
@@ -66,11 +70,24 @@ public sealed partial class BizTalkImportService
             .Select(ParseSendPort)
             .ToArray();
 
+        var services = document.Descendants().Where(element => element.Name.LocalName == "ModuleRef")
+            .SelectMany(module => module.Elements().Where(element => element.Name.LocalName == "Services")
+                .SelectMany(element => element.Elements().Where(service => service.Name.LocalName == "Service"))
+                .Select(service => new BindingServiceAnalysis(
+                    (module.Attribute("Name")?.Value ?? "").Split(',')[0].Trim(),
+                    service.Attribute("Name")?.Value ?? "",
+                    PortReferences(service, "SendPortRef"), PortReferences(service, "ReceivePortRef"))))
+            .ToArray();
         return new BindingFileAnalysis(
             Path.GetFileName(filePath),
             filePath,
             receivePorts,
-            sendPorts);
+            sendPorts) { Services = services };
+
+        static string[] PortReferences(XElement service, string kind) => service.Elements()
+            .Where(element => element.Name.LocalName == "Ports").SelectMany(element => element.Descendants())
+            .Where(element => element.Name.LocalName == kind).Select(element => element.Attribute("Name")?.Value ?? "")
+            .Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal).ToArray();
     }
 
     private static ReceivePortAnalysis ParseReceivePort(XElement portElement)
@@ -197,10 +214,27 @@ public sealed partial class BizTalkImportService
             }).ToArray());
     }
 
+    private static BindingFileAnalysis ScopeBindingPorts(BindingFileAnalysis binding, BizTalkProjectResponse project, OrchestrationSplit? split)
+    {
+        if (binding.Services.Count == 0) return binding;
+        var services = binding.Services.Where(service => service.AssemblyName == project.Name
+            && (split is null || service.ServiceName == split.OrchestrationName
+                || service.ServiceName.EndsWith("." + split.OrchestrationName, StringComparison.Ordinal))).ToArray();
+        var sendNames = services.SelectMany(service => service.SendPortNames).ToHashSet(StringComparer.Ordinal);
+        var receiveNames = services.SelectMany(service => service.ReceivePortNames).ToHashSet(StringComparer.Ordinal);
+        return binding with
+        {
+            SendPorts = binding.SendPorts.Where(port => sendNames.Contains(port.Name)).ToArray(),
+            ReceivePorts = binding.ReceivePorts.Where(port => receiveNames.Contains(port.Name)).ToArray()
+        };
+    }
+
     private static bool IsBindingRelatedToProject(BindingFileAnalysis binding, BizTalkProjectResponse project)
     {
+        if (binding.Services.Count > 0)
+            return binding.Services.Any(service => string.Equals(service.AssemblyName, project.Name, StringComparison.Ordinal));
         var projectDirectory = Path.GetDirectoryName(project.ProjectPath) ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(projectDirectory) && binding.FilePath.StartsWith(projectDirectory, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(projectDirectory) && IsWithinDirectory(binding.FilePath, projectDirectory))
         {
             return true;
         }

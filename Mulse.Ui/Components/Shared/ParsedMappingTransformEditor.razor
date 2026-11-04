@@ -1,0 +1,80 @@
+@using Mulse.Ui.Models
+
+<div class="transform-editor" @ondragover:preventDefault @ondrop="() => InputDropped.InvokeAsync()" @ondrop:stopPropagation>
+    <label>Transform module
+        <select class="selector" value="@Module" @onchange="ModuleChangedAsync">
+            <option value="">Choose a transform</option>
+            @foreach (var transform in Modules) { <option value="@transform.Id">@transform.DisplayName (@transform.Id)</option> }
+            @if (Module.Length > 0 && Descriptor is null) { <option value="@Module">@Module (not in catalog)</option> }
+        </select>
+    </label>
+    @if (Descriptor is { } module)
+    {
+        <p>@module.Description</p>
+        @foreach (var setting in module.Settings)
+        {
+            <label>@setting.Label @(setting.IsRequired ? "*" : "")
+                <ReferenceInput @key="(Module, setting.Key)" Label="@setting.Label" InputKind="@setting.InputKind" Options="setting.Options" References="References" DefaultValue="@setting.DefaultValue"
+                    Value="@Settings.GetValueOrDefault(setting.Key, setting.DefaultValue ?? string.Empty)" ValueChanged="value => SetSettingAsync(setting.Key, value)" />
+            </label>
+            <p>@setting.Description</p>
+        }
+    }
+    <p>Transform inputs (in order)</p>
+    @foreach (var input in Inputs)
+    {
+        <div class="transform-input" @key="input">
+            <select class="selector" aria-label="Transform input kind" @bind="input.Kind" @bind:after="NotifyAsync">
+                @if (AllowPrevious) { <option value="Previous">Previous result</option> }
+                <option value="Field">Input field</option><option value="Constant">Constant</option>
+            </select>
+            @if (input.Kind == "Constant")
+            { <ParsedMappingValueInput Label="Transform constant" Value="@input.ConstantJson" ValueChanged="value => SetConstantAsync(input, value)" /> }
+            else if (input.Kind == "Field")
+            {
+                <select class="selector" aria-label="Transform input scope" @bind="input.SourceScope" @bind:after="NotifyAsync"><option value="Current">Current record/item</option><option value="Parent">Parent record/item</option><option value="Root">Root record</option></select>
+                <input class="mapping-input" aria-label="Transform input path" @bind="input.SourcePath" @bind:after="NotifyAsync" placeholder="/input" />
+            }
+            <button class="secondary-button" @onclick="() => MoveInputAsync(input, -1)" disabled="@(Inputs.IndexOf(input) == 0)">Move up</button>
+            <button class="secondary-button" @onclick="() => MoveInputAsync(input, 1)" disabled="@(Inputs.IndexOf(input) == Inputs.Count - 1)">Move down</button>
+            <button class="secondary-button" @onclick="() => RemoveInputAsync(input)">Remove transform input</button>
+        </div>
+    }
+    <button class="secondary-button" @onclick="AddInputAsync">Add transform input</button>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+</div>
+
+@code {
+    [Parameter] public string Module { get; set; } = "";
+    [Parameter] public EventCallback<string> ModuleChanged { get; set; }
+    [Parameter, EditorRequired] public Dictionary<string, string> Settings { get; set; } = [];
+    [Parameter, EditorRequired] public List<ParsedDataTransformInputViewModel> Inputs { get; set; } = [];
+    [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    [Parameter] public bool AllowPrevious { get; set; }
+    [Parameter] public string DefaultInputPath { get; set; } = "";
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public EventCallback InputDropped { get; set; }
+    private string? _error;
+    private ModuleViewModel? Descriptor => Modules.FirstOrDefault(module => string.Equals(module.Id, Module, StringComparison.OrdinalIgnoreCase));
+    private Task NotifyAsync() => Changed.InvokeAsync();
+    private async Task ModuleChangedAsync(ChangeEventArgs args) { await ModuleChanged.InvokeAsync(args.Value?.ToString() ?? ""); await NotifyAsync(); }
+    private Task SetSettingAsync(string key, string value) { Settings[key] = value; return NotifyAsync(); }
+    private Task SetConstantAsync(ParsedDataTransformInputViewModel input, string value) { input.ConstantJson = value; return NotifyAsync(); }
+    private Task AddInputAsync()
+    {
+        if (Inputs.Count >= 256) { _error = "Each transform supports at most 256 inputs."; return Task.CompletedTask; }
+        Inputs.Add(new() { Kind = AllowPrevious ? "Previous" : "Field", SourcePath = DefaultInputPath });
+        _error = null;
+        return NotifyAsync();
+    }
+    private Task MoveInputAsync(ParsedDataTransformInputViewModel input, int offset)
+    {
+        var index = Inputs.IndexOf(input);
+        var target = index + offset;
+        if (index < 0 || target < 0 || target >= Inputs.Count) return Task.CompletedTask;
+        Inputs.RemoveAt(index); Inputs.Insert(target, input);
+        return NotifyAsync();
+    }
+    private Task RemoveInputAsync(ParsedDataTransformInputViewModel input) { Inputs.Remove(input); _error = null; return NotifyAsync(); }
+}

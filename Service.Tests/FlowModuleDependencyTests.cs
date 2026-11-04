@@ -99,6 +99,59 @@ public sealed class FlowModuleDependencyTests
     }
 
     [Fact]
+    public void ParsedMaps_TrackTransformDependenciesIncludingConfigBackedDefinitions()
+    {
+        var flow = new PipelineDefinition
+        {
+            Id = "parsed-map", Augments = [new()
+            {
+                Module = "parsed-data-map-augment", Settings = new() { ["mappingJson"] = "{{config:map}}" }
+            }]
+        };
+        var values = new Dictionary<string, string>
+        {
+            ["map"] = ParsedDataMappingTests.MapJson(new Mulse.Modules.Mapping.ParsedDataFieldMap
+            {
+                Kind = "Transform", TargetPath = "/value", TransformModule = "custom-transform"
+            })
+        };
+        Assert.Contains(("custom-transform", ModuleKind.Transform), FlowModuleDependencies.References(flow, values));
+        var catalog = FakeModuleCatalog.WithModules(("parsed-data-map-augment", ModuleKind.OrchestrationAugment));
+        Assert.Contains("Transform: custom-transform", FlowModuleDependencies.FindMissing(flow, catalog.GetAll(), values));
+        catalog = FakeModuleCatalog.WithModules(("parsed-data-map-augment", ModuleKind.OrchestrationAugment), ("custom-transform", ModuleKind.Transform));
+        Assert.Empty(FlowModuleDependencies.FindMissing(flow, catalog.GetAll(), values));
+        values["map"] = "{\"fields\":[null]}";
+        Assert.Contains(FlowModuleDependencies.FindMissing(flow, catalog.GetAll(), values), error => error.Contains("cannot be null"));
+    }
+
+    [Fact]
+    public void ParsedMaps_TrackNestedTemplatesAndEveryChainStage()
+    {
+        var flow = new PipelineDefinition
+        {
+            Id = "nested", Augments = [new()
+            {
+                Module = "parsed-data-map-augment", Settings = new() { ["mappingJson"] = ParsedDataMappingTests.MapJson(new Mulse.Modules.Mapping.ParsedDataFieldMap
+                {
+                    Kind = "Array", TargetPath = "/rows", Fields = [new()
+                    {
+                        Kind = "Transform", TargetPath = "/label", TransformModule = "first-transform",
+                        TransformChain = [new() { Module = "second-transform" }, new() { Module = "last-transform" }]
+                    }]
+                }) }
+            }]
+        };
+        var references = FlowModuleDependencies.References(flow).ToArray();
+        Assert.Contains(("first-transform", ModuleKind.Transform), references);
+        Assert.Contains(("second-transform", ModuleKind.Transform), references);
+        Assert.Contains(("last-transform", ModuleKind.Transform), references);
+        var catalog = FakeModuleCatalog.WithModules(("parsed-data-map-augment", ModuleKind.OrchestrationAugment), ("first-transform", ModuleKind.Transform));
+        var missing = FlowModuleDependencies.FindMissing(flow, catalog.GetAll());
+        Assert.Contains("Transform: second-transform", missing);
+        Assert.Contains("Transform: last-transform", missing);
+    }
+
+    [Fact]
     public async Task RunPreflight_RejectsMissingLaterStageBeforeFetchingAnything()
     {
         var fetched = false;

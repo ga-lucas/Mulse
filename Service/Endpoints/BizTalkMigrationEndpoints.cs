@@ -8,6 +8,12 @@ public static class BizTalkMigrationEndpoints
 {
     public static WebApplication MapBizTalkMigrationEndpoints(this WebApplication app)
     {
+        app.MapPost("/api/biztalk-import/rules/preview", (XmlRulePreviewRequest request, CancellationToken ct) =>
+            TypedResults.Ok(Mulse.Modules.Decisions.XmlRuleRuntime.Evaluate(
+                Mulse.Modules.Decisions.XmlRuleRuntime.ReadPolicy(request.PolicyJson), request.InputXml, ct)))
+            .WithTags("BizTalk Migration").WithSummary("Preview native XML field rules against supplied synthetic facts; no I/O or secret resolution")
+            .ProducesProblem(StatusCodes.Status400BadRequest);
+
         app.MapPost("/api/biztalk-import/analyze", async Task<Ok<BizTalkSolutionAnalysisResponse>> (AnalyzeBizTalkSolutionRequest request, IBizTalkImportService bizTalkImportService, CancellationToken cancellationToken) =>
             {
                 var response = await bizTalkImportService.AnalyzeAsync(request, cancellationToken).ConfigureAwait(false);
@@ -27,7 +33,9 @@ public static class BizTalkMigrationEndpoints
                 var analysis = await bizTalkImportService.AnalyzeAsync(new AnalyzeBizTalkSolutionRequest
                 {
                     SourcePath = request.SourcePath,
-                    AdditionalSourcePaths = request.AdditionalSourcePaths
+                    AdditionalSourcePaths = request.AdditionalSourcePaths,
+                    AdditionalBindingPaths = request.AdditionalBindingPaths,
+                    AdditionalRulePaths = request.AdditionalRulePaths
                 }, cancellationToken).ConfigureAwait(false);
 
                 var candidate = analysis.FlowCandidates.FirstOrDefault(flow => string.Equals(flow.SuggestedFlowId, request.SuggestedFlowId, StringComparison.OrdinalIgnoreCase))
@@ -106,7 +114,9 @@ public static class BizTalkMigrationEndpoints
         var analysis = await bizTalkImportService.AnalyzeAsync(new AnalyzeBizTalkSolutionRequest
         {
             SourcePath = request.SourcePath,
-            AdditionalSourcePaths = request.AdditionalSourcePaths
+            AdditionalSourcePaths = request.AdditionalSourcePaths,
+            AdditionalBindingPaths = request.AdditionalBindingPaths,
+            AdditionalRulePaths = request.AdditionalRulePaths
         }, cancellationToken).ConfigureAwait(false);
 
         return analysis.FlowCandidates.FirstOrDefault(flow => string.Equals(flow.SuggestedFlowId, request.SuggestedFlowId, StringComparison.OrdinalIgnoreCase))

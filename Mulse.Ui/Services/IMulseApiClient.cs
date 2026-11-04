@@ -30,6 +30,8 @@ public interface IMulseApiClient
 
     Task<BizTalkSolutionAnalysisViewModel> AnalyzeBizTalkSolutionAsync(AnalyzeBizTalkSolutionRequestViewModel request, CancellationToken cancellationToken);
 
+    Task<XmlRulePreviewResultViewModel> PreviewXmlRulesAsync(XmlRulePreviewRequestViewModel request, CancellationToken cancellationToken);
+
     Task<FlowViewModel> ImportBizTalkDraftFlowAsync(CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken);
 
     Task<DownloadedFileViewModel> DownloadBizTalkScaffoldedModulesAsync(CreateImportedBizTalkFlowRequestViewModel request, CancellationToken cancellationToken);

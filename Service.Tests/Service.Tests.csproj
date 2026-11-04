@@ -28,6 +28,7 @@
     <ProjectReference Include="..\Service\Service.csproj" />
     <ProjectReference Include="..\Mulse.Ui\Mulse.Ui.csproj" />
     <ProjectReference Include="..\Mulse.Excel\Mulse.Excel.csproj" />
+    <ProjectReference Include="..\Mulse.SamplePlugin\Mulse.SamplePlugin.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,37 @@
+<fieldset>
+    <legend>@Label</legend>
+    @foreach (var entry in Fields)
+    {
+        <div class="setting-row" @key="entry">
+            <label class="field-label">Element local name</label>
+            <input class="mapping-input" aria-label="@($"{Label} field name")" @bind="entry.Name" @bind:after="ChangedAsync" />
+            <label class="field-label">Element namespace</label>
+            <input class="mapping-input" aria-label="@($"{Label} namespace")" @bind="entry.Namespace" @bind:after="ChangedAsync" />
+            <label class="field-label">Type</label>
+            <select class="selector" aria-label="@($"{Label} type")" @bind="entry.Type" @bind:after="ChangedAsync">
+                <option value="string">Text (case-sensitive)</option><option value="boolean">Boolean</option>
+            </select>
+            <label class="field-label">Value</label>
+            @if (entry.Type == "boolean")
+            {
+                <select class="selector" aria-label="@($"{Label} value")" @bind="entry.Value" @bind:after="ChangedAsync">
+                    @if (entry.Value is not ("true" or "false" or "1" or "0")) { <option value="@entry.Value">Invalid: @entry.Value</option> }
+                    <option value="true">true</option><option value="false">false</option><option value="1">1</option><option value="0">0</option>
+                </select>
+            }
+            else
+            {
+                <input class="mapping-input" aria-label="@($"{Label} value")" @bind="entry.Value" @bind:after="ChangedAsync" />
+            }
+            <button class="secondary-button" @onclick="async () => { Fields.Remove(entry); await ChangedAsync(); }">Remove field</button>
+        </div>
+    }
+    <button class="secondary-button" @onclick="async () => { Fields.Add(new()); await ChangedAsync(); }">Add field</button>
+</fieldset>
+
+@code {
+    [Parameter, EditorRequired] public List<XmlRuleFieldViewModel> Fields { get; set; } = [];
+    [Parameter] public string Label { get; set; } = "Fields";
+    [Parameter] public EventCallback Changed { get; set; }
+    private Task ChangedAsync() => Changed.InvokeAsync();
+}

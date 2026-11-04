@@ -10,6 +10,7 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
         builder.AddParse<JsonParseModule>();
         builder.AddOrchestrationAugment<JsonEnvelopeAugmentTransformModule>();
         builder.AddOrchestrationAugment<DecisionAugmentModule>();
+        builder.AddOrchestrationAugment<XmlRulesAugmentModule>();
         builder.AddOrchestrationAugment<MultiSourceJoinMapAugmentModule>();
         builder.AddOrchestrationAugment<ParsedDataMapAugmentModule>();
         builder.AddOrchestrationAugment<StatefulOrchestrationAugmentModule>();

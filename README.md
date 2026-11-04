@@ -460,10 +460,35 @@ Missing/ambiguous ownership is rejected instead of guessed. For linked/nested or
 select the owning project or solution explicitly. This is path-based analysis, not a browser project upload.
 Add semicolon-separated additional solution/project/folder paths to resolve cross-solution references,
 and binding file/directory paths when deployment bindings live outside the source tree.
+Use **Rule policy XML exports** for explicit BRL policy/vocabulary export files (`additionalRulePaths` in the API).
+Analyze, import, and scaffold-download requests preserve additional source, binding, and rule paths.
+
+A policy is a collection of IF / THEN rules: conditions read input fields and assignments set output values.
+Billing rules select map names and processing settings; they do not themselves run maps or send messages.
+The UI separates **Policy name** and **Exported policy version**. A sole named policy is preselected;
+choosing a name initially selects its highest numeric major/minor exported version as an explicit starting
+assumption, not evidence of what BizTalk deploys. Multiple named policies require a name selection.
+Every version remains selectable, including unsupported versions (which cannot be applied and never silently
+fall back). Apply a proposal to add a node, or use **Choose an imported policy / version for this node**
+to explicitly replace an existing node's rules, including local edits. Each node saves an independent,
+pinned editable snapshot; reimporting does not upgrade saved nodes. Reanalyze exports to populate the
+selectors after reopening; the saved editor works without the export. Editing a snapshot's version label
+does not switch rulesets. The editor includes plain-language help and no-delivery synthetic preview.
 
 The implementation in `Service\BizTalkImport` can:
 
 - Enumerate orchestrations, maps, schemas, pipelines, and custom assemblies.
+- Recognize an application-wide binding export by its explicit `ModuleRef` assembly ownership, regardless
+  of filename, and scope each orchestration draft to its own referenced physical send/receive ports.
+  Direct MessageBox subscriptions, distribution lists and dynamic destinations are not inferred from
+  these references. Exports without service metadata retain the older path/name-based analysis heuristics.
+- Inventory every named/versioned policy in supplied BRL XML exports without selecting a deployed
+  version. One policy version can contain rules for many concurrent clients/groups; versions are not clients.
+  Concrete one-document, direct-child XML string/boolean equality predicates and literal assignments
+  produce editable **native proposals**; literal-only equalities are folded into an editable constant guard.
+  Vocabulary links are labels; executable member definitions must be explicit. Unsupported expressions,
+  custom policy configuration, mixed facts, or forward-chaining dependencies produce diagnostics instead
+  of partial executable policies. Called policy/version evidence is retained in migration reports.
 - Keep same-named projects separate by full path, resolve explicit `ProjectReference` paths and infer
   `HintPath` ownership inside the analyzed workspace, then fall back to names only when unique and no
   path was supplied. Ambiguous/unresolved references are reported, not guessed. The import panel's
@@ -527,6 +552,29 @@ The [BillingServiceProcess migration guide](BillingServiceProcess-Migration-Guid
 currently available disabled import from implementation prerequisites, BizTalk-team evidence, validation
 and eventual cutover. Billing is not currently an executable equivalent merely by importing it.
 
+### Native XML field rules
+
+In the BizTalk import panel, explicitly select a policy version, inspect/edit its client rules, and preview
+synthetic XML facts before choosing **Add edited rule proposal to current canvas**. Load the target flow
+first; adding a proposal does not construct its fact document or translate an orchestration `CallRules` site.
+Configure the new `xml-rules-augment` node's input source and execution order explicitly. The same module
+and visual editor are available for scratch-built flows. Edits are saved in `policyJson`; samples and preview
+outputs are not saved. Treat imported literal values as potentially sensitive workspace data.
+
+All field conditions use case-sensitive string equality or XML booleans (`true`/`false`/`1`/`0`). Fields must
+be single existing simple children with the exact configured namespace. All matching rules contribute
+assignments; identical assignments can coexist, but conflicting values/types fail explicitly. Priority only
+orders inspection, never silently chooses a winner. No-match, missing/duplicate/complex fields, unsupported
+types, condition/write dependencies, unsafe XML, and limit violations fail explicitly. This is a bounded,
+single-pass native rule engine, **not** BRE agenda/forward-chaining equivalence. Import diagnostics flag
+potential overlapping conflicting rules. A native proposal never clears an imported flow's execution gate.
+
+Preview: `POST /api/biztalk-import/rules/preview` with `policyJson` and `inputXml` returns `outputXml` and
+`matchedRules` using the exact runtime evaluator. It performs no fetch, delivery, schema-file loading,
+external code execution, or configuration/secret resolution. Limits: 32 export paths; 32 million XML
+characters and 256 versions per export; 2 million policy JSON characters; 512 rules, 32 conditions and
+64 assignments per rule; 1 million XML input/output characters and 4,096 fact-root children.
+
 ### Mapping parsed data (Excel, JSON, flat files, HL7, XML and plugin output)
 
 Add **Map parsed data** from the Toolbox or **Add parsed-data map** in the Mapping workspace.
@@ -547,18 +595,80 @@ Renaming a parse node updates its map reference; removing one requires choosing 
    `flat-file-parse` wraps its rows in `/records`; Excel/JSON root arrays use an empty record path.
    The selected array yields one output record per item; an object/scalar/null yields one. Empty arrays
    remain empty. Samples with several parsed payloads offer a payload selector for preview.
-3. Add output fields manually or discover them from a structured target sample.
-   then **Connect fields**, or use **Add mapping / Add constant**. JSON constants preserve their types;
-   text constants require quotes. Each connection supports missing-input Error (default), Omit or Null.
+3. Add output fields manually or discover them from a structured target sample. Click an input (including
+   **Whole record**) or drag it to **Connections** to create and select a mapping. Click an output to assign
+   the selected mapping, drag a connection onto an output, or drag an output onto a connection. Dragging an
+   input directly onto an output creates a mapping too. **Select mapping** selects an existing connection;
+   **Add mapping / Add constant** remain available. Constant editors offer Text, Number, Boolean and Null;
+   text does not need JSON quotes. Advanced JSON remains available for existing structured constants.
+   Choose **Reads from: Transform** to use any installed transform module, including plugin transforms.
+   Configure its settings and ordered field/constant inputs; use **Move up / Move down** to reorder.
+   Dropping an input onto a transform adds an argument. Use **Transform chain** to compose several transforms.
+   Each connection supports missing-input Error (default), Omit or Null. For transforms this applies to
+   every field argument: Omit skips the output and remaining chain, while Null passes JSON null.
    Present null/empty values are not missing. Nested output paths create objects; duplicate/overlapping
-   assignments fail explicitly. Objects/arrays can be copied intact; arbitrary nested record reshaping
-   is not inferred. Use Debatch first for complex nested record selection.
+   assignments within a template fail explicitly. Objects/arrays can be copied intact or reshaped using
+   Object template / Repeating array child mappings below.
 4. **Preview parsed-data mapping**, review its JSON result, then select an output renderer (Excel, JSON,
    XML or a compatible plugin) and delivery route in Flow. Mapping emits a JSON array per input payload.
    Renderer-specific shape restrictions still apply: Excel requires flat cell values; for a renderer
    expecting one object per payload (such as HL7), add **Debatch** after the map with JSON array mode and
    an empty array path. **Save flow / Create flow** persists fields and connections, not sample values or
    previews. Imported-flow execution blocks remain unchanged.
+
+#### Visual nested templates, conditions and transform chains
+
+All features in this milestone are editable through forms; the Mapping JSON panel is optional.
+Existing version-1 field/constant/transform mappings continue to work without conversion.
+
+- **Object template** selects an input value and constructs an object using **Edit child mappings**.
+  **Repeating array** selects an array and constructs one object per item, in source order. Templates can
+  nest, including arrays inside array items. Empty arrays stay empty; null input stays null without
+  running children. A non-array input to Repeating array is an explicit error, not an implicit singleton.
+  XML normalization creates arrays only for repeated siblings; a singleton XML element needs an Object
+  template or an upstream normalization step. Scalar array items can be mapped via Whole record.
+- The **Editing** breadcrumb identifies the output template. **Back to parent mappings** returns one level.
+  Input/output paths, manually added fields and target samples apply to the current template. Discovered
+  sample paths are projected into child input palettes, removing sample array indices. Source scope
+  **Current** reads the selected object/item; **Parent** reads the input of its containing template;
+  **Root** reads the original record selected by Record path (not the entire payload). At the root,
+  Current, Parent and Root all refer to that record. Target paths are always relative to the output template.
+- **Conditions** combine tests using All or Any; no tests means unconditional mapping. Tests run against
+  the containing input before selecting the mapping source or invoking transforms/children. Exists includes
+  present null/empty values; Missing means the path is absent. Other operators do not match absent paths.
+  Equals/NotEquals compare JSON types and structures, text tests are ordinal/case-sensitive, and numeric
+  comparisons accept JSON numbers or invariant numeric strings. Invalid comparison types fail explicitly.
+  When tests fail, choose Omit, Write null or Write constant; this branch bypasses source reads and chains.
+- **Transform chain** runs after the mapped field/constant/transform/object/array value. **Add chain step**
+  defaults to a Previous result input. Each step may combine that result with scoped fields and constants,
+  using the same installed-module selector and settings as an ordinary transform. Move step up/down changes
+  evaluation order; Move up/down changes argument order. Dropping an input onto a chain step adds its argument.
+  Inline recursive transform arguments are not supported; compose transforms with ordered chain steps.
+
+This is the first milestone toward an XSLT 1.0-plus visual mapper, not full XSLT parity. General XPath,
+recursive/reusable named templates, XML mixed-content preservation, sorting/grouping, multiple result
+outputs and full XSLT 3.0 support are not implemented by the parsed-data mapper. Multi-source joins remain
+available through the existing join/map augment. Use the native XML mapper for XML-specific contracts.
+
+Preview invokes the selected installed transforms with sample data, just as runtime mapping does, but
+never fetches or delivers. Transforms are trusted plugin code; use non-sensitive samples. Config/secret
+references in transform settings are resolved during flow execution, not sample preview. Transform module
+dependencies, including child templates and every chain stage, are checked before enabling/running a flow
+and pinned with the flow's other modules.
+
+For example, a transform field in Mapping JSON can combine a record value and a typed constant:
+```json
+{
+  "kind": "Transform",
+  "targetPath": "/label",
+  "transformModule": "concat-transform",
+  "transformSettings": { "separator": "-" },
+  "transformInputs": [
+    { "kind": "Field", "sourcePath": "/id" },
+    { "kind": "Constant", "constantJson": "\"mapped\"" }
+  ]
+}
+```
 
 Paths are exact, case-sensitive JSON Pointers: `/customer/name` traverses an object; `/0` selects an array
 cell; `~1` escapes a slash and `~0` a tilde inside a property name. Dots/spaces in Excel column names are
@@ -571,10 +681,15 @@ Escape slashes in namespace URIs in pointer segments. This is data mapping, not 
 mapper below when XML-specific output contracts are required. Binary formats need a parser that emits
 JSON, XML or text; raw binary is not treated as fields.
 
-Mapping definitions are versioned in the augment's `mappingJson`. Limits are 256 fields per list,
-32 path segments, 262144 mapping characters, 1000000 parsed-input characters and 4000000 output characters.
-Raw binary sample uploads are limited to 10 MiB. Discovery rejects oversized schemas rather than silently
-truncating them; use a smaller sample or manual paths. Preview and execution use the same mapping engine.
+Mapping definitions are versioned in the augment's `mappingJson`. Limits are 256 mappings total across
+all templates, 8 mapping levels, 256 palette paths/transform arguments per list, 32 conditions per mapping,
+16 chain steps per mapping, 32 path segments (also across nested output templates), 262144 mapping characters,
+1000000 parsed-input characters and 4000000 output/intermediate construction characters. Execution is capped
+at 100000 evaluation operations per payload, counting template visits, mappings, conditions, transform inputs
+and transform invocations; cancellation is checked throughout. Oversized nested expansion fails explicitly
+rather than truncating output. Raw binary sample uploads are limited to 10 MiB. Discovery rejects oversized
+schemas rather than silently truncating them; use a smaller sample or manual paths. Preview and execution use
+the same mapping engine.
 API clients can POST `/api/flow-designer/parsed-mapping/inspect` and
 `/api/flow-designer/parsed-mapping/preview` without executing a flow.
 
@@ -1044,7 +1159,7 @@ UI URL. Main surfaces:
 | Source recovery | `POST /api/flows/{flowId}/source-outcomes/retry` (no body; exhausted callback recovery only). |
 | Catalog/packages | `GET /api/modules`; `GET`/`POST /api/module-packages`; `GET`/`PUT`/`DELETE /api/module-packages/{packageId}`; `PATCH .../enabled`, `POST .../reload`. |
 | Sample design | `POST /api/flow-designer/analyze`, `POST /api/flow-designer/flows`. |
-| BizTalk import | `POST /api/biztalk-import/analyze`, `POST /api/biztalk-import/flows`, and scaffolded-module download endpoints. |
+| BizTalk import | `POST /api/biztalk-import/analyze`, `POST /api/biztalk-import/flows`, `POST /api/biztalk-import/rules/preview`, and scaffolded-module download endpoints. |
 | Config values | `GET /api/config-values`, `GET /api/config-values/references`, `GET /api/config-values/usages`; `PUT`/`DELETE /api/config-values/{reference}`. |
 | Workspace | `GET`/`PUT /api/workspace/encryption`; `POST /api/workspace/backup`, `/api/workspace/restore/preview`, `/api/workspace/restore`, `/api/workspace/flows/delete-all`. |
 | Inbound HTTP | `POST`/`PUT /api/inbound/{route}` for a registered HTTP push source. |

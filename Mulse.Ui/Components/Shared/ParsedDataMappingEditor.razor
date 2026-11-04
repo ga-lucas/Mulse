@@ -27,22 +27,28 @@
                 </select>
             </label>
             <label>Record path <input class="mapping-input" @bind="_map.RecordPath" @bind:after="Persist" placeholder="Root, or /Orders/Order" /></label>
-            <HelpTooltip Label="Record selection">The selected array is mapped once per item. An object, scalar or null is one record; an empty array produces []. For XML use the discovered root/element path; repeated sibling elements become arrays. Fields are relative to each selected record. Use Debatch first for more complex nested record selection. Other sources pass through unchanged.</HelpTooltip>
+            <HelpTooltip Label="Record selection">The selected array is mapped once per item. An object, scalar or null is one record; an empty array produces []. For XML use the discovered root/element path; repeated sibling elements become arrays. Object and Repeating array mappings have child templates with paths relative to their selected object/item. Root means the original selected record, and Parent means its containing template input. Other sources pass through unchanged.</HelpTooltip>
         </div>
+        <nav class="mapping-scope" aria-label="Mapping scope">
+            <strong>Editing: @ScopeLabel</strong>
+            @if (_scopes.Count > 0) { <button class="secondary-button" @onclick="LeaveScope">Back to parent mappings</button> }
+            <p>Input paths and output paths below are relative to this template. Use the source scope selectors to read a parent or root record.</p>
+        </nav>
         <div class="map-board">
             <section aria-label="Input fields">
                 <h4>Input fields</h4>
                 <div class="action-row"><input aria-label="New input field" class="mapping-input" @bind="_newInput" placeholder="Column name or /field/path" /><button class="secondary-button" @onclick="AddInput">Add input</button></div>
-                <button class="secondary-button" @onclick='() => SelectInput("")'>Whole record</button>
+                <p>Click an input or drag it to Connections to add a mapping. Drop onto a transform to add an input.</p>
+                <button class="secondary-button" draggable="true" @ondragstart='() => BeginInputDrag("")' @ondragend="ClearDrag" @onclick='() => AddInputMapping("")'>Whole record</button>
                 <ul class="field-tree">
-                    @foreach (var path in _map.InputFields.Distinct(StringComparer.Ordinal))
+                    @foreach (var path in CurrentInputFields.Distinct(StringComparer.Ordinal))
                     {
-                        <li><button class="field-node" aria-pressed="@(_selectedInput == path)" @onclick="() => SelectInput(path)">@Display(path)</button>
-                            <button class="secondary-button" aria-label="@($"Remove input {Display(path)}")" @onclick="() => { _map.InputFields.RemoveAll(value => value == path); Persist(); }">Remove field</button></li>
+                        <li><button class="field-node" draggable="true" aria-pressed="@(_selectedInput == path)" @ondragstart="() => BeginInputDrag(path)" @ondragend="ClearDrag" @onclick="() => AddInputMapping(path)">@Display(path)</button>
+                            <button class="secondary-button" aria-label="@($"Remove input {Display(path)}")" @onclick="() => { CurrentInputFields.RemoveAll(value => value == path); Persist(); }">Remove field</button></li>
                     }
                 </ul>
             </section>
-            <section aria-label="Field connections">
+            <section aria-label="Field connections" @ondragover:preventDefault @ondrop="DropOnConnections" @ondrop:stopPropagation>
                 <h4>Connections</h4>
                 <p class="connection-selection">@(_selectedInput is null ? "Select an input" : Display(_selectedInput)) &#8594; @(_selectedOutput ?? "Select an output")</p>
                 <div class="action-row">
@@ -50,28 +56,81 @@
                     <button class="secondary-button" @onclick="AddMapping">Add mapping</button>
                     <button class="secondary-button" @onclick="AddConstant">Add constant</button>
                 </div>
-                @foreach (var field in _map.Fields)
+                @foreach (var field in CurrentFields)
                 {
-                    <div class="connection" @key="field">
-                        <label>Reads from <select class="selector" @bind="field.Kind" @bind:after="Persist"><option value="Field">Input field</option><option value="Constant">JSON constant</option></select></label>
+                    <div class="connection" @key="field" @ondragover:preventDefault @ondrop="() => DropOnMapping(field)" @ondrop:stopPropagation>
+                        <button class="field-node" draggable="true" aria-pressed="@(_selectedMapping == field)" @onclick="() => SelectMapping(field)" @ondragstart="() => BeginMappingDrag(field)" @ondragend="ClearDrag">Select mapping: @Display(field.SourcePath) &#8594; @field.TargetPath</button>
+                        <label>Reads from <select class="selector" @bind="field.Kind" @bind:after="() => KindChanged(field)"><option value="Field">Input field</option><option value="Constant">Constant</option><option value="Transform">Transform</option><option value="Object">Object template</option><option value="Array">Repeating array</option></select></label>
                         @if (field.Kind == "Constant")
-                        { <input class="mapping-input" aria-label="Mapping JSON constant" @bind="field.ConstantJson" @bind:after="Persist" placeholder="&quot;text&quot;, 123, true or null" /> }
+                        { <ParsedMappingValueInput Label="Mapping constant" Value="@field.ConstantJson" ValueChanged="value => { field.ConstantJson = value; Persist(); }" /> }
+                        else if (field.Kind == "Transform")
+                        {
+                            <ParsedMappingTransformEditor Module="@field.TransformModule" ModuleChanged="value => field.TransformModule = value" Settings="field.TransformSettings" Inputs="field.TransformInputs"
+                                Modules="TransformModules" References="References" DefaultInputPath="@(_selectedInput ?? field.SourcePath)" Changed="Persist" InputDropped="() => DropOnTransform(field, field.TransformInputs)" />
+                        }
                         else
-                        { <input class="mapping-input" aria-label="Mapping input path" @bind="field.SourcePath" @bind:after="Persist" placeholder="/input" /> }
+                        {
+                            <label>Source scope <select class="selector" @bind="field.SourceScope" @bind:after="Persist"><option value="Current">Current record/item</option><option value="Parent">Parent record/item</option><option value="Root">Root record</option></select></label>
+                            <input class="mapping-input" aria-label="Mapping input path" @bind="field.SourcePath" @bind:after="Persist" placeholder="/input (empty for whole record/item)" />
+                            @if (field.Kind is "Object" or "Array")
+                            {
+                                <p>@(field.Kind == "Array" ? "Maps each source array item to an object. Empty arrays stay empty; null stays null." : "Builds an object using child mappings against the selected input. Null stays null.")</p>
+                                <button class="secondary-button" @onclick="() => OpenChildren(field)">Edit child mappings (@field.Fields.Count)</button>
+                            }
+                        }
                         <span aria-hidden="true">&#8594;</span>
                         <input class="mapping-input" aria-label="Mapping output path" @bind="field.TargetPath" @bind:after="Persist" placeholder="/output" />
                         <label>Missing input <select class="selector" @bind="field.Missing" @bind:after="Persist"><option>Error</option><option>Omit</option><option>Null</option></select></label>
+                        <details>
+                            <summary>Conditions (@field.Conditions.Count)</summary>
+                            <p>Test the containing record/item before reading this mapping. With no conditions, always map.</p>
+                            <label>Match <select class="selector" @bind="field.ConditionMatch" @bind:after="Persist"><option value="All">All conditions</option><option value="Any">Any condition</option></select></label>
+                            @foreach (var condition in field.Conditions)
+                            {
+                                <div class="condition-row" @key="condition">
+                                    <select class="selector" aria-label="Condition scope" @bind="condition.SourceScope" @bind:after="Persist"><option value="Current">Current record/item</option><option value="Parent">Parent record/item</option><option value="Root">Root record</option></select>
+                                    <input class="mapping-input" aria-label="Condition input path" @bind="condition.SourcePath" @bind:after="Persist" placeholder="/field" />
+                                    <select class="selector" aria-label="Condition operator" @bind="condition.Operator" @bind:after="Persist">
+                                        @foreach (var operation in ConditionOperators) { <option value="@operation">@operation</option> }
+                                    </select>
+                                    @if (condition.Operator is not ("Exists" or "Missing" or "IsNull" or "IsNotNull"))
+                                    { <ParsedMappingValueInput Label="Condition comparison" Value="@condition.ValueJson" ValueChanged="value => { condition.ValueJson = value; Persist(); }" /> }
+                                    <button class="secondary-button" @onclick="() => { field.Conditions.Remove(condition); Persist(); }">Remove condition</button>
+                                </div>
+                            }
+                            <button class="secondary-button" @onclick="() => AddCondition(field)">Add condition</button>
+                            <label>When conditions do not match <select class="selector" @bind="field.Otherwise" @bind:after="Persist"><option value="Omit">Omit output field</option><option value="Null">Write null</option><option value="Constant">Write constant</option></select></label>
+                            @if (field.Otherwise == "Constant")
+                            { <ParsedMappingValueInput Label="Otherwise constant" Value="@field.OtherwiseJson" ValueChanged="value => { field.OtherwiseJson = value; Persist(); }" /> }
+                        </details>
+                        <details>
+                            <summary>Transform chain (@field.TransformChain.Count)</summary>
+                            <p>After the mapping, run these steps in order. Previous result feeds the prior value into the next transform. Otherwise values bypass the chain.</p>
+                            @foreach (var step in field.TransformChain)
+                            {
+                                <div class="chain-step" @key="step">
+                                    <strong>Step @(field.TransformChain.IndexOf(step) + 1)</strong>
+                                    <ParsedMappingTransformEditor Module="@step.Module" ModuleChanged="value => step.Module = value" Settings="step.Settings" Inputs="step.Inputs" AllowPrevious="true"
+                                        Modules="TransformModules" References="References" DefaultInputPath="@(_selectedInput ?? field.SourcePath)" Changed="Persist" InputDropped="() => DropOnTransform(field, step.Inputs)" />
+                                    <button class="secondary-button" @onclick="() => MoveChainStep(field, step, -1)" disabled="@(field.TransformChain.IndexOf(step) == 0)">Move step up</button>
+                                    <button class="secondary-button" @onclick="() => MoveChainStep(field, step, 1)" disabled="@(field.TransformChain.IndexOf(step) == field.TransformChain.Count - 1)">Move step down</button>
+                                    <button class="secondary-button" @onclick="() => { field.TransformChain.Remove(step); Persist(); }">Remove chain step</button>
+                                </div>
+                            }
+                            <button class="secondary-button" @onclick="() => AddChainStep(field)">Add chain step</button>
+                        </details>
                         <button class="secondary-button" @onclick="() => Remove(field)">Remove mapping</button>
                     </div>
                 }
             </section>
             <section aria-label="Output fields">
                 <h4>Output fields</h4>
+                <p>Click an output to assign the selected mapping, or drag a connection onto it. You can also drag an output onto a connection.</p>
                 <div class="action-row"><input aria-label="New output field" class="mapping-input" @bind="_newOutput" placeholder="Column name or /field/path" /><button class="secondary-button" @onclick="AddOutput">Add output</button></div>
                 <ul class="field-tree">
-                    @foreach (var path in _map.OutputFields.Concat(_map.Fields.Select(field => field.TargetPath)).Where(path => path.Length > 0).Distinct(StringComparer.Ordinal))
+                    @foreach (var path in CurrentOutputFields.Concat(CurrentFields.Select(field => field.TargetPath)).Where(path => path.Length > 0).Distinct(StringComparer.Ordinal))
                     {
-                        <li><button class="field-node" aria-pressed="@(_selectedOutput == path)" @onclick="() => _selectedOutput = path">@path</button></li>
+                        <li><button class="field-node" draggable="true" aria-pressed="@(_selectedOutput == path)" @onclick="() => AssignOutput(path)" @ondragstart="() => BeginOutputDrag(path)" @ondragend="ClearDrag" @ondragover:preventDefault @ondrop="() => DropOnOutput(path)" @ondrop:stopPropagation>@path</button></li>
                     }
                 </ul>
                 <details><summary>Discover from target sample</summary>
@@ -110,6 +169,7 @@
             {
                 <details><summary>Parsed sample</summary><pre>@_parsed</pre></details>
                 <button class="secondary-button" @onclick="PreviewAsync">Preview parsed-data mapping</button>
+                <HelpTooltip Label="Transform preview execution">Preview invokes the selected installed transforms with supplied sample values. Transforms are trusted plugin code and may access resources required by their settings. No fetch, renderer or delivery runs. Config/secret references are not resolved in preview. Use non-sensitive test data.</HelpTooltip>
             }
             @if (_preview is not null) { <pre aria-label="Mapped preview">@_preview</pre> }
         </details>
@@ -120,6 +180,10 @@
 @code {
     [Parameter, EditorRequired] public Dictionary<string, string> Settings { get; set; } = [];
     [Parameter] public IReadOnlyList<ParsedMappingSourceViewModel> Sources { get; set; } = [];
+    [Parameter] public IReadOnlyList<ModuleViewModel> TransformModules { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    private ParsedDataFieldViewModel? _selectedMapping, _draggedMapping;
+    private string? _draggedInput, _draggedOutput;
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow };
     private ParsedDataMapViewModel _map = new();
     private string? _loaded;
@@ -128,6 +192,12 @@
     private IReadOnlyList<string> _samples = [];
     private int _sampleIndex;
     private bool _busy, _loadFailed;
+    private readonly List<ParsedDataFieldViewModel> _scopes = [];
+    private List<ParsedDataFieldViewModel> CurrentFields => _scopes.Count == 0 ? _map.Fields : _scopes[^1].Fields;
+    private List<string> CurrentInputFields => _scopes.Count == 0 ? _map.InputFields : _scopes[^1].InputFields;
+    private List<string> CurrentOutputFields => _scopes.Count == 0 ? _map.OutputFields : _scopes[^1].OutputFields;
+    private string ScopeLabel => "Root record" + string.Concat(_scopes.Select(template => " > " + template.TargetPath + (template.Kind == "Array" ? " [each item]" : "")));
+    private static readonly string[] ConditionOperators = ["Exists", "Missing", "IsNull", "IsNotNull", "Equals", "NotEquals", "GreaterThan", "GreaterOrEqual", "LessThan", "LessOrEqual", "Contains", "StartsWith", "EndsWith"];
     private string Format => Settings.GetValueOrDefault("inputFormat", "Auto");
 
     protected override void OnParametersSet()
@@ -138,11 +208,13 @@
         try
         {
             var map = JsonSerializer.Deserialize<ParsedDataMapViewModel>(json, Options) ?? throw new JsonException("Mapping must be an object.");
-            if (map.Version != 1 || map.RecordPath is null || map.Fields is null || map.InputFields is null || map.OutputFields is null
-                || map.InputFields.Any(path => path is null) || map.OutputFields.Any(path => path is null)
-                || map.Fields.Any(field => field is null || field.SourcePath is null || field.TargetPath is null))
-                throw new JsonException("Unsupported or invalid mapping document.");
+            var count = 0;
+            if (map.Version != 1 || map.RecordPath is null || !ValidPaths(map.InputFields) || !ValidPaths(map.OutputFields)
+                || !ValidFields(map.Fields, 1, ref count))
+                throw new JsonException("Unsupported or invalid mapping document (maximum 256 mappings, 8 template levels, 32 conditions and 16 chain steps).");
             _map = map;
+            _scopes.Clear();
+            ClearSelection();
             _loadFailed = false;
             _error = null;
             _preview = null;
@@ -150,30 +222,186 @@
         catch (JsonException ex) { _loadFailed = true; _error = $"Unable to load mapping: {ex.Message}"; }
     }
 
+    private static bool ValidPaths(List<string>? paths) => paths is not null && paths.Count <= 256 && paths.All(path => path is not null);
+    private static bool ValidInputs(List<ParsedDataTransformInputViewModel>? inputs) => inputs is not null && inputs.Count <= 256
+        && inputs.All(input => input is not null && input.Kind is not null && input.SourcePath is not null && input.SourceScope is not null && input.ConstantJson is not null);
+    private static bool ValidSettings(Dictionary<string, string>? settings) => settings is not null && settings.All(setting => setting.Value is not null);
+    private static bool ValidFields(List<ParsedDataFieldViewModel>? fields, int depth, ref int count)
+    {
+        if (fields is null || depth > 8) return false;
+        foreach (var field in fields)
+        {
+            if (field is null || ++count > 256 || field.Kind is null || field.SourcePath is null || field.TargetPath is null || field.SourceScope is null
+                || field.ConstantJson is null || field.Missing is null || field.TransformModule is null || field.ConditionMatch is null || field.Otherwise is null || field.OtherwiseJson is null
+                || !ValidSettings(field.TransformSettings) || !ValidInputs(field.TransformInputs) || !ValidPaths(field.InputFields) || !ValidPaths(field.OutputFields)
+                || field.Conditions is null || field.Conditions.Count > 32 || field.Conditions.Any(condition => condition is null || condition.SourcePath is null || condition.SourceScope is null || condition.Operator is null || condition.ValueJson is null)
+                || field.TransformChain is null || field.TransformChain.Count > 16 || field.TransformChain.Any(step => step is null || step.Module is null || !ValidSettings(step.Settings) || !ValidInputs(step.Inputs))
+                || field.Fields is null || (field.Fields.Count > 0 && !ValidFields(field.Fields, depth + 1, ref count))) return false;
+        }
+        return true;
+    }
+    private void ClearSelection() { _selectedMapping = null; _selectedInput = _selectedOutput = null; _newInput = _newOutput = ""; ClearDrag(); }
+    private void OpenChildren(ParsedDataFieldViewModel field)
+    {
+        if (field.Kind is not ("Object" or "Array")) { _error = "Choose an Object template or Repeating array first."; return; }
+        if (_scopes.Count >= 7) { _error = "Mappings support at most 8 template levels."; return; }
+        _scopes.Add(field);
+        if (!RefreshScopeInputs()) { _scopes.RemoveAt(_scopes.Count - 1); return; }
+        ClearSelection(); _error = null; Persist();
+    }
+    private void LeaveScope() { if (_scopes.Count > 0) _scopes.RemoveAt(_scopes.Count - 1); ClearSelection(); _error = null; }
+    private bool RefreshScopeInputs()
+    {
+        var updates = new List<(ParsedDataFieldViewModel Template, List<string> Paths)>();
+        List<string> current = _map.InputFields, parent = _map.InputFields;
+        foreach (var field in _scopes)
+        {
+            var source = field.SourceScope switch { "Root" => _map.InputFields, "Parent" => parent, _ => current };
+            var projected = source.Where(path => field.SourcePath.Length == 0 || path.StartsWith(field.SourcePath + "/", StringComparison.Ordinal) || path == field.SourcePath)
+                .Select(path => path[field.SourcePath.Length..]);
+            if (field.Kind == "Array")
+                projected = projected.Where(path => path.Length > 0).Select(path => path.IndexOf('/', 1) is var slash && slash >= 0 ? path[slash..] : "");
+            var combined = field.InputFields.Concat(projected).Distinct(StringComparer.Ordinal).ToList();
+            if (combined.Count > 256) { _error = "Nested input discovery exceeds 256 paths. Remove unused fields or use a smaller sample."; return false; }
+            updates.Add((field, combined)); parent = current; current = combined;
+        }
+        foreach (var update in updates) update.Template.InputFields = update.Paths;
+        return true;
+    }
     private void Persist()
     {
         _loaded = JsonSerializer.Serialize(_map, Options);
         Settings["mappingJson"] = _loaded;
+        if (_selectedMapping is not null) { _selectedInput = _selectedMapping.SourcePath; _selectedOutput = _selectedMapping.TargetPath; }
         _preview = null;
     }
     private static string Display(string path) => path.Length == 0 ? "(whole record)" : path;
     private static string PathFor(string value) => value.StartsWith('/') ? value : "/" + value.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal);
-    private void SelectInput(string path) => _selectedInput = path;
-    private void AddInput() { if (string.IsNullOrWhiteSpace(_newInput)) { _error = "Enter an input field name or path; use Whole record for the root."; return; } if (!CanAdd(_map.InputFields.Count)) return; _map.InputFields.Add(PathFor(_newInput)); _newInput = ""; _error = null; Persist(); }
-    private void AddOutput() { if (string.IsNullOrWhiteSpace(_newOutput)) { _error = "Enter an output field name or path."; return; } if (!CanAdd(_map.OutputFields.Count)) return; _map.OutputFields.Add(PathFor(_newOutput)); _newOutput = ""; _error = null; Persist(); }
+    private void AddInput() { if (string.IsNullOrWhiteSpace(_newInput)) { _error = "Enter an input field name or path; use Whole record for the root."; return; } if (!CanAdd(CurrentInputFields.Count)) return; CurrentInputFields.Add(PathFor(_newInput)); _newInput = ""; _error = null; Persist(); }
+    private void AddOutput() { if (string.IsNullOrWhiteSpace(_newOutput)) { _error = "Enter an output field name or path."; return; } if (!CanAdd(CurrentOutputFields.Count)) return; CurrentOutputFields.Add(PathFor(_newOutput)); _newOutput = ""; _error = null; Persist(); }
     private bool CanAdd(int count) { if (count < 256) return true; _error = "Each mapping list supports at most 256 fields."; return false; }
+    private static int CountFields(List<ParsedDataFieldViewModel> fields) => fields.Sum(field => 1 + CountFields(field.Fields));
+    private bool CanAddMapping() => CanAdd(CountFields(_map.Fields));
     private void Connect()
     {
         if (_selectedInput is null || _selectedOutput is null) { _error = "Select an input and output field first."; return; }
-        if (!CanAdd(_map.Fields.Count)) return;
-        if (_map.Fields.Any(field => field.TargetPath == _selectedOutput)) { _error = "That output is already mapped. Edit or remove its connection first."; return; }
-        _map.Fields.Add(new() { SourcePath = _selectedInput, TargetPath = _selectedOutput });
+        if (_selectedMapping is not null) { AssignOutput(_selectedOutput); return; }
+        if (!CanAddMapping()) return;
+        if (TargetInUse(_selectedOutput)) { _error = "That output is already mapped or overlaps an existing mapping. Edit or remove its connection first."; return; }
+        var field = new ParsedDataFieldViewModel { SourcePath = _selectedInput, TargetPath = _selectedOutput };
+        CurrentFields.Add(field); SelectMapping(field);
         _error = null;
         Persist();
     }
-    private void AddMapping() { if (!CanAdd(_map.Fields.Count)) return; _map.Fields.Add(new() { SourcePath = _selectedInput ?? "", TargetPath = _selectedOutput ?? "/output" }); Persist(); }
-    private void AddConstant() { if (!CanAdd(_map.Fields.Count)) return; _map.Fields.Add(new() { Kind = "Constant", TargetPath = _selectedOutput ?? "/constant" }); Persist(); }
-    private void Remove(ParsedDataFieldViewModel field) { _map.Fields.Remove(field); Persist(); }
+    private void AddMapping() => AddInputMapping(_selectedInput ?? "");
+    private void AddConstant()
+    {
+        if (!CanAddMapping()) return;
+        var field = new ParsedDataFieldViewModel { Kind = "Constant", TargetPath = AvailableTarget("/constant") };
+        CurrentFields.Add(field); SelectMapping(field); _error = null; Persist();
+    }
+    private void AddInputMapping(string path)
+    {
+        if (!CanAddMapping()) return;
+        var field = new ParsedDataFieldViewModel { SourcePath = path, TargetPath = AvailableTarget(path.Length > 0 ? path : "/output") };
+        CurrentFields.Add(field); SelectMapping(field); _error = null; Persist();
+    }
+    private bool TargetInUse(string path, ParsedDataFieldViewModel? except = null) => CurrentFields.Any(field => field != except && field.TargetPath.Length > 0
+        && (field.TargetPath == path || field.TargetPath.StartsWith(path + "/", StringComparison.Ordinal) || path.StartsWith(field.TargetPath + "/", StringComparison.Ordinal)));
+    private string AvailableTarget(string preferred)
+    {
+        if (!TargetInUse(preferred)) return preferred;
+        var index = 1;
+        while (TargetInUse("/output" + index)) index++;
+        return "/output" + index;
+    }
+    private void SelectMapping(ParsedDataFieldViewModel field)
+    {
+        _selectedMapping = field; _selectedInput = field.SourcePath; _selectedOutput = field.TargetPath;
+    }
+    private void AssignOutput(string path)
+    {
+        if (_selectedMapping is null) { _selectedOutput = path; _error = "Select a mapping or click an input field first."; return; }
+        if (TargetInUse(path, _selectedMapping)) { _error = "That output overlaps an existing mapping. Edit or remove its connection first."; return; }
+        _selectedMapping.TargetPath = path; _selectedOutput = path; _error = null; Persist();
+    }
+    private void Remove(ParsedDataFieldViewModel field)
+    {
+        CurrentFields.Remove(field);
+        if (_selectedMapping == field) ClearSelection();
+        Persist();
+    }
+    private void KindChanged(ParsedDataFieldViewModel field)
+    {
+        if (field.Kind == "Transform" && field.TransformInputs.Count == 0)
+            field.TransformInputs.Add(new() { SourcePath = field.SourcePath, SourceScope = field.SourceScope });
+        Persist();
+    }
+    private void AddCondition(ParsedDataFieldViewModel field)
+    {
+        if (field.Conditions.Count >= 32) { _error = "Each mapping supports at most 32 conditions."; return; }
+        field.Conditions.Add(new() { SourcePath = field.SourcePath, SourceScope = field.SourceScope }); _error = null; Persist();
+    }
+    private void AddChainStep(ParsedDataFieldViewModel field)
+    {
+        if (field.TransformChain.Count >= 16) { _error = "Each mapping supports at most 16 chain steps."; return; }
+        field.TransformChain.Add(new()); _error = null; Persist();
+    }
+    private void MoveChainStep(ParsedDataFieldViewModel field, ParsedDataTransformStepViewModel step, int offset)
+    {
+        var index = field.TransformChain.IndexOf(step);
+        var target = index + offset;
+        if (index < 0 || target < 0 || target >= field.TransformChain.Count) return;
+        field.TransformChain.RemoveAt(index); field.TransformChain.Insert(target, step); Persist();
+    }
+    private void ClearDrag() { _draggedInput = _draggedOutput = null; _draggedMapping = null; }
+    private void BeginInputDrag(string path) { ClearDrag(); if (!_busy && !_loadFailed) _draggedInput = path; }
+    private void BeginMappingDrag(ParsedDataFieldViewModel field) { ClearDrag(); if (!_busy && !_loadFailed) _draggedMapping = field; }
+    private void BeginOutputDrag(string path) { ClearDrag(); if (!_busy && !_loadFailed) _draggedOutput = path; }
+    private void DropOnConnections()
+    {
+        if (_busy || _loadFailed) { ClearDrag(); return; }
+        if (_draggedInput is not null) AddInputMapping(_draggedInput);
+        else if (_draggedOutput is not null) AssignOutput(_draggedOutput);
+        ClearDrag();
+    }
+    private void DropOnTransform(ParsedDataFieldViewModel field, List<ParsedDataTransformInputViewModel> inputs)
+    {
+        if (_busy || _loadFailed) { ClearDrag(); return; }
+        SelectMapping(field);
+        if (_draggedOutput is not null) AssignOutput(_draggedOutput);
+        else if (_draggedInput is not null && CanAdd(inputs.Count))
+        { inputs.Add(new() { SourcePath = _draggedInput }); _error = null; Persist(); }
+        ClearDrag();
+    }
+    private void DropOnMapping(ParsedDataFieldViewModel field)
+    {
+        if (_busy || _loadFailed) { ClearDrag(); return; }
+        if (field.Kind == "Transform") { DropOnTransform(field, field.TransformInputs); return; }
+        SelectMapping(field);
+        if (_draggedOutput is not null) AssignOutput(_draggedOutput);
+        else if (_draggedInput is not null)
+        {
+            if (field.Kind is not ("Object" or "Array")) field.Kind = "Field";
+            field.SourcePath = _draggedInput; SelectMapping(field); _error = null; Persist();
+        }
+        ClearDrag();
+    }
+    private void DropOnOutput(string path)
+    {
+        if (_busy || _loadFailed) { ClearDrag(); return; }
+        if (_draggedMapping is not null) { SelectMapping(_draggedMapping); AssignOutput(path); }
+        else if (_draggedInput is not null)
+        {
+            if (TargetInUse(path)) _error = "That output overlaps an existing mapping. Edit or remove its connection first.";
+            else if (CanAddMapping())
+            {
+                var field = new ParsedDataFieldViewModel { SourcePath = _draggedInput, TargetPath = path };
+                CurrentFields.Add(field); SelectMapping(field); _error = null; Persist();
+            }
+        }
+        ClearDrag();
+    }
     private void SourceChanged(ChangeEventArgs args) { Settings["sourceId"] = args.Value?.ToString() ?? ""; _sampleSource = Settings["sourceId"]; InvalidateSample(); }
     private void FormatChanged(ChangeEventArgs args) { Settings["inputFormat"] = args.Value?.ToString() ?? "Auto"; InvalidateSample(); }
     private void InvalidateSample() { _parsed = _preview = null; _samples = []; _notice = null; }
@@ -217,6 +445,7 @@
             var fields = _map.InputFields.Concat(inspection.Fields).Distinct(StringComparer.Ordinal).ToList();
             if (fields.Count > 256) throw new InvalidOperationException("Combined manual and discovered inputs exceed 256 paths. Remove unused fields or use a smaller sample.");
             _map.InputFields = fields;
+            if (!RefreshScopeInputs()) return;
             _parsed = inspection.ParsedData;
             _samples = inspection.Samples ?? [inspection.ParsedData]; _sampleIndex = 0;
             _notice = $"Discovered {inspection.Fields.Count} paths across {inspection.RecordCount} sample record(s). Sample values are not saved with the flow.";
@@ -231,9 +460,9 @@
         try
         {
             var result = await ApiClient.InspectParsedDataAsync(new(_targetSample), default);
-            var fields = _map.OutputFields.Concat(result.Fields.Where(path => path.Length > 0)).Distinct(StringComparer.Ordinal).ToList();
+            var fields = CurrentOutputFields.Concat(result.Fields.Where(path => path.Length > 0)).Distinct(StringComparer.Ordinal).ToList();
             if (fields.Count > 256) throw new InvalidOperationException("Combined output fields exceed 256 paths.");
-            _map.OutputFields = fields;
+            CurrentOutputFields.Clear(); CurrentOutputFields.AddRange(fields);
             Persist();
         }
         catch (Exception ex) { _error = $"Unable to discover output fields: {ex.Message}"; }

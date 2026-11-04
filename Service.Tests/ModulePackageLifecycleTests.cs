@@ -145,6 +145,69 @@ public sealed class ModulePackageLifecycleTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task ExternalValueTransform_MapsThroughHostInvoker_Reloads_AndProtectsSavedDependencies(bool invoke)
+        => await ExerciseExternalTransformAsync(invoke);
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private async Task ExerciseExternalTransformAsync(bool invoke)
+    {
+        var pluginDirectory = Path.Combine(_directory, "plugins", "Mulse.SamplePlugin");
+        Directory.CreateDirectory(pluginDirectory);
+        var assemblyPath = Path.Combine(pluginDirectory, "Mulse.SamplePlugin.dll");
+        File.Copy(typeof(Mulse.SamplePlugin.RegexReplaceTransformModule).Assembly.Location, assemblyPath);
+        var store = Store();
+        var catalog = Catalog(store);
+        await catalog.SynchronizeAsync(default);
+        Assert.DoesNotContain(catalog.GetAll(), entry => entry.Descriptor.Id == "regex-replace-transform");
+        await catalog.UpsertManagedPackageAsync(new() { Id = "Mulse.SamplePlugin", AssemblyPath = assemblyPath, Enabled = true }, default);
+        using var services = new ServiceCollection().AddSingleton<IModuleCatalog>(catalog)
+            .AddSingleton<IModuleInvoker, Service.Modules.ModuleInvoker>().BuildServiceProvider();
+        var invoker = services.GetRequiredService<IModuleInvoker>();
+        const string mapping = """
+            {"fields":[{"kind":"Transform","targetPath":"/code","transformModule":"regex-replace-transform",
+            "transformSettings":{"pattern":"[^0-9]","replacement":""},"transformInputs":[{"sourcePath":"/id"}]}]}
+            """;
+        var context = new FlowExecutionContext("plugin-map", "test", DateTimeOffset.UtcNow);
+        try
+        {
+            if (invoke) Assert.Equal("[{\"code\":\"123\"}]", await Mulse.Modules.Mapping.ParsedDataMapping.MapAsync(mapping, "{\"id\":\"A-123\"}", "Json", default, invoker, context));
+            RecordTransformContext(catalog);
+            await store.UpsertFlowAsync(new() { Id = "plugin-map", Enabled = false,
+                Augments = [new() { Module = "parsed-data-map-augment", Settings = new() { ["mappingJson"] = mapping } }] }, default);
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => catalog.UpsertManagedPackageAsync(
+                new() { Id = "Mulse.SamplePlugin", AssemblyPath = assemblyPath, Enabled = false }, default));
+            Assert.Contains("plugin-map", error.Message);
+            if (invoke)
+            {
+                File.SetLastWriteTimeUtc(assemblyPath, File.GetLastWriteTimeUtc(assemblyPath).AddSeconds(2));
+                await catalog.ReloadPackageAsync("Mulse.SamplePlugin", default);
+                Assert.Equal("[{\"code\":\"45\"}]", await Mulse.Modules.Mapping.ParsedDataMapping.MapAsync(mapping, "{\"id\":\"B-45\"}", "Json", default, invoker, context));
+            }
+        }
+        finally
+        {
+            await store.DeleteFlowAsync("plugin-map", default);
+            await catalog.UpsertManagedPackageAsync(new() { Id = "Mulse.SamplePlugin", AssemblyPath = assemblyPath, Enabled = false }, default);
+        }
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => Mulse.Modules.Mapping.ParsedDataMapping.MapAsync(mapping, "{\"id\":\"C\"}", "Json", default, invoker, context));
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void RecordTransformContext(IModuleCatalog catalog)
+    {
+        var lease = catalog.LeaseTransformAsync("regex-replace-transform", default).GetAwaiter().GetResult();
+        try
+        {
+            var context = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(lease.Module.GetType().Assembly)!;
+            Assert.True(context.IsCollectible);
+            _unloadingContexts.Add(new WeakReference(context));
+        }
+        finally { lease.DisposeAsync().GetAwaiter().GetResult(); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task AutoDiscoveredPackage_RejectsUseThenUnloadsDurablyAndCanBeLoadedAgain(bool enabledFlow)
         => await ExercisePackageLifecycleAsync(enabledFlow);
 
@@ -267,6 +330,7 @@ public sealed class ModulePackageLifecycleTests : IDisposable
             if (attempt > 0 && _unloadingContexts.All(context => !context.IsAlive)) break;
             Thread.Sleep(20);
         }
+        if (Environment.GetEnvironmentVariable("MULSE_TEST_DUMP") == "1" && _unloadingContexts.Any(context => context.IsAlive)) Thread.Sleep(120000);
         Assert.All(_unloadingContexts, context => Assert.False(context.IsAlive, "The unloaded plugin context is still rooted."));
         if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
     }

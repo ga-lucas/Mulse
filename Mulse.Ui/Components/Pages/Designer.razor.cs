@@ -122,6 +122,7 @@ public partial class Designer : IAsyncDisposable
     private string _sourcePath = string.Empty;
     private string _additionalSourcePaths = string.Empty;
     private string _additionalBindingPaths = string.Empty;
+    private string _additionalRulePaths = string.Empty;
     private BizTalkSolutionAnalysisViewModel? _bizTalkAnalysis;
 
     private bool IsExistingFlow => !string.IsNullOrWhiteSpace(FlowId);

@@ -1,7 +1,46 @@
 # BillingServiceProcess migration guide
 
-**Assessment date:** 2026-10-30  
-**Scope:** local source only; no BizTalk instance, deployed rule store, production bindings, credentials, or external services were queried. No source was edited for this assessment. The broader BizTalk compatibility plan remains in progress; this guide does not claim that plan is complete.
+**Original assessment date:** 2026-10-30
+
+**Original scope:** local source only; no BizTalk instance, deployed rule store, production bindings, credentials, or external services were queried. No source was edited for that assessment. The broader BizTalk compatibility plan remains in progress; this guide does not claim that plan is complete.
+
+## 2026-11-04 update: beta exports and reusable rules import
+
+The supplied Interfaces application binding export contains all three Billing orchestrations; Billing is
+not a separate application. The importer now matches explicit assembly/orchestration ownership inside
+exports rather than requiring a Billing-named file, and scopes physical ports per orchestration. All three
+Billing candidates resolve the supplied export. Direct MessageBox receive subscriptions are still not
+inferred from physical port references, so receive placeholders remain explicit where appropriate.
+
+The supplied BRL `rules.xml` contains 47 versions of `Billing Processing Policy` (1.6 through 1.52),
+1,270 rules across those versions, and two vocabularies. These are policy versions, not separate clients:
+each version contains client/group predicates. No active/deployed version is inferred. All 47 versions
+produce native single-pass XML field-rule proposals with explicit version selection, graphical rule/field
+editing, saved node settings, and no-delivery preview. This support is generic, not keyed to Billing names.
+Called-policy evidence persists in each orchestration's migration report; proposals are not auto-wired.
+
+Local synthetic rule checks matched 1,232 cases and verified their assignments, rejected 37 cases with
+conflicting matching assignments, and excluded one statically false constant guard. These are translation
+consistency checks, **not BizTalk golden-output equivalence**. Conflicts require explicit review rather
+than an invented first-match policy. No real patient/billing messages, credentials, or destinations were used.
+
+Analyzing the broader local source folder inventories 52 BizTalk projects and 228 project-included maps,
+including partner sources. Four shared-output assembly references remain unresolved. The original source-only
+findings below are historical where they say bindings/policy exports are unavailable; exports are now supplied,
+but deployed-version evidence, complete map translation, custom pipeline behavior, and executable orchestration
+semantics remain outstanding. Full Billing execution, batching, correlation, response and transaction behavior
+are **not implemented by this increment**; the migration gate remains unchanged.
+
+Use the Billing directory (or its `.btproj`/`.sln`/included `.odx`) as Source path, the parent source folder
+containing both Interfaces and Partners as Additional sources, and the supplied XML files in their respective
+Binding export and Rule policy fields. Load a disabled candidate first, then reopen Import from BizTalk.
+The UI separates named policies and versions; choosing a name defaults to its latest numeric exported version.
+For this export that is 1.52, an accepted initial assumption, not proof of the deployed version. Review/preview
+before explicitly applying. Existing rule nodes can choose another imported policy/version in node properties.
+Each node saves its own pinned, editable snapshot; reimporting never silently upgrades it. The editor explains
+conditions and assignments. Constructing the correct IntegrationRules fact document and replacing the original
+CallRules execution remain manual work; policy selection does not complete orchestration translation.
+No external export files or literal rule/configuration values are committed to this repository.
 
 ## Decision
 
