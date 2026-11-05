@@ -34,6 +34,11 @@
                 }
                 <button class="secondary-button" @onclick="() => OnAddPolicy.InvokeAsync(_draft)">@(ReplaceExisting ? "Replace this node's rules with selected policy" : "Add edited rule proposal to current canvas")</button>
                 <p class="field-hint">@(ReplaceExisting ? "Applying replaces all rules in this node, including local edits. Other nodes are unchanged." : "Load the desired flow first, then add rules. Construct the correct XML fact document and configure source/order explicitly.") The saved node contains a pinned, editable snapshot; later imports do not upgrade it. This does not translate or approve the original CallRules shape.</p>
+                @if (EnableNativeTargets && OnSelectNativeTarget.HasDelegate)
+                {
+                    <button class="secondary-button" @onclick="() => OnSelectNativeTarget.InvokeAsync(selected)">Use selected exported version as native import test target</button>
+                    <p class="field-hint">Reanalyzes source using this original exported version, not local proposal edits. Only exact one-XML-fact, schema-proven, conflict-free single-pass CallRules calls can compile; other calls remain blocked. Imported flows stay disabled.</p>
+                }
             }
             else
             {
@@ -47,6 +52,8 @@
     [Parameter] public IReadOnlyList<BizTalkRulePolicyViewModel> Policies { get; set; } = [];
     [Parameter] public EventCallback<string> OnAddPolicy { get; set; }
     [Parameter] public bool ReplaceExisting { get; set; }
+    [Parameter] public bool EnableNativeTargets { get; set; }
+    [Parameter] public EventCallback<BizTalkRulePolicyViewModel> OnSelectNativeTarget { get; set; }
     private IReadOnlyList<BizTalkRulePolicyViewModel>? _loaded;
     private string _selectedName = "", _selected = "";
     private string? _draft;

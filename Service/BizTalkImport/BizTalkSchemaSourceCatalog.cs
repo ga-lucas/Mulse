@@ -15,6 +15,7 @@ internal sealed class BizTalkSchemaSourceCatalog
     private readonly List<string> _warnings = [];
     private int _warningCount;
     public IReadOnlyList<string> Warnings => _warnings;
+    internal IEnumerable<MigrationSchemaReferenceEvidence> DeclaredSchemas => _byClass.Keys.Select(Resolve);
 
     public static BizTalkSchemaSourceCatalog Read(IEnumerable<string> projectPaths)
     {

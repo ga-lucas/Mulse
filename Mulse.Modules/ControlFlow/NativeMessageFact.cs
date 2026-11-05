@@ -7,7 +7,7 @@ using Mulse.Modules.Payloads;
 namespace Mulse.Modules.ControlFlow;
 
 [JsonConverter(typeof(JsonStringEnumConverter<NativeMessageFactKind>))]
-public enum NativeMessageFactKind { Metadata, XmlText, XmlCount, XmlExists, XmlString, XmlInt32, XmlBoolean }
+public enum NativeMessageFactKind { Metadata, XmlText, XmlCount, XmlExists, XmlString, XmlInt32, XmlBoolean, MetadataInt32, MetadataBoolean }
 
 public sealed class NativeXmlStep
 {
@@ -22,13 +22,14 @@ public sealed class NativeMessageFact
     public string MessageName { get; set; } = "";
     public string MetadataKey { get; set; } = "";
     public List<NativeXmlStep> Steps { get; set; } = [];
+    [JsonIgnore] public bool IsMetadata => Kind is NativeMessageFactKind.Metadata or NativeMessageFactKind.MetadataInt32 or NativeMessageFactKind.MetadataBoolean;
 
     public void Validate()
     {
         if (!Enum.IsDefined(Kind) || MessageName is null || MessageName.Length > 128 || MessageName != MessageName.Trim()
             || MetadataKey is null || Steps is null || Steps.Count > 32)
             throw new ArgumentException("Native message facts require a known kind, bounded message name and at most 32 XML steps.");
-        if (Kind == NativeMessageFactKind.Metadata)
+        if (IsMetadata)
         {
             if (string.IsNullOrWhiteSpace(MetadataKey) || MetadataKey.Length > 2048 || Steps.Count != 0)
                 throw new ArgumentException("Metadata facts require an exact key and no inactive XML steps.");
@@ -55,11 +56,11 @@ public sealed class NativeMessageFact
         Validate();
         if (batch.Count != 1) throw new InvalidOperationException("Native message facts require exactly one payload; use ForEach for batches.");
         var payload = batch.Payloads[0];
-        if (Kind == NativeMessageFactKind.Metadata)
+        if (IsMetadata)
         {
             var matches = payload.Metadata.Where(pair => string.Equals(pair.Key, MetadataKey, StringComparison.Ordinal)).ToArray();
             if (matches.Length != 1 || matches[0].Value is null) throw new InvalidOperationException("Native metadata fact is missing a non-null value for its exact key: " + MetadataKey);
-            return Checked(matches[0].Value);
+            return Kind == NativeMessageFactKind.Metadata ? Checked(matches[0].Value) : ParseScalar(matches[0].Value);
         }
         var document = XmlMappingSchemas.ReadXml(payload.GetText(), preserveWhitespace: true);
         if (Kind is NativeMessageFactKind.XmlString or NativeMessageFactKind.XmlInt32 or NativeMessageFactKind.XmlBoolean)
@@ -95,19 +96,19 @@ public sealed class NativeMessageFact
 
     internal NativeScalar ParseScalar(string text)
     {
-        if (text.Length > 4096) throw new ArgumentException("Native XML scalar exceeds 4096 characters.");
+        if (text.Length > 4096) throw new ArgumentException("Native scalar fact exceeds 4096 characters.");
         try
         {
             return Kind switch
             {
                 NativeMessageFactKind.XmlString => Checked(text),
-                NativeMessageFactKind.XmlInt32 => NativeScalar.From(XmlConvert.ToInt32(text.Trim(' ', '\t', '\r', '\n'))),
-                NativeMessageFactKind.XmlBoolean => NativeScalar.From(XmlConvert.ToBoolean(text.Trim(' ', '\t', '\r', '\n'))),
-                _ => throw new ArgumentException("Typed XML scalar requires XmlString, XmlInt32 or XmlBoolean.")
+                NativeMessageFactKind.XmlInt32 or NativeMessageFactKind.MetadataInt32 => NativeScalar.From(XmlConvert.ToInt32(text.Trim(' ', '\t', '\r', '\n'))),
+                NativeMessageFactKind.XmlBoolean or NativeMessageFactKind.MetadataBoolean => NativeScalar.From(XmlConvert.ToBoolean(text.Trim(' ', '\t', '\r', '\n'))),
+                _ => throw new ArgumentException("Typed scalar requires an explicit String, Int32 or Boolean fact kind.")
             };
         }
         catch (Exception exception) when (exception is FormatException or OverflowException)
-        { throw new ArgumentException("XML scalar has an invalid value for its explicit native type.", exception); }
+        { throw new ArgumentException("Scalar fact has an invalid value for its explicit native type.", exception); }
     }
 
     private NativeScalar Result(IEnumerable<string> values) => Kind switch

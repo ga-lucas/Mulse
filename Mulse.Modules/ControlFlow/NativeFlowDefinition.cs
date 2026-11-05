@@ -5,7 +5,7 @@ using Mulse.Modules.Decisions;
 namespace Mulse.Modules.ControlFlow;
 
 [JsonConverter(typeof(JsonStringEnumConverter<NativeFlowNodeKind>))]
-public enum NativeFlowNodeKind { Sequence, If, ForEach, While, Augment, Render, Blocked, Wait, Receive, SaveMessage, UseMessage, Reply, Deliver, DeclareVariable, SetVariable, CreateXmlMessage, SetMessageValue, CreateXmlRoot, AppendXmlMessage }
+public enum NativeFlowNodeKind { Sequence, If, ForEach, While, Augment, Render, Blocked, Wait, Receive, SaveMessage, UseMessage, Reply, Deliver, DeclareVariable, SetVariable, CreateXmlMessage, SetMessageValue, CreateXmlRoot, AppendXmlMessage, ApplyXmlRules }
 
 public sealed class NativeFlowNode
 {
@@ -29,6 +29,9 @@ public sealed class NativeFlowNode
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NativeMessageFact? Target { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NativeExpression? NamespaceExpression { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? SourceMessage { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? PolicyJson { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public List<string>? InputMessages { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NativeExpression? SelectionExpression { get; set; }
 }
 
 public sealed class NativeFlowDefinition
@@ -85,18 +88,36 @@ public sealed class NativeFlowDefinition
                     || node.SourceMessage is { } source && (string.IsNullOrWhiteSpace(source) || source.Length > 128 || source != source.Trim()))
                     throw new ArgumentException($"Native node '{node.Id}' requires namespace expression only for CreateXmlRoot and a bounded source message only for AppendXmlMessage.");
                 if (node.NamespaceExpression is not null) NativeExpression.Validate(node.NamespaceExpression);
+                if (node.InputMessages is { } inputs && (node.Kind != NativeFlowNodeKind.Render || !flow.Durable || inputs.Count is < 1 or > 32
+                    || inputs.Any(name => string.IsNullOrWhiteSpace(name) || name.Length > 128 || name != name.Trim())
+                    || string.IsNullOrWhiteSpace(node.MessageName))
+                    || node.Kind == NativeFlowNodeKind.Render && (node.InputMessages is null) != (node.MessageName.Length == 0))
+                    throw new ArgumentException($"Native render '{node.Id}' requires durable execution, 1-32 ordered bounded named inputs and a named output, or no named-message settings.");
+                if (node.SelectionExpression is { } selection)
+                {
+                    if (node.Kind != NativeFlowNodeKind.Render || node.InputMessages is null || node.Module != "render-dispatch"
+                        || node.Settings.Count != 1 || !node.Settings.ContainsKey("casesJson"))
+                        throw new ArgumentException($"Native node '{node.Id}' requires named Render with render-dispatch and only casesJson for a selection expression.");
+                    NativeExpression.Validate(selection);
+                    _ = Mulse.Modules.Mapping.RenderDispatchDefinition.Read(node.Settings["casesJson"]);
+                }
+                if ((node.Kind == NativeFlowNodeKind.ApplyXmlRules) != (node.PolicyJson is not null))
+                    throw new ArgumentException($"Native node '{node.Id}' requires a policy only for ApplyXmlRules.");
+                if (node.PolicyJson is not null) _ = XmlRuleRuntime.ReadPolicy(node.PolicyJson);
                 if (node.Expression is not null)
                 {
                     NativeExpression.Validate(node.Expression);
                     if (!variableNode && !messageWrite && node.Kind is not (NativeFlowNodeKind.If or NativeFlowNodeKind.While) || node.Conditions.Count != 0)
                         throw new ArgumentException($"Native node '{node.Id}' has an inactive expression or mixed predicate modes.");
                 }
+                if (!flow.Durable && (node.Expression?.RequiresInstance == true || node.NamespaceExpression?.RequiresInstance == true))
+                    throw new ArgumentException($"Native node '{node.Id}' uses InstanceId, which requires durable=true.");
                 if (messageWrite && node.Expression is null || (node.Kind == NativeFlowNodeKind.SetMessageValue) != (node.Target is not null))
                     throw new ArgumentException($"Native node '{node.Id}' requires a value expression and an active target only for SetMessageValue.");
                 if (node.Target is { } target)
                 {
                     target.Validate();
-                    if (target.MessageName.Length == 0 || target.Kind is not (NativeMessageFactKind.Metadata or NativeMessageFactKind.XmlString or NativeMessageFactKind.XmlInt32 or NativeMessageFactKind.XmlBoolean))
+                    if (target.MessageName.Length == 0 || !target.IsMetadata && target.Kind is not (NativeMessageFactKind.XmlString or NativeMessageFactKind.XmlInt32 or NativeMessageFactKind.XmlBoolean))
                         throw new ArgumentException($"Native node '{node.Id}' requires an explicit named metadata/typed XML scalar target.");
                 }
                 if (variableNode && (node.Expression is null || node.Variable is null || !NativeExpression.ValidName(node.Variable))
@@ -122,10 +143,11 @@ public sealed class NativeFlowDefinition
                     throw new ArgumentException($"Native leaf node '{node.Id}' cannot hide child activities.");
                 var durableNode = node.Kind is NativeFlowNodeKind.Wait or NativeFlowNodeKind.Receive or NativeFlowNodeKind.SaveMessage
                     or NativeFlowNodeKind.UseMessage or NativeFlowNodeKind.Reply or NativeFlowNodeKind.Deliver or NativeFlowNodeKind.CreateXmlMessage or NativeFlowNodeKind.SetMessageValue
-                    or NativeFlowNodeKind.CreateXmlRoot or NativeFlowNodeKind.AppendXmlMessage;
+                    or NativeFlowNodeKind.CreateXmlRoot or NativeFlowNodeKind.AppendXmlMessage or NativeFlowNodeKind.ApplyXmlRules;
                 if (durableNode && !flow.Durable) throw new ArgumentException($"Native node '{node.Id}' requires durable=true; transactions are not supported.");
                 var namedNode = node.Kind is NativeFlowNodeKind.Receive or NativeFlowNodeKind.SaveMessage or NativeFlowNodeKind.UseMessage or NativeFlowNodeKind.Reply or NativeFlowNodeKind.CreateXmlMessage
-                    or NativeFlowNodeKind.CreateXmlRoot or NativeFlowNodeKind.AppendXmlMessage;
+                    or NativeFlowNodeKind.CreateXmlRoot or NativeFlowNodeKind.AppendXmlMessage or NativeFlowNodeKind.ApplyXmlRules
+                    || node.Kind == NativeFlowNodeKind.Render && node.InputMessages is not null;
                 if (node.MessageName.Length > 128 || node.MessageName != node.MessageName.Trim()
                     || (namedNode ? string.IsNullOrWhiteSpace(node.MessageName) : node.Kind != NativeFlowNodeKind.Deliver && node.MessageName.Length != 0))
                     throw new ArgumentException($"Native node '{node.Id}' requires an active, bounded message name only on named-message activities.");

@@ -3,10 +3,10 @@ namespace Mulse.Modules.ControlFlow;
 internal static class NativeVariables
 {
     public static void Apply(NativeFlowNode node, Dictionary<string, NativeScalar> variables, Dictionary<string, NativeScalarType> types,
-        Func<NativeMessageFact, NativeScalar>? facts = null)
+        Func<NativeMessageFact, NativeScalar>? facts = null, string? instanceId = null)
     {
         var name = node.Variable!;
-        var value = node.Expression!.Evaluate(variables, facts);
+        var value = node.Expression!.Evaluate(variables, facts, instanceId);
         _ = value.Read();
         if (node.Kind == NativeFlowNodeKind.DeclareVariable)
         {

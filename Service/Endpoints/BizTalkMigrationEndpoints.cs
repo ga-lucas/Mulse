@@ -38,7 +38,11 @@ public static class BizTalkMigrationEndpoints
                     AdditionalSourcePaths = request.AdditionalSourcePaths,
                     AdditionalBindingPaths = request.AdditionalBindingPaths,
                     AdditionalRulePaths = request.AdditionalRulePaths,
-                    GenerateNativeFlow = request.GenerateNativeFlow
+                    GenerateNativeFlow = request.GenerateNativeFlow,
+                    NativePolicyVersions = request.NativePolicyVersions,
+                    NativeHostConfigurationPath = request.NativeHostConfigurationPath,
+                    NativeConfigurationHelperPaths = request.NativeConfigurationHelperPaths,
+                    NativeMapChoicesJson = request.NativeMapChoicesJson
                 }, cancellationToken).ConfigureAwait(false);
 
                 var candidate = analysis.FlowCandidates.FirstOrDefault(flow => string.Equals(flow.SuggestedFlowId, request.SuggestedFlowId, StringComparison.OrdinalIgnoreCase))
@@ -138,7 +142,11 @@ public static class BizTalkMigrationEndpoints
             AdditionalSourcePaths = request.AdditionalSourcePaths,
             AdditionalBindingPaths = request.AdditionalBindingPaths,
             AdditionalRulePaths = request.AdditionalRulePaths,
-            GenerateNativeFlow = request.GenerateNativeFlow
+            GenerateNativeFlow = request.GenerateNativeFlow,
+            NativePolicyVersions = request.NativePolicyVersions,
+            NativeHostConfigurationPath = request.NativeHostConfigurationPath,
+            NativeConfigurationHelperPaths = request.NativeConfigurationHelperPaths,
+            NativeMapChoicesJson = request.NativeMapChoicesJson
         }, cancellationToken).ConfigureAwait(false);
 
         return analysis.FlowCandidates.FirstOrDefault(flow => string.Equals(flow.SuggestedFlowId, request.SuggestedFlowId, StringComparison.OrdinalIgnoreCase))

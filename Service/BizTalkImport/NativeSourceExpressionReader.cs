@@ -14,15 +14,28 @@ internal sealed class NativeSourceExpressionReader
     private readonly NativeSourceMessageCatalog? _messageCatalog;
     private readonly IReadOnlySet<string> _documents;
     private readonly IReadOnlySet<string> _elements;
+    private readonly NativeSourceContextCatalog? _contextCatalog;
+    private readonly NativeSourceConfigurationCatalog? _configuration;
+    private readonly IReadOnlySet<string> _transformTypes;
+    private readonly string? _mapChoices;
     private string _token = "", _kind = "";
     private int _offset, _depth, _values;
 
-    public NativeSourceExpressionReader(string source, IReadOnlyDictionary<string, NativeScalarType> variables, IReadOnlySet<string>? messages = null, NativeSourceMessageCatalog? messageCatalog = null, IReadOnlySet<string>? documents = null, IReadOnlySet<string>? elements = null)
+    public NativeSourceExpressionReader(string source, IReadOnlyDictionary<string, NativeScalarType> variables, IReadOnlySet<string>? messages = null, NativeSourceMessageCatalog? messageCatalog = null, IReadOnlySet<string>? documents = null, IReadOnlySet<string>? elements = null, NativeSourceContextCatalog? contextCatalog = null, NativeSourceConfigurationCatalog? configuration = null, IReadOnlySet<string>? transformTypes = null, string? mapChoices = null)
     {
         if (string.IsNullOrWhiteSpace(source) || source.Length > 4096) throw new NotSupportedException("Native scalar source requires 1-4096 characters.");
         _source = source; _variables = variables; _messages = messages ?? new HashSet<string>(StringComparer.Ordinal); _messageCatalog = messageCatalog;
         _documents = documents ?? new HashSet<string>(StringComparer.Ordinal);
-        _elements = elements ?? new HashSet<string>(StringComparer.Ordinal); Next();
+        _elements = elements ?? new HashSet<string>(StringComparer.Ordinal);
+        _contextCatalog = contextCatalog; _configuration = configuration;
+        _transformTypes = transformTypes ?? new HashSet<string>(StringComparer.Ordinal); _mapChoices = mapChoices; Next();
+    }
+    private NativeMessageFact ReadContext(string message)
+    {
+        Expect("(");
+        if (_kind != "name" || _contextCatalog is null) throw new NotSupportedException("Message context access requires an exact declared property-schema identity.");
+        var fact = _contextCatalog.Resolve(message, _token);
+        Next(); Expect(")"); return fact;
     }
     private void Next()
     {
@@ -61,6 +74,37 @@ internal sealed class NativeSourceExpressionReader
             if (_kind != "name") throw new NotSupportedException("Source statement requires a declared scalar/message or exact schema member.");
             Next();
             var document = name.EndsWith(".LoadXml", StringComparison.Ordinal) ? name[..^8] : null;
+            if (_transformTypes.Contains(name))
+            {
+                if (pendingEmptyDocument is not null) throw new NotSupportedException("A transform cannot consume an incomplete XML document construction.");
+                if (_mapChoices is null || Mulse.Modules.Mapping.RenderDispatchDefinition.Read(_mapChoices, allowEmpty: true).Count == 0)
+                    throw new NotSupportedException("Dynamic transforms require explicit exact source map identity to native renderer choices; no legacy CLR map is loaded.");
+                Expect("="); ExpectName("System.Type.GetType"); Expect("("); var selector = Read(); Expect(")"); Expect(";");
+                if (selector.Kind switch
+                    {
+                        NativeExpressionKind.Literal => selector.Literal?.Type != NativeScalarType.String,
+                        NativeExpressionKind.Variable => _variables[selector.Variable!] != NativeScalarType.String,
+                        NativeExpressionKind.MessageValue => selector.Fact!.Kind is not (NativeMessageFactKind.XmlString or NativeMessageFactKind.Metadata),
+                        _ => true
+                    }) throw new NotSupportedException("Dynamic map selection requires an exact proven String literal, scalar or schema/context field.");
+                ExpectName("transform"); Expect("(");
+                if (_kind != "name" || !_messages.Contains(_token)) throw new NotSupportedException("Dynamic transform output requires an exact unshadowed service message.");
+                var output = _token; Next(); Expect(")"); Expect("="); ExpectName(name); Expect("(");
+                var inputs = new List<string>();
+                do
+                {
+                    if (inputs.Count == 32 || _kind != "name" || !_messages.Contains(_token))
+                        throw new NotSupportedException("Dynamic transforms require 1-32 ordered exact unshadowed service message arguments.");
+                    inputs.Add(_token); Next();
+                } while (Take(","));
+                Expect(")"); Expect(";");
+                if (++statements > 64) throw new NotSupportedException("Source block exceeds 64 statements.");
+                NativeExpression.Validate(selector);
+                nodes.Add(new() { Id = id + "-map-" + nodes.Count, Kind = NativeFlowNodeKind.Render,
+                    Module = Mulse.Modules.Mapping.RenderDispatchDefinition.ModuleId, InputMessages = inputs, MessageName = output,
+                    SelectionExpression = selector, Settings = new() { ["casesJson"] = _mapChoices } });
+                continue;
+            }
             if (_elements.Contains(name))
             {
                 if (pendingEmptyDocument is null) throw new NotSupportedException("A temporary XML root element must immediately initialize a newly constructed document in the same complete block.");
@@ -100,6 +144,14 @@ internal sealed class NativeSourceExpressionReader
             }
             if (_messages.Contains(name))
             {
+                if (_token == "(")
+                {
+                    if (pendingEmptyDocument is not null) throw new NotSupportedException("Context assignment cannot reuse a previous snapshot of the empty document being replaced.");
+                    var context = ReadContext(name);
+                    Expect("="); var expression = Read(); Expect(";"); NativeExpression.Validate(expression);
+                    nodes.Add(new() { Id = id + "-context-" + nodes.Count, Kind = NativeFlowNodeKind.SetMessageValue, Target = context, Expression = expression });
+                    continue;
+                }
                 Expect("=");
                 if (_kind == "name" && _token == "new" && _documents.Contains(name))
                 {
@@ -147,6 +199,15 @@ internal sealed class NativeSourceExpressionReader
             if (Take("!")) left = new() { Kind = NativeExpressionKind.Not, Operands = [Read(7)] };
             else if (Take("-")) left = new() { Kind = NativeExpressionKind.Negate, Operands = [Read(7)] };
             else if (Take("(")) { left = Read(); Expect(")"); }
+            else if (_kind == "name" && _configuration is not null && _configuration.TryResolve(_token, out var configuredValue))
+            {
+                Next(); Expect("("); Expect(")"); left = new() { Literal = NativeScalar.From(configuredValue) };
+            }
+            else if (_kind == "name" && _token == "System.Convert.ToString")
+            {
+                Next(); Expect("("); ExpectName("Microsoft.XLANGs.Core.Service.RootService.InstanceId"); Expect(")");
+                left = new() { Kind = NativeExpressionKind.InstanceId };
+            }
             else if (_kind == "name" && _token == "System.Convert.ToInt32")
             {
                 Next(); Expect("("); left = Read(); Expect(")");
@@ -172,6 +233,11 @@ internal sealed class NativeSourceExpressionReader
             { left = new() { Literal = _token == "null" ? new(NativeScalarType.Null, "") : new(NativeScalarType.Boolean, _token) }; Next(); }
             else if (_kind == "name" && _variables.ContainsKey(_token))
             { left = new() { Kind = NativeExpressionKind.Variable, Variable = _token }; Next(); }
+            else if (_kind == "name" && _messages.Contains(_token))
+            {
+                var message = _token; Next();
+                left = new() { Kind = NativeExpressionKind.MessageValue, Fact = ReadContext(message) };
+            }
             else if (_kind == "name" && _token.Contains('.') && _messageCatalog is not null)
             { left = new() { Kind = NativeExpressionKind.MessageValue, Fact = _messageCatalog.Resolve(_token) }; Next(); }
             else throw new NotSupportedException("Source scalar operand is not a literal, declared native variable or proven schema member.");

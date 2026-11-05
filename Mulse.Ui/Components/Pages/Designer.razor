@@ -146,6 +146,21 @@
 
             <label class="field-label"><input type="checkbox" @bind="_generateNativeBizTalkFlow" /> Generate native control-flow draft</label>
             <p class="field-hint">Uses native ordered nodes and exact logical port bindings. Unsupported statements/components remain explicit blockers. Does not execute ODX or approve imported execution.</p>
+            <p class="field-hint">BizTalk development tools and golden-output fixtures are optional, not import prerequisites. Native map replacements can be configured through renderer choices after loading a draft. Unsupported source transforms remain blockers until their native wiring is implemented; replacement configuration alone does not establish parity.</p>
+            @if (_generateNativeBizTalkFlow)
+            {
+                <details><summary>Native map replacement choices (optional)</summary>
+                    <p class="field-hint">Use the exact map-name String returned by the selected policy, including any assembly qualification. Choices explicitly select native replacements, not verified deployed map equivalents. Complete supported dynamic transform statements use these choices; unsupported statements remain blocked. Reanalyze after editing choices.</p>
+                    <RenderDispatchEditor Settings="_nativeMapSettings" Modules="_modules" NativeSelectionMode="true" />
+                </details>
+                <label class="field-label">Host configuration test snapshot (optional)
+                    <input class="mapping-input" @bind="_nativeHostConfigurationPath" placeholder="C:\Exports\BTSNTSvc64.exe.config" />
+                </label>
+                <label class="field-label">Pure configuration getter source files
+                    <input class="mapping-input" @bind="_nativeConfigurationHelperPaths" placeholder="C:\Source\Settings.cs" />
+                </label>
+                <p class="field-hint">Explicit local paths, semicolon-separated helper .cs files (maximum 16). Only complete literal-key appSettings getters with an empty-string missing-key return can become pinned scalar values. No assembly or external configuration is loaded. Absent keys remain empty, not invented patterns. Values referenced by imported code are saved in editable native literals: use nonsensitive settings only. This selects test evidence, not proof of deployed helper identity.</p>
+            }
             <div class="action-row">
                 <button class="run-button" @onclick="AnalyzeBizTalkAsync" disabled="@_isAnalyzingBizTalk">@(_isAnalyzingBizTalk ? "Analyzing..." : "Analyze source")</button>
                 <button class="secondary-button" @onclick="ClearBizTalk" disabled="@_isAnalyzingBizTalk">Clear</button>
@@ -195,7 +210,12 @@
 
                 <BizTalkDependencyReport Projects="_bizTalkAnalysis.BizTalkProjects" />
 
-                <BizTalkRulePolicies Policies="_bizTalkAnalysis.RulePolicies" OnAddPolicy="AddImportedRulePolicy" />
+                <BizTalkRulePolicies Policies="_bizTalkAnalysis.RulePolicies" OnAddPolicy="AddImportedRulePolicy" EnableNativeTargets="@(_generateNativeBizTalkFlow && !_isAnalyzingBizTalk)" OnSelectNativeTarget="SelectNativePolicyTarget" />
+                @if (_generateNativeBizTalkFlow && _nativePolicyVersions.Count > 0)
+                {
+                    <p class="field-hint">Explicit native policy test targets: @string.Join(", ", _nativePolicyVersions.Select(pair => pair.Key + " " + pair.Value)). These selections are pinned in newly generated nodes, not deployed-version assertions.</p>
+                    <button class="secondary-button" disabled="@_isAnalyzingBizTalk" @onclick="ClearNativePolicyTargets">Clear native policy targets and reanalyze</button>
+                }
 
                 @if (_bizTalkAnalysis.FlowCandidates.Count == 0)
                 {

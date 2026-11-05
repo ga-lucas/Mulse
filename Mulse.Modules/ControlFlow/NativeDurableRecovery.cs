@@ -67,6 +67,11 @@ public sealed class NativeDurableRecovery(IFlowOrchestrationStateStore store, Ti
         var snapshots = output.Payloads.Select(payload => FlowOrchestrationPayloadSnapshot.Capture(payload, preserveMetadataCase: true)).ToList();
         var working = checkpoint.Payloads;
         if (node.Kind == NativeFlowNodeKind.Deliver) state.Responses.AddRange(snapshots);
+        else if (node.InputMessages is not null)
+        {
+            if (snapshots.Count != 1) throw new ArgumentException("Verified named renderer output requires exactly one payload.", nameof(output));
+            state.Messages[node.MessageName] = snapshots;
+        }
         else working = snapshots;
         state.CommittedEffects.Add(new(expectedEffectId, state.Operations, (clock ?? TimeProvider.System).GetUtcNow(), operatorEvidence.Trim()));
         state.EffectNodeId = null; state.EffectKind = null; state.EffectModule = null;

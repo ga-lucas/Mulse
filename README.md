@@ -398,10 +398,25 @@ messages must exist and contain exactly one payload; they are never substituted 
 For required typed fields, choose **XmlString**, **XmlInt32** or **XmlBoolean**. These require exactly one simple,
 non-nil element at every path step; missing/duplicate/invalid values fail rather than returning defaults.
 Int32 and Boolean use XML Schema lexical forms, while String preserves whitespace.
+For typed message context choose **MetadataInt32** or **MetadataBoolean** with an exact key; these use the same
+XML lexical forms (including Boolean 1/0), not loose coercion. **Metadata** still returns a whitespace-preserving
+String. All three are writable with **SetMessageValue**, requiring a matching scalar type; typed metadata writes
+serialize canonical XML lexical values. Keys remain case-sensitive and missing values fail.
 ForEach preserves original payload order and combines all body
 outputs, with a 1-10000 input limit. While evaluates the updated output before every iteration and throws if
 its configured 1-10000 limit is exceeded. Definitions allow 1000 unique nodes, 32 nested levels, 100000 node
 executions and 1000000 JSON characters. Every nested module in either branch is checked/pinned before fetching.
+
+For a Render node, **Renderer message mode** can select **Ordered named inputs to named output**. Enable
+Durable execution, add/reorder 1-32 named input arguments, choose the output name and configure a renderer or
+ordered renderer pipeline. Each argument must contain one payload and the renderer must return one payload.
+Only the named output changes; the working batch and unrelated messages stay unchanged. Successful results
+survive restart, and verified-commit recovery targets that same named output without replaying the renderer.
+For multi-input XML maps, **Compose ordered XML input parts** (`xml-parts-render`) can be the first renderer
+pipeline stage: configure the aggregate root name/namespace, comma-separated part names in argument order,
+and output payload name. Part wrappers have no namespace; source roots/namespaces and internal XML content
+are preserved. No input metadata is merged. This builds an explicit native input contract, not a guessed
+BizTalk map implementation or automatic import wiring.
 
 Enable **Durable execution** in Properties for persisted Wait/Receive nodes, named SaveMessage/UseMessage,
 Reply and leased Deliver operations. Configure stable instance/message metadata keys and incoming channels;
@@ -411,7 +426,7 @@ restart. Checkpoints expose wait deadlines/recovery holds, not message bodies or
 and flow deletion are prevented while native work is pending. Internal delivery/reply flows need no outer route.
 Add **CreateXmlMessage** to build a named XML payload from a String expression; no source metadata is implicitly
 inherited. Add **SetMessageValue**, select a named target and a typed XML path (including sample-path clicks)
-or exact metadata key, then choose its value expression. Writes require matching types; metadata requires String.
+or exact metadata key, then choose its value expression. Writes require the target's matching scalar type.
 They update only that named snapshot, not the working payload or other saved copies. Missing/duplicate/nil XML
 targets, null values, unsafe XML and type mismatches fail explicitly. Construction and writes survive disk restart.
 For accumulated XML batches, add **CreateXmlRoot** with a named target and String local-name/namespace expressions,
@@ -421,6 +436,11 @@ Leading declarations/comments/PIs/whitespace are rejected, not silently skipped.
 payload. XML size, reader-depth and node limits are checked before replacing the target. Other named copies and
 the working payload stay unchanged, and accumulated results survive restart. These operations are generic native
 capabilities; Billing-specific transforms/modules remain in the separate `Mulse.Billing` project.
+Add **ApplyXmlRules**, choose a named message and use its graphical XML policy editor for typed equality
+conditions and literal field assignments. It updates only that one XML snapshot, preserving metadata and other
+copies over restart. No matching rule leaves the original payload unchanged; invalid facts or conflicting matched
+assignments fail without partial mutation. Standalone rule previews/augments still require a match. This is a
+bounded deterministic local operation, not a BRE agenda, helper interpreter or external transport effect.
 
 Durable effects write intent before invocation. Ambiguous failures hold the instance for review rather than
 blindly retrying. Checkpoint UI offers **Reconcile independently verified committed effect**: supply incident
@@ -444,12 +464,36 @@ empty-prefix CreateElement/AppendChild root construction and deep ImportNode(mes
 now compile to native XML composition. An exact temporary XmlElement may be eliminated only inside its owning
 service/scope and one complete root-construction block; scope/transaction execution is not inferred. Scalar defaults
 are null String, zero Int32 and false Boolean. Comments do not hide unsupported suffixes or final assignments.
+Exact message(property) reads/writes now compile from uniquely declared property schemas with explicit built-in
+String/Int32/Boolean types and proven generated namespaces, using native `{namespace}property` metadata keys.
+Undeclared/built-in/multipart properties, shadowed messages, ambiguous identities and unsupported types remain
+blocked. Input promotion is a separate explicit adapter contract; the compiler never substitutes a similarly named
+XML field or creates MessageBox subscriptions. No source interpreter runs.
 Arbitrary XPath, unproven schema/context properties, other CLR calls, helpers, scopes, pipelines and unproven
 policy fact wiring remain explicit structured blockers. Imported loop safety bounds are visible
 and editable; reaching a bound fails, never silently truncates the source loop.
-The supplied policy proposal can be attached at its call site without pretending its fact/version bindings are
-proven. Download native JSON with the existing artifact controls. Imported flows remain disabled; this is not
-complete Billing translation or verified Billing business parity.
+In the policy report, choose a version and **Use selected exported version as native import test target** to
+reanalyze. The API accepts exact policy-name-to-`major.minor` selections in `nativePolicyVersions`; it never
+silently selects the latest or substitutes a missing version. A CallRules call compiles only with one exact,
+unshadowed message/fact alias, schema-proven direct-child String/Boolean fields, a complete selected proposal
+and no potentially conflicting rule pairs. Repeated same-typed literal setters within one source rule preserve
+the final action's value; conflicting separate rules remain blocked. Selected policy JSON is pinned in the
+native node and remains editable graphically. A selected test target is not evidence of its deployed version.
+Unproven calls retain proposal evidence and blockers. Download native JSON with the existing artifact controls.
+Imported flows remain disabled; this is not complete Billing translation or verified Billing business parity.
+
+For source configuration getters, optionally select **Host configuration test snapshot** and explicit **Pure
+configuration getter source files** in the import panel (API `nativeHostConfigurationPath` and
+`nativeConfigurationHelperPaths`). Only entire simple static classes of literal keys and parameterless
+`ConfigurationManager.AppSettings` getters returning `string.Empty` when absent are recognized. Referenced
+results become pinned, editable native literals; execution never reads the server file or loads the helper DLL.
+Absent keys are empty only because the selected getter proves that behavior, not a generic default. External
+configuration, overrides, duplicate identities and unsupported source suffixes fail instead of partially compiling.
+Use nonsensitive settings only: referenced values are saved in flow JSON. Selection is test evidence, not proof
+of deployed assemblies or inherited machine settings. Scratch flows use the existing String literal controls.
+Choose **InstanceId** in the native expression editor for the stable durable instance GUID; it survives restart
+and is not the run ID or a newly generated value per evaluation. Exact source RootService.InstanceId string reads
+translate to this new native identity, never to an alleged legacy BizTalk ID. Durable execution is required.
 
 ### Optional Billing helper plugin
 
@@ -458,9 +502,12 @@ complete Billing translation or verified Billing business parity.
 that package explicitly; discovery alone does not load it or enable imported flows. Once loaded, its descriptor
 controls are available for both scratch flows and native node authoring:
 
-- **Read CommonBilling field**: choose one of 13 nonsensitive source-schema fields and an output metadata key.
-  The exact Billing root namespace and unqualified section/field names are required. Missing, duplicate,
-  complex, nil/attributed and oversized values fail. Username/password/certificate fields are not exposed.
+- **Read CommonBilling field**: choose one of 13 nonsensitive source-schema fields and **Custom metadata key**
+  (the existing default) or **Declared Billing context property**. The latter explicitly projects to the selected
+  field's source `{namespace}property` key; IsBatch is validated/normalized as Boolean. It overwrites that one key;
+  do not reproject after intentional context changes. The exact Billing root namespace and unqualified
+  section/field names are required. Missing, duplicate, complex, nil/attributed and oversized values fail.
+  Username/password/certificate fields are not exposed.
 - **Expand Billing target filename**: choose literal or exact metadata template, explicit time zone/culture,
   and an output key. It changes metadata only, not the payload name, destination or body.
 - **Billing filename macros**: the same expansion as a one-text-input function in **Map parsed data**.

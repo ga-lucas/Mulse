@@ -52,6 +52,27 @@ independently verified committed outcomes with evidence and explicit output. The
 reconciliation/continuation; stale identities, missing output and mismatched definitions reject. No reset or
 ambiguous-effect retry is provided. No ODX executor is involved in native continuation.
 
+A durable `Render` can optionally specify `InputMessages` (1-32 exact names in argument order) and `MessageName`
+(the named output). Each named input must already contain exactly one payload. Repeated input names and replacing
+an input name with the output are supported: detached input snapshots are resolved before invocation. The renderer
+receives that ordered batch and must return exactly one payload. Only the named output changes; the working batch
+and other named messages stay intact. No aggregate XML wrapper, metadata merge or source map equivalence is inferred.
+Use an explicit renderer/plugin or ordered renderer pipeline to implement the required input-part contract.
+The built-in `xml-parts-render` takes `rootName`, optional `rootNamespace`, comma-separated ordered `partNames`,
+and `outputName`. It builds one root containing unqualified part wrappers and deep copies of the input XML roots.
+Inputs may have declarations/outer whitespace but document-level comments/PIs are rejected rather than discarded;
+internal text, comments, CDATA and PIs are preserved. No metadata is merged. Combined input/output XML limits,
+secure parsing, depth/node limits and cancellation apply. It can precede a visual XML mapper in `render-pipeline`.
+Without InputMessages, Render retains its existing working-batch semantics. The optional field is omitted when unused,
+preserving existing definition hashes. Native node properties expose mode, ordered arguments, reordering and output.
+
+Named renders use the existing journaled Render effect boundary and module dependency discovery. Invalid/missing
+inputs fail before renderer intent or invocation. Failure or invalid output after invocation leaves the intent held;
+verified-commit reconciliation requires one explicit output and writes it to the same named destination, not the
+working batch. Successful output survives disk restart without rerunning the renderer. This is native execution
+infrastructure, not automatic translation of unresolved imported dynamic transform statements or an execution-gate
+bypass. BizTalk tools and golden outputs remain optional reference evidence, not authoring prerequisites.
+
 `NativeExpression` is a bounded typed tree, not an ODX/source interpreter. `DeclareVariable` requires an explicit
 String/Int32/Boolean type and initializer; `SetVariable` preserves that type (String also accepts null). If/While
 accept either the existing payload `Conditions` or an `Expression`, never both. Expression equality uses exact
@@ -62,8 +83,9 @@ its first Receive. Newly optional definition fields are omitted when unused, pre
 The Designer exposes recursive typed operation/literal/variable controls plus the named output selector.
 
 `NativeExpressionKind.MessageValue` uses an explicit `NativeMessageFact`: Metadata/XmlText/XmlString (String),
-XmlCount/XmlInt32 (Int32), or XmlExists/XmlBoolean (Boolean). Blank MessageName reads the current working batch;
-other names resolve only from durable named snapshots. Each requires one payload; missing named messages and exact metadata keys
+MetadataInt32/XmlCount/XmlInt32 (Int32), or MetadataBoolean/XmlExists/XmlBoolean (Boolean). Blank MessageName reads
+the current working batch; other names resolve only from durable named snapshots. Each requires one payload;
+missing named messages and exact metadata keys
 fail, never fall back. XML paths have 1-32 exact expanded-name steps, with an optional final attribute. XmlText
 uses XPath string-value/first-node semantics (including whitespace, empty on absence); count/existence return
 zero/false on absence. XML is bounded to 1,000,000 characters, 64 levels and 50,000 nodes, with DTDs/external
@@ -76,8 +98,11 @@ Missing, repeated or invalid values fail; these are not the first/empty semantic
 
 Durable `CreateXmlMessage` requires MessageName and a String Expression containing bounded, securely parsed XML.
 It creates one application/xml payload with empty metadata. `SetMessageValue` requires Expression and Target,
-with an explicit named message and Metadata/XmlString/XmlInt32/XmlBoolean fact. The value must match the target
-scalar type; metadata requires String. XML targets must already exist and be single/simple/non-nil. Operations
+with an explicit named message and Metadata/MetadataInt32/MetadataBoolean/XmlString/XmlInt32/XmlBoolean fact.
+The value must match the target scalar type; Metadata requires String, while the typed metadata kinds require
+Int32/Boolean. Metadata reads use exact keys and XML lexical parsing for typed values (no missing-value default);
+writes use canonical XML lexical text. Plain Metadata retains its existing String semantics. XML targets must
+already exist and be single/simple/non-nil. Operations
 replace only the named snapshot, preserving other copies and the working batch. XML output retains payload
 name/content type/metadata and is limited to 1,000,000 characters. These local operations and SaveMessage/UseMessage
 do not accept an arrival before the initial Receive matches. Checkpoints retain their results over disk restart.
@@ -121,9 +146,50 @@ with matching declared owner/source identities. Other node selectors, shallow im
 reject the whole block, never emit a partial successful prefix. Construct-owned exact message
 references are structural declarations, not executable activities. Native draft JSON is compact to stay within the
 existing 1,000,000-character limit; limits are not raised to accommodate source expansion.
-Scope-local scalar/stateful declarations, unproven schema/context properties and policy fact adapters remain
+Exact message(property) reads and writes compile through declared property schemas only: literal generated CLR
+namespace ownership, one explicit property schema, unique source and expanded-name identity, a data/context base
+with an explicit property GUID, and built-in xs:string/xs:int/xs:boolean types. Property schemas are securely
+compiled without include/import/redefine resolution. Unsupported fields block only their own identities; missing
+or ambiguous schema ownership blocks its CLR namespace. The catalog accepts at most 4096 declarations and fails
+closed on overflow. Only uniquely declared, unshadowed service messages are eligible; multipart and built-in
+platform properties are not guessed. The runtime fact uses exact `{namespace}property` metadata, never a body
+fallback. Whole unsupported statement suffixes remain blockers. Input promotion/context adapters, subscriptions
+and correlation wiring are separate contracts and are not implemented by these scalar reads/writes.
+`ApplyXmlRules` is a durable leaf with an explicit named message and active `policyJson`, edited through the
+existing graphical XML rule editor. It requires one bounded XML payload, changes only that snapshot, preserves
+exact metadata, and does not journal an external effect. No matches preserve the original bytes; invalid facts,
+conflicts and XML bounds fail before replacing the snapshot. The existing public `XmlRuleRuntime.Evaluate`
+signature and its default no-match failure remain unchanged for standalone callers.
+Import requests may explicitly select at most 64 exact policy-name/canonical `major.minor` test targets with
+`nativePolicyVersions`. Native generation is required; absent targets do not select the latest version. Source
+CallRules compilation requires a unique complete export, compatible source version, exactly one leaf parameter,
+exact unshadowed service-message/fact-type/alias ownership, declared schema proof for every String/Boolean field,
+and zero potentially conflicting rule pairs. Ordered repeated literal setters in one source rule retain the final
+same-typed value; raw action count remains bounded to 64 and mixed types fail. Source call/parameter IDs remain
+structural nodes, followed by a generated ApplyXmlRules leaf with pinned policy JSON. Unsupported calls retain
+all source children and explicit blockers. The UI target picker and all import/download requests retain selections;
+clearing selections returns to blocked review proposals. Selection asserts a test target, not a deployed version.
+Scope-local scalar/stateful declarations, unproven schema/context properties and broader policy fact adapters remain
 unresolved; eliminating a temporary root alias does not implement scope or transaction behavior. Import is not
 execution approval.
+
+Explicit `nativeHostConfigurationPath` plus 1-16 `nativeConfigurationHelperPaths` select a configuration test
+snapshot, not host/runtime access. The import UI and every analyze/import/download request preserve these fields.
+The generic source reader accepts only complete simple public static classes: literal private String keys and
+parameterless String getters with the exact appSettings null-check/read/empty fallback pattern. No assembly,
+MSBuild or source interpreter runs. Extra methods, constructors, preprocessor directives, duplicate method
+identities, external config and location/AppDomain overrides are rejected. Sources are limited to 65536 characters,
+64 keys/getters per class, and configuration to existing bounded XML limits, 4096 unique entries and 4096-character
+values. Setting lookup is case-insensitive; method identities are exact. Only referenced results are emitted as
+native scalar literals. Use nonsensitive configuration: these literals are persisted and editable. Missing keys
+use the selected source's explicit empty-string fallback; no unselected getter or ambient configuration is inferred.
+This is source/test-target evidence, not proof of deployed assembly identity or machine-level inheritance.
+`InstanceId` is a zero-operand String expression requiring durable execution. Every durable evaluation site uses
+the checkpoint's native instance GUID, formatted with hyphens, including conditions, variable initializers/writes,
+XML construction/root expressions and typed message writes. It is not the execution run ID. Exact source
+`System.Convert.ToString(Microsoft.XLANGs.Core.Service.RootService.InstanceId)` maps to this new identity with a
+migration warning; arbitrary ToString calls remain blocked. The UI offers the same expression for scratch flows.
+New enum values are appended and no new serialized field is added to old expressions, preserving pinned hashes.
 
 Stateful collectors/interpreters cannot be nested. Do not hide transport effects or claim transaction guarantees
 in a nested augment/renderer. Conservative import wiring preserves unsupported semantics as Blocked nodes;

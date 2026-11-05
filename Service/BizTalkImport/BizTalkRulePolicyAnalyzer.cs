@@ -56,6 +56,8 @@ public static class BizTalkRulePolicyAnalyzer
                 if (proposal.Length > XmlRuleRuntime.MaxPolicyCharacters)
                     throw new ArgumentException("Native policy proposal exceeds the policy size limit.");
                 issues.Add("Native single-pass proposal only: typed equality conditions and literal XML assignments. Deployed version, BRE agenda, priorities-based conflict resolution, and orchestration wiring are not inferred. Preview and review before using.");
+                if (rules.Sum(rule => rule.Element(Brl + "then")!.Elements().Count()) > policy.Rules.Sum(rule => rule.Assignments.Count))
+                    issues.Add("Repeated same-typed literal setters within one rule retain the final source action's value. This does not resolve conflicts between separate matching rules.");
                 var conflicts = CountPotentialConflicts(policy, cancellationToken);
                 if (conflicts > 0)
                     issues.Add($"{conflicts} active rule pair(s) have potentially overlapping conditions and conflicting assignments. Preview/runtime reject conflicting matches; disambiguate client rules explicitly instead of assuming first-match behavior.");
@@ -127,13 +129,23 @@ public static class BizTalkRulePolicyAnalyzer
             }
             var actions = Single(rule, "then");
             Only(actions, "function");
-            foreach (var function in actions.Elements())
+            var functions = actions.Elements().ToArray();
+            if (functions.Length is 0 or > 64) throw new ArgumentException("Each source rule requires 1-64 literal assignment actions.");
+            foreach (var function in functions)
             {
                 var field = Member(function, reference, true);
                 Only(field, "field", "fieldalias", "argument");
                 var argument = Single(field, "argument");
                 Only(argument, "constant");
-                converted.Assignments.Add(Value(field, Single(argument, "constant")));
+                var assignment = Value(field, Single(argument, "constant"));
+                var previous = converted.Assignments.FindIndex(item => item.Name == assignment.Name && item.Namespace == assignment.Namespace);
+                if (previous < 0) converted.Assignments.Add(assignment);
+                else
+                {
+                    if (converted.Assignments[previous].Type != assignment.Type)
+                        throw new ArgumentException("Repeated setters for one XML field require the same declared type.");
+                    converted.Assignments[previous] = assignment;
+                }
             }
             policy.Rules.Add(converted);
         }
@@ -172,7 +184,7 @@ public static class BizTalkRulePolicyAnalyzer
         catch (FormatException ex) { throw new ArgumentException("Invalid boolean literal.", ex); }
     }
 
-    private static int CountPotentialConflicts(XmlRulePolicy policy, CancellationToken cancellationToken)
+    internal static int CountPotentialConflicts(XmlRulePolicy policy, CancellationToken cancellationToken)
     {
         var rules = policy.Rules.Where(rule => rule.Active && rule.ConstantCondition).ToArray();
         var count = 0;

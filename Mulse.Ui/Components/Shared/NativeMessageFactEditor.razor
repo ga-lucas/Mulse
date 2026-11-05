@@ -15,10 +15,10 @@
             @foreach (var kind in AvailableKinds) { <option value="@kind">@kind</option> }
         </select>
     </label>
-    @if (Value.Kind == "Metadata")
+    @if (Metadata)
     {
         <label class="field-label">Exact metadata key <input class="mapping-input" @bind="Value.MetadataKey" @bind:after="Notify" /></label>
-        <p class="field-hint">Returns a String. Keys are case-sensitive and missing keys fail. Promoted BizTalk properties are not inferred from similarly named metadata.</p>
+        <p class="field-hint">Metadata returns String; MetadataInt32/MetadataBoolean parse XML lexical values into typed scalars. Writes require that exact scalar type. Keys are case-sensitive and missing keys fail. Imported context properties use {namespace}property keys proven by declared schemas, not similarly named body fields or metadata.</p>
     }
     else
     {
@@ -53,8 +53,9 @@
     [Parameter] public IReadOnlyList<string> MessageNames { get; set; } = [];
     [Parameter] public EventCallback Changed { get; set; }
     [Parameter] public bool Writable { get; set; }
-    private static readonly string[] Kinds = ["Metadata", "XmlText", "XmlCount", "XmlExists", "XmlString", "XmlInt32", "XmlBoolean"];
-    private IEnumerable<string> AvailableKinds => Writable ? Kinds.Where(kind => kind is "Metadata" or "XmlString" or "XmlInt32" or "XmlBoolean") : Kinds;
+    private static readonly string[] Kinds = ["Metadata", "XmlText", "XmlCount", "XmlExists", "XmlString", "XmlInt32", "XmlBoolean", "MetadataInt32", "MetadataBoolean"];
+    private IEnumerable<string> AvailableKinds => Writable ? Kinds.Where(kind => kind is "Metadata" or "MetadataInt32" or "MetadataBoolean" or "XmlString" or "XmlInt32" or "XmlBoolean") : Kinds;
+    private bool Metadata => Value.Kind is "Metadata" or "MetadataInt32" or "MetadataBoolean";
     private bool TypedScalar => Value.Kind is "XmlString" or "XmlInt32" or "XmlBoolean";
     private string _sample = "";
     private string? _sampleError;
@@ -65,7 +66,7 @@
     {
         if (args.Value is not string kind || !AvailableKinds.Contains(kind) || kind == Value.Kind) return;
         Value.Kind = kind; Value.MetadataKey = "";
-        if (kind == "Metadata" || TypedScalar && Value.Steps.Any(step => step.Attribute)) Value.Steps.Clear();
+        if (Metadata || TypedScalar && Value.Steps.Any(step => step.Attribute)) Value.Steps.Clear();
         ClearSample();
         await Notify();
     }

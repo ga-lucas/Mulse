@@ -25,7 +25,11 @@ public partial class Designer
         try
         {
             _bizTalkAnalysis = await ApiClient.AnalyzeBizTalkSolutionAsync(
-                new AnalyzeBizTalkSolutionRequestViewModel(_sourcePath, SplitPaths(_additionalBindingPaths), SplitPaths(_additionalSourcePaths), SplitPaths(_additionalRulePaths), _generateNativeBizTalkFlow),
+                new AnalyzeBizTalkSolutionRequestViewModel(_sourcePath, SplitPaths(_additionalBindingPaths), SplitPaths(_additionalSourcePaths), SplitPaths(_additionalRulePaths), _generateNativeBizTalkFlow,
+                    _generateNativeBizTalkFlow ? new Dictionary<string, string>(_nativePolicyVersions, StringComparer.Ordinal) : null,
+                    _generateNativeBizTalkFlow && !string.IsNullOrWhiteSpace(_nativeHostConfigurationPath) ? _nativeHostConfigurationPath : null,
+                    _generateNativeBizTalkFlow ? SplitPaths(_nativeConfigurationHelperPaths) : null,
+                    _generateNativeBizTalkFlow ? _nativeMapSettings["casesJson"] : null),
                 CancellationToken.None);
             _statusMessage = $"Loaded {_bizTalkAnalysis.BizTalkProjectCount} BizTalk project(s), {_bizTalkAnalysis.BindingFiles.Count} binding file(s), {_bizTalkAnalysis.RulePolicies.Count} rule policy version(s), and {_bizTalkAnalysis.FlowCandidates.Count} draft flow candidate(s).";
         }
@@ -43,7 +47,7 @@ public partial class Designer
     {
         try
         {
-            var request = new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths), SplitPaths(_additionalBindingPaths), SplitPaths(_additionalRulePaths), _generateNativeBizTalkFlow);
+            var request = CreateBizTalkImportRequest(candidate);
             var file = await ApiClient.DownloadBizTalkScaffoldedModulesAsync(request, CancellationToken.None);
             await TriggerBrowserDownloadAsync(file);
         }
@@ -57,7 +61,7 @@ public partial class Designer
     {
         try
         {
-            var request = new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths), SplitPaths(_additionalBindingPaths), SplitPaths(_additionalRulePaths), _generateNativeBizTalkFlow);
+            var request = CreateBizTalkImportRequest(candidate);
             await TriggerBrowserDownloadAsync(await ApiClient.DownloadBizTalkControlFlowAsync(request, CancellationToken.None));
         }
         catch (Exception exception)
@@ -70,7 +74,7 @@ public partial class Designer
     {
         try
         {
-            var request = new CreateImportedBizTalkFlowRequestViewModel(_sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths), SplitPaths(_additionalBindingPaths), SplitPaths(_additionalRulePaths), _generateNativeBizTalkFlow);
+            var request = CreateBizTalkImportRequest(candidate);
             var file = await ApiClient.DownloadBizTalkScaffoldedModuleAsync(module.ModuleId, request, CancellationToken.None);
             await TriggerBrowserDownloadAsync(file);
         }
@@ -78,6 +82,25 @@ public partial class Designer
         {
             _errorMessage = $"Unable to download scaffolded module '{module.FileName}': {exception.Message}";
         }
+    }
+
+    private CreateImportedBizTalkFlowRequestViewModel CreateBizTalkImportRequest(BizTalkFlowCandidateViewModel candidate) => new(
+        _sourcePath, candidate.SuggestedFlowId, SplitPaths(_additionalSourcePaths), SplitPaths(_additionalBindingPaths), SplitPaths(_additionalRulePaths), _generateNativeBizTalkFlow,
+        _generateNativeBizTalkFlow ? new Dictionary<string, string>(_nativePolicyVersions, StringComparer.Ordinal) : null,
+        _generateNativeBizTalkFlow && !string.IsNullOrWhiteSpace(_nativeHostConfigurationPath) ? _nativeHostConfigurationPath : null,
+        _generateNativeBizTalkFlow ? SplitPaths(_nativeConfigurationHelperPaths) : null,
+        _generateNativeBizTalkFlow ? _nativeMapSettings["casesJson"] : null);
+
+    private async Task SelectNativePolicyTarget(BizTalkRulePolicyViewModel policy)
+    {
+        _nativePolicyVersions[policy.Name] = $"{policy.MajorVersion}.{policy.MinorVersion}";
+        await AnalyzeBizTalkAsync();
+    }
+
+    private async Task ClearNativePolicyTargets()
+    {
+        _nativePolicyVersions.Clear();
+        await AnalyzeBizTalkAsync();
     }
 
     private async Task TriggerBrowserDownloadAsync(DownloadedFileViewModel file)
@@ -159,6 +182,10 @@ public partial class Designer
         _additionalSourcePaths = string.Empty;
         _additionalBindingPaths = string.Empty;
         _additionalRulePaths = string.Empty;
+        _nativeHostConfigurationPath = string.Empty;
+        _nativeConfigurationHelperPaths = string.Empty;
+        _nativePolicyVersions.Clear();
+        _nativeMapSettings["casesJson"] = "[]";
         _bizTalkAnalysis = null;
     }
 }

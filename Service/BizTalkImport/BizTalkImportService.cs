@@ -46,6 +46,23 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
         if (request.AdditionalRulePaths is null || request.AdditionalRulePaths.Count > 32
             || request.AdditionalRulePaths.Any(string.IsNullOrWhiteSpace))
             throw new ArgumentException("Supply at most 32 nonblank rule export file paths.");
+        if (request.NativePolicyVersions is { } targets && (targets.Count > 64 || targets.Count > 0 && !request.GenerateNativeFlow
+            || targets.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Key.Length > 256 || pair.Key != pair.Key.Trim()
+                || !Version.TryParse(pair.Value, out var version) || version.Build != -1 || version.Revision != -1 || version.ToString(2) != pair.Value)))
+            throw new ArgumentException("Native policy targets require native generation and at most 64 exact names with canonical major.minor versions.");
+        if (request.NativeConfigurationHelperPaths is null || request.NativeConfigurationHelperPaths.Count > 16
+            || request.NativeConfigurationHelperPaths.Any(path => string.IsNullOrWhiteSpace(path) || path.Length > 4096 || !Path.GetExtension(path).Equals(".cs", StringComparison.OrdinalIgnoreCase))
+            || request.NativeHostConfigurationPath is { } config && (string.IsNullOrWhiteSpace(config) || config.Length > 4096)
+            || (request.NativeHostConfigurationPath is not null) != (request.NativeConfigurationHelperPaths.Count > 0)
+            || request.NativeHostConfigurationPath is not null && !request.GenerateNativeFlow)
+            throw new ArgumentException("Native configuration snapshots require native generation, one host configuration path and 1-16 explicit helper .cs paths (at most 4096 characters each).");
+        var nativeConfiguration = request.NativeHostConfigurationPath is { } configurationPath
+            ? NativeSourceConfigurationCatalog.Read(configurationPath, request.NativeConfigurationHelperPaths) : null;
+        if (request.NativeMapChoicesJson is not null)
+        {
+            if (!request.GenerateNativeFlow) throw new ArgumentException("Native map choices require native generation.");
+            _ = Mulse.Modules.Mapping.RenderDispatchDefinition.Read(request.NativeMapChoicesJson, allowEmpty: true);
+        }
 
         var resolvedPath = Path.GetFullPath(request.SourcePath);
 
@@ -248,7 +265,7 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             .OrderBy(static project => project.Response.ProjectPath, StringComparer.OrdinalIgnoreCase)
             .SelectMany(project => CreateFlowCandidates(project, customAssemblies, bindingAnalyses, mapInventory, reservedFlowIds))
             .Select(candidate => AttachRuleEvidence(candidate, rulePolicies))
-            .Select(candidate => request.GenerateNativeFlow ? AttachNativeFlow(candidate, bindingAnalyses, rulePolicies, nativeSchemas!) : candidate)
+            .Select(candidate => request.GenerateNativeFlow ? AttachNativeFlow(candidate, bindingAnalyses, rulePolicies, nativeSchemas!, request.NativePolicyVersions, nativeConfiguration, request.NativeMapChoicesJson) : candidate)
             .ToArray();
 
         return Task.FromResult(new BizTalkSolutionAnalysisResponse(

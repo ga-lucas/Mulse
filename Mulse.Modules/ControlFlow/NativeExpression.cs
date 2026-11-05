@@ -7,7 +7,7 @@ namespace Mulse.Modules.ControlFlow;
 public enum NativeScalarType { String, Int32, Boolean, Null }
 
 [JsonConverter(typeof(JsonStringEnumConverter<NativeExpressionKind>))]
-public enum NativeExpressionKind { Literal, Variable, Not, And, Or, Equal, NotEqual, Less, LessOrEqual, Greater, GreaterOrEqual, Add, Subtract, Multiply, Divide, Remainder, Negate, MessageValue }
+public enum NativeExpressionKind { Literal, Variable, Not, And, Or, Equal, NotEqual, Less, LessOrEqual, Greater, GreaterOrEqual, Add, Subtract, Multiply, Divide, Remainder, Negate, MessageValue, InstanceId }
 
 public sealed record NativeScalar(NativeScalarType Type, string Value)
 {
@@ -34,6 +34,7 @@ public sealed class NativeExpression
     public string? Variable { get; set; }
     public List<NativeExpression> Operands { get; set; } = [];
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NativeMessageFact? Fact { get; set; }
+    [JsonIgnore] public bool RequiresInstance => Kind == NativeExpressionKind.InstanceId || Operands.Any(operand => operand.RequiresInstance);
 
     public static void Validate(NativeExpression expression)
     {
@@ -42,7 +43,7 @@ public sealed class NativeExpression
         {
             if (node is null || depth > 32 || !seen.Add(node) || seen.Count > 256 || !Enum.IsDefined(node.Kind) || node.Operands is null)
                 throw new ArgumentException("Native expressions require an acyclic tree of at most 256 values and 32 levels.");
-            var arity = node.Kind is NativeExpressionKind.Literal or NativeExpressionKind.Variable or NativeExpressionKind.MessageValue ? 0
+            var arity = node.Kind is NativeExpressionKind.Literal or NativeExpressionKind.Variable or NativeExpressionKind.MessageValue or NativeExpressionKind.InstanceId ? 0
                 : node.Kind is NativeExpressionKind.Not or NativeExpressionKind.Negate ? 1 : 2;
             if (node.Operands.Count != arity || (node.Kind == NativeExpressionKind.Literal) != (node.Literal is not null)
                 || (node.Kind == NativeExpressionKind.Variable) != (node.Variable is not null)
@@ -66,9 +67,14 @@ public sealed class NativeExpression
     public NativeScalar Evaluate(IReadOnlyDictionary<string, NativeScalar> variables) => Evaluate(variables, null);
 
     public NativeScalar Evaluate(IReadOnlyDictionary<string, NativeScalar> variables, Func<NativeMessageFact, NativeScalar>? facts)
+        => Evaluate(variables, facts, null);
+
+    internal NativeScalar Evaluate(IReadOnlyDictionary<string, NativeScalar> variables, Func<NativeMessageFact, NativeScalar>? facts, string? instanceId)
     {
         object? Run(NativeExpression node)
         {
+            if (node.Kind == NativeExpressionKind.InstanceId) return Guid.TryParseExact(instanceId, "N", out var identity)
+                ? identity.ToString("D") : throw new InvalidOperationException("InstanceId requires a persisted native durable instance identity.");
             if (node.Kind == NativeExpressionKind.MessageValue) return (facts ?? throw new InvalidOperationException("Native message facts require an explicit message resolver."))(node.Fact!).Read();
             if (node.Kind == NativeExpressionKind.Literal) return node.Literal!.Read();
             if (node.Kind == NativeExpressionKind.Variable) return variables.TryGetValue(node.Variable!, out var scalar)

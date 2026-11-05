@@ -33,6 +33,10 @@
     {
         <NativeMessageFactEditor Value="fact" MessageNames="MessageNames" Changed="Changed" />
     }
+    @if (Value.Kind == "InstanceId")
+    {
+        <p class="field-hint">Stable native durable instance GUID, preserved across waits and restart. This is not a BizTalk instance ID or a new ID per evaluation. Durable execution is required.</p>
+    }
     @for (var index = 0; index < Value.Operands.Count; index++)
     {
         <NativeExpressionEditor Value="Value.Operands[index]" Variables="Variables" MessageNames="MessageNames" Changed="Changed" Depth="@(Depth + 1)" />
@@ -46,8 +50,8 @@
     [Parameter] public IReadOnlyList<string> MessageNames { get; set; } = [];
     [Parameter] public EventCallback Changed { get; set; }
     [Parameter] public int Depth { get; set; }
-    private static readonly string[] AllKinds = ["Literal", "Variable", "Not", "And", "Or", "Equal", "NotEqual", "Less", "LessOrEqual", "Greater", "GreaterOrEqual", "Add", "Subtract", "Multiply", "Divide", "Remainder", "Negate", "MessageValue"];
-    private IEnumerable<string> Kinds => Depth >= 32 ? AllKinds.Where(kind => kind is "Literal" or "Variable" or "MessageValue") : AllKinds;
+    private static readonly string[] AllKinds = ["Literal", "Variable", "Not", "And", "Or", "Equal", "NotEqual", "Less", "LessOrEqual", "Greater", "GreaterOrEqual", "Add", "Subtract", "Multiply", "Divide", "Remainder", "Negate", "MessageValue", "InstanceId"];
+    private IEnumerable<string> Kinds => Depth >= 32 ? AllKinds.Where(kind => kind is "Literal" or "Variable" or "MessageValue" or "InstanceId") : AllKinds;
     private static readonly string[] Types = ["String", "Int32", "Boolean", "Null"];
     private Task Notify() => Changed.InvokeAsync();
     private async Task ChangeKind(ChangeEventArgs args)
@@ -55,7 +59,7 @@
         if (args.Value is not string kind || !Kinds.Contains(kind) || kind == Value.Kind) return;
         Value.Kind = kind; Value.Literal = kind == "Literal" ? new() : null; Value.Variable = kind == "Variable" ? "" : null;
         Value.Fact = kind == "MessageValue" ? new() : null;
-        var arity = kind is "Literal" or "Variable" or "MessageValue" ? 0 : kind is "Not" or "Negate" ? 1 : 2;
+        var arity = kind is "Literal" or "Variable" or "MessageValue" or "InstanceId" ? 0 : kind is "Not" or "Negate" ? 1 : 2;
         Value.Operands = Enumerable.Range(0, arity).Select(_ => new NativeExpressionViewModel()).ToList();
         await Notify();
     }

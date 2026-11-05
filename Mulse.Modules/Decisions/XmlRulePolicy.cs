@@ -90,6 +90,9 @@ public static class XmlRuleRuntime
     }
 
     public static XmlRuleResult Evaluate(XmlRulePolicy policy, string xml, CancellationToken cancellationToken = default)
+        => Evaluate(policy, xml, cancellationToken, requireMatch: true);
+
+    internal static XmlRuleResult Evaluate(XmlRulePolicy policy, string xml, CancellationToken cancellationToken, bool requireMatch)
     {
         Validate(policy);
         if (xml is null || xml.Length > MaxXmlCharacters)
@@ -124,7 +127,7 @@ public static class XmlRuleRuntime
                 assignments[Key(field)] = (value, field.Type);
             }
         }
-        if (matched.Count == 0)
+        if (matched.Count == 0 && requireMatch)
             throw new ArgumentException("No XML rule matched the supplied facts. Configure a matching rule explicitly.");
         foreach (var (key, assignment) in assignments)
         {

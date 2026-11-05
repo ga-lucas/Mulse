@@ -24,6 +24,7 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
         builder.AddRender<XmlRenderModule>();
         builder.AddRender<RenderDispatchModule>();
         builder.AddRender<RenderPipelineModule>();
+        builder.AddRender<XmlPartsRenderModule>();
         builder.AddDeliver<LoggingDeliverModule>();
         builder.AddDeliver<FileSystemDeliverModule>();
         builder.AddDeliver<HttpDeliverModule>();

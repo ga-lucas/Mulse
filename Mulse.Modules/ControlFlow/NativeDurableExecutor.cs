@@ -139,7 +139,7 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
         NativeScalar Fact(NativeMessageFact fact) => fact.Read(fact.MessageName.Length == 0 ? batch : Message(fact.MessageName));
         bool Matches(NativeFlowNode node)
         {
-            if (node.Expression is not null) return NativeExpression.Boolean(node.Expression.Evaluate(state.Variables, Fact).Read());
+            if (node.Expression is not null) return NativeExpression.Boolean(node.Expression.Evaluate(state.Variables, Fact, instance).Read());
             if (batch.Count != 1) throw new InvalidOperationException($"Native condition '{node.Id}' requires exactly one payload.");
             return DecisionRuntime.MatchesAll(batch.Payloads[0], node.Conditions, node.Id);
         }
@@ -244,39 +244,64 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
                 }
                 else
                 {
-                    if (node.Kind is not (NativeFlowNodeKind.DeclareVariable or NativeFlowNodeKind.SetVariable or NativeFlowNodeKind.CreateXmlMessage or NativeFlowNodeKind.SetMessageValue or NativeFlowNodeKind.SaveMessage or NativeFlowNodeKind.UseMessage or NativeFlowNodeKind.CreateXmlRoot or NativeFlowNodeKind.AppendXmlMessage)) Accept();
+                    if (node.Kind is not (NativeFlowNodeKind.DeclareVariable or NativeFlowNodeKind.SetVariable or NativeFlowNodeKind.CreateXmlMessage or NativeFlowNodeKind.SetMessageValue or NativeFlowNodeKind.SaveMessage or NativeFlowNodeKind.UseMessage or NativeFlowNodeKind.CreateXmlRoot or NativeFlowNodeKind.AppendXmlMessage or NativeFlowNodeKind.ApplyXmlRules)) Accept();
                     switch (node.Kind)
                     {
                         case NativeFlowNodeKind.DeclareVariable:
-                        case NativeFlowNodeKind.SetVariable: NativeVariables.Apply(node, state.Variables, state.VariableTypes, Fact); Pop(); break;
+                        case NativeFlowNodeKind.SetVariable: NativeVariables.Apply(node, state.Variables, state.VariableTypes, Fact, instance); Pop(); break;
                         case NativeFlowNodeKind.CreateXmlMessage:
-                            state.Messages[node.MessageName] = Capture(NativeMessageOperations.CreateXml(node.MessageName, node.Expression!.Evaluate(state.Variables, Fact))); Pop(); break;
+                            state.Messages[node.MessageName] = Capture(NativeMessageOperations.CreateXml(node.MessageName, node.Expression!.Evaluate(state.Variables, Fact, instance))); Pop(); break;
                         case NativeFlowNodeKind.CreateXmlRoot:
-                            state.Messages[node.MessageName] = Capture(NativeMessageOperations.CreateRoot(node.MessageName, node.Expression!.Evaluate(state.Variables, Fact), node.NamespaceExpression!.Evaluate(state.Variables, Fact))); Pop(); break;
+                            state.Messages[node.MessageName] = Capture(NativeMessageOperations.CreateRoot(node.MessageName, node.Expression!.Evaluate(state.Variables, Fact, instance), node.NamespaceExpression!.Evaluate(state.Variables, Fact, instance))); Pop(); break;
                         case NativeFlowNodeKind.AppendXmlMessage:
                             state.Messages[node.MessageName] = Capture(NativeMessageOperations.AppendXml(Message(node.MessageName), Message(node.SourceMessage!))); Pop(); break;
                         case NativeFlowNodeKind.SetMessageValue:
                             var target = node.Target!;
-                            state.Messages[target.MessageName] = Capture(NativeMessageOperations.SetValue(target, node.Expression!.Evaluate(state.Variables, Fact), Message(target.MessageName))); Pop(); break;
+                            state.Messages[target.MessageName] = Capture(NativeMessageOperations.SetValue(target, node.Expression!.Evaluate(state.Variables, Fact, instance), Message(target.MessageName))); Pop(); break;
+                        case NativeFlowNodeKind.ApplyXmlRules:
+                            state.Messages[node.MessageName] = Capture(NativeMessageOperations.ApplyRules(Message(node.MessageName), node.PolicyJson!, cancellationToken)); Pop(); break;
                         case NativeFlowNodeKind.SaveMessage: state.Messages[node.MessageName] = Capture(batch); Pop(); break;
                         case NativeFlowNodeKind.UseMessage: batch = Message(node.MessageName); Pop(); break;
                         case NativeFlowNodeKind.Reply: context.CaptureResponse(Message(node.MessageName)); Pop(); break;
                         case NativeFlowNodeKind.Augment:
                         case NativeFlowNodeKind.Render:
                         case NativeFlowNodeKind.Deliver:
-                            var effectBatch = node.Kind == NativeFlowNodeKind.Deliver && node.MessageName.Length != 0 ? Message(node.MessageName) : batch;
+                            var effectBatch = node.InputMessages is { } inputs
+                                ? new IntegrationBatch(inputs.Select(name =>
+                                {
+                                    var input = Message(name);
+                                    if (input.Count != 1) throw new InvalidOperationException($"Native renderer input '{name}' requires exactly one payload.");
+                                    return input.Payloads[0];
+                                }).ToArray())
+                                : node.Kind == NativeFlowNodeKind.Deliver && node.MessageName.Length != 0 ? Message(node.MessageName) : batch;
+                            var rendererModule = node.Module;
+                            IReadOnlyDictionary<string, string> rendererSettings = node.Settings;
+                            if (node.SelectionExpression is { } selection)
+                            {
+                                if (selection.Evaluate(state.Variables, Fact, instance).Read() is not string identity)
+                                    throw new InvalidOperationException("Native renderer selection requires a String identity.");
+                                var choice = Mulse.Modules.Mapping.RenderDispatchDefinition.Read(node.Settings["casesJson"])
+                                    .SingleOrDefault(choice => choice.Value == identity)
+                                    ?? throw new InvalidOperationException("Native renderer selected an unconfigured identity; no CLR type is loaded.");
+                                rendererModule = choice.Module; rendererSettings = choice.Settings;
+                            }
                             state.EffectNodeId = node.Id; state.EffectKind = node.Kind; state.EffectModule = node.Module;
                             await Save(cancellationToken).ConfigureAwait(false);
                             var result = node.Kind switch
                             {
                                 NativeFlowNodeKind.Augment => await augments.AugmentAsync(node.Module, context, batch, node.Settings, cancellationToken).ConfigureAwait(false),
-                                NativeFlowNodeKind.Render => await renderers.RenderAsync(node.Module, context, batch, node.Settings, cancellationToken).ConfigureAwait(false),
+                                NativeFlowNodeKind.Render => await renderers.RenderAsync(rendererModule, context, effectBatch, rendererSettings, cancellationToken).ConfigureAwait(false),
                                 _ => await deliveries!.DeliverAsync(node.Module, context, effectBatch, node.Settings, cancellationToken).ConfigureAwait(false)
                             };
                             if (context.Disposition != FlowExecutionDisposition.Continue || context.DeliveryFailures.Count != 0)
                                 throw new InvalidOperationException($"Native effect '{node.Id}' suspended or reported delivery failure; its intent requires reconciliation.");
                             if (node.Kind == NativeFlowNodeKind.Deliver)
                             { if (result.Count != 0) context.CaptureResponse(result); }
+                            else if (node.InputMessages is not null)
+                            {
+                                if (result.Count != 1) throw new InvalidOperationException("Native named renderer output requires exactly one payload.");
+                                state.Messages[node.MessageName] = Capture(result);
+                            }
                             else batch = result;
                             state.EffectNodeId = null; state.EffectKind = null; state.EffectModule = null; Pop();
                             // Once an effect has returned, cancellation must not prevent recording its outcome.

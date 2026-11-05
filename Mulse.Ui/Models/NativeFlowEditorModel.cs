@@ -34,6 +34,9 @@ public sealed class NativeFlowNodeViewModel
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NativeMessageFactViewModel? Target { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NativeExpressionViewModel? NamespaceExpression { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? SourceMessage { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? PolicyJson { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public List<string>? InputMessages { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NativeExpressionViewModel? SelectionExpression { get; set; }
 }
 
 public sealed class NativeExpressionViewModel

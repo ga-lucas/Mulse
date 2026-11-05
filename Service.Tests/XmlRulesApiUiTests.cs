@@ -62,10 +62,11 @@ public sealed class XmlRulesApiUiTests
             Assert.Empty(importer.Requests);
             using var invalid = await http.PostAsJsonAsync("/api/biztalk-import/rules/preview", new XmlRulePreviewRequestViewModel(policy, "<!DOCTYPE x SYSTEM 'file:///not-read'><x/>"));
             Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
-            var analysis = await client.AnalyzeBizTalkSolutionAsync(new("source", ["binding-export.xml"], ["dependencies"], ["rules.xml"]), default);
+            var targets = new Dictionary<string, string> { ["Shared"] = "1.52" };
+            var analysis = await client.AnalyzeBizTalkSolutionAsync(new("source", ["binding-export.xml"], ["dependencies"], ["rules.xml"], true, targets, "host.config", ["Settings.cs"]), default);
             Assert.Single(analysis.RulePolicies);
             Assert.Single(analysis.FlowCandidates);
-            var request = new CreateImportedBizTalkFlowRequestViewModel("source", "example", ["dependencies"], ["binding-export.xml"], ["rules.xml"]);
+            var request = new CreateImportedBizTalkFlowRequestViewModel("source", "example", ["dependencies"], ["binding-export.xml"], ["rules.xml"], true, targets, "host.config", ["Settings.cs"]);
             await client.DownloadBizTalkScaffoldedModulesAsync(request, default);
             await client.DownloadBizTalkScaffoldedModuleAsync("scaffold", request, default);
             await client.ImportBizTalkDraftFlowAsync(request, default);
@@ -75,6 +76,10 @@ public sealed class XmlRulesApiUiTests
                 Assert.Equal(new[] { "dependencies" }, captured.AdditionalSourcePaths);
                 Assert.Equal(new[] { "binding-export.xml" }, captured.AdditionalBindingPaths);
                 Assert.Equal(new[] { "rules.xml" }, captured.AdditionalRulePaths);
+                Assert.True(captured.GenerateNativeFlow);
+                Assert.Equal("1.52", Assert.Single(captured.NativePolicyVersions!).Value);
+                Assert.Equal("host.config", captured.NativeHostConfigurationPath);
+                Assert.Equal(new[] { "Settings.cs" }, captured.NativeConfigurationHelperPaths);
             });
             Assert.NotNull(flows.Created?.Migration);
             Assert.False(flows.Created!.Enabled);

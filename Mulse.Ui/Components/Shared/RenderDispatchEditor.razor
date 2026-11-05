@@ -3,9 +3,14 @@
 
 <fieldset>
     <legend>Dynamic map / renderer choices</legend>
+    <p class="field-hint">Map implementations are configurable native renderers: choose a visual XML mapping, an ordered renderer pipeline, or a loaded plugin. BizTalk development tools and reference input/output files are not required to configure these choices. Reference fixtures are optional parity evidence; configuring a replacement does not verify equivalence or enable an imported flow.</p>
     @if (OdxMode)
     {
         <p>ODX transform statements select an exact configured source map identity. Named input messages are passed in source argument order. Unknown identities fail; no CLR type is loaded. Choices may be empty when the program has no dynamic transforms.</p>
+    }
+    else if (NativeSelectionMode)
+    {
+        <p>Exact source map identities select native renderers. Each selected renderer receives all named arguments once, in order. Unknown identities fail before invocation; no CLR type is loaded. Choices may be left empty during import review, keeping source transforms blocked.</p>
     }
     else
     {
@@ -71,6 +76,7 @@
     [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
     [Parameter] public IReadOnlyList<string> References { get; set; } = [];
     [Parameter] public bool OdxMode { get; set; }
+    [Parameter] public bool NativeSelectionMode { get; set; }
     [Parameter] public EventCallback Changed { get; set; }
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
     private static readonly IReadOnlyList<ModuleSettingOptionViewModel> BatchModes = [new("PerPayload", "Each payload separately"), new("PerSelection", "Group current batch by selection")];
@@ -99,7 +105,7 @@
         Settings["casesJson"] = _loaded;
         var values = new HashSet<string>(StringComparer.Ordinal);
         _error = _loaded.Length > 262144 ? "Choices JSON exceeds 262144 characters." :
-            (!OdxMode && _choices.Count == 0) || _choices.Any(choice => string.IsNullOrWhiteSpace(choice.Value) || choice.Value.Length > 2048 || !values.Add(choice.Value)
+            (!OdxMode && !NativeSelectionMode && _choices.Count == 0) || _choices.Any(choice => string.IsNullOrWhiteSpace(choice.Value) || choice.Value.Length > 2048 || !values.Add(choice.Value)
                 || string.IsNullOrWhiteSpace(choice.Module) || choice.Module.Length > 256 || choice.Module != choice.Module.Trim()
                 || choice.Module.Equals("render-dispatch", StringComparison.OrdinalIgnoreCase)
                 || choice.Settings.Count > 128 || choice.Settings.Any(setting => string.IsNullOrWhiteSpace(setting.Key)))

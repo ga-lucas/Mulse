@@ -31,6 +31,14 @@ public sealed record AnalyzeBizTalkSolutionRequest
     /// <summary>Explicit BRL XML policy/vocabulary exports. All policy versions are retained; none is silently selected as deployed.</summary>
     public IReadOnlyList<string> AdditionalRulePaths { get; init; } = [];
 
+    /// <summary>Explicit native test targets by exact policy name and major.minor version. No latest/deployed version is inferred.</summary>
+    public IReadOnlyDictionary<string, string>? NativePolicyVersions { get; init; }
+
+    /// <summary>Explicit host configuration test snapshot. Only selected pure getter keys are pinned; no helper assembly or external configuration is loaded.</summary>
+    public string? NativeHostConfigurationPath { get; init; }
+    public IReadOnlyList<string> NativeConfigurationHelperPaths { get; init; } = [];
+    public string? NativeMapChoicesJson { get; init; }
+
     /// <summary>Generate a native control-flow review draft rather than heuristic augment proposals. Unsupported semantics remain explicit blockers.</summary>
     public bool GenerateNativeFlow { get; init; }
 }

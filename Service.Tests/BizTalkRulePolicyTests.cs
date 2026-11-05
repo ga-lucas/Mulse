@@ -138,6 +138,34 @@ public sealed class BizTalkRulePolicyTests : IDisposable
         Assert.Contains(result.Warnings, warning => warning.Contains("Select versions explicitly", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void RepeatedLiteralSettersKeepFinalSourceValueWithoutIgnoringTypesOrRawActionLimit(bool mixedTypes, bool tooMany)
+    {
+        var source = Policy(1, 0);
+        var actions = source.Descendants(Brl + "then").First();
+        var final = new XElement(actions.Elements().Single());
+        if (mixedTypes)
+        {
+            final.Descendants(Brl + "xmldocumentmember").Single().SetAttributeValue("type", "boolean");
+            final.Descendants(Brl + "constant").Single().ReplaceNodes(new XElement(Brl + "boolean", "true"));
+        }
+        else final.Descendants(Brl + "string").Single().Value = "Map.Final";
+        actions.Add(final);
+        if (tooMany) actions.Add(Enumerable.Range(0, 63).Select(_ => new XElement(final)));
+        var version = Assert.Single(Analyze(Export(source)));
+        if (mixedTypes || tooMany) Assert.Null(version.ProposedPolicyJson);
+        else
+        {
+            var policy = XmlRuleRuntime.ReadPolicy(version.ProposedPolicyJson!);
+            Assert.Equal("Map.Final", Assert.Single(policy.Rules[0].Assignments).Value);
+            Assert.Equal("Map.Final", XDocument.Parse(XmlRuleRuntime.Evaluate(policy, Facts("001", "true")).OutputXml).Root!.Element("MapName")!.Value);
+            Assert.Contains(version.Diagnostics, issue => issue.Contains("final source action's value", StringComparison.Ordinal));
+        }
+    }
+
     [Fact]
     public void LiteralComparisons_AreFoldedWithoutChangingSourceActiveFlags()
     {
@@ -255,11 +283,11 @@ public sealed class BizTalkRulePolicyTests : IDisposable
         File.WriteAllText(path, text);
         return path;
     }
-    private static string Facts(string group, string batch) => new XElement(XName.Get("IntegrationRules", "urn:test"),
+    internal static string Facts(string group, string batch) => new XElement(XName.Get("IntegrationRules", "urn:test"),
         new XElement("GroupID", group), new XElement("IsBatch", batch), new XElement("MapName", "")).ToString();
-    private static string Export(params XElement[] policies) => new XElement(Brl + "brl", policies).ToString();
+    internal static string Export(params XElement[] policies) => new XElement(Brl + "brl", policies).ToString();
     private static string Field(string name) => $"*[local-name()='{name}' and namespace-uri()='']";
-    private static XElement Policy(int major, int minor) => new(Brl + "ruleset", new XAttribute("name", "Any Policy"),
+    internal static XElement Policy(int major, int minor) => new(Brl + "ruleset", new XAttribute("name", "Any Policy"),
         new XElement(Brl + "bindings", new XElement(Brl + "xmldocument", new XAttribute("ref", "xml_1"), new XAttribute("doctype", "Test.IntegrationRules"),
             new XElement(Brl + "selector", "/*[local-name()='IntegrationRules' and namespace-uri()='urn:test']"), new XElement(Brl + "schema", "not-loaded.xsd"))),
         new XElement(Brl + "configuration"), Rule("Client A", "001", "Map.A"), Rule("Client B", "002", "Map.B"),

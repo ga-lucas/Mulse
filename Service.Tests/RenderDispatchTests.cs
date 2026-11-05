@@ -147,6 +147,8 @@ public sealed class RenderDispatchTests
             Assert.Contains("Indented", rendered.ToHtmlString());
             Assert.Contains("Renderer input grouping", rendered.ToHtmlString());
             Assert.Contains("Group current batch by selection", rendered.ToHtmlString());
+            Assert.Contains("BizTalk development tools and reference input/output files are not required", rendered.ToHtmlString());
+            Assert.Contains("Reference fixtures are optional parity evidence", rendered.ToHtmlString());
         });
         const string unknown = "[{\"future\":true}]";
         Invoke(editor, "ReplaceJson", new ChangeEventArgs { Value = unknown });

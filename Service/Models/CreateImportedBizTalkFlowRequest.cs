@@ -20,6 +20,10 @@ public sealed record CreateImportedBizTalkFlowRequest
     public IReadOnlyList<string> AdditionalBindingPaths { get; init; } = [];
     public IReadOnlyList<string> AdditionalRulePaths { get; init; } = [];
     public bool GenerateNativeFlow { get; init; }
+    public IReadOnlyDictionary<string, string>? NativePolicyVersions { get; init; }
+    public string? NativeHostConfigurationPath { get; init; }
+    public IReadOnlyList<string> NativeConfigurationHelperPaths { get; init; } = [];
+    public string? NativeMapChoicesJson { get; init; }
 
     /// <summary>The suggested flow id of the generated draft flow to import.</summary>
     [Required]

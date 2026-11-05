@@ -222,11 +222,15 @@ public sealed class BillingPluginTests : IDisposable
             Assert.Equal(expanded, result.Payloads.Single().Metadata["expanded"]);
             Assert.Empty(XDocument.Parse(result.Payloads.Single().GetText()).Root!.Name.NamespaceName);
             Assert.Equal("Completed", Assert.Single(await State().GetAllAsync("billing", default)).Native!.State.Status);
+            var projected = await augments.AugmentAsync("billing-field-augment", Context(), Input($"<b:Billing xmlns:b='{BillingFieldAugmentModule.BillingNamespace}'><ConfigurationInfo><IsBatch>1</IsBatch></ConfigurationInfo></b:Billing>"),
+                new Dictionary<string, string> { ["field"] = "IsBatch", ["outputIdentity"] = "SourceProperty" }, default);
+            Assert.True((bool)new NativeMessageFact { Kind = NativeMessageFactKind.MetadataBoolean, MetadataKey = "{http://Shs.SpaceTrax2.Interfaces.Core.Schemas.Properties.CoreProperties}IsBatch" }.Read(projected).Read()!);
             await store.UpsertFlowAsync(new() { Id = "billing-helper-test", Enabled = false, Augments = [step] }, default);
             await Assert.ThrowsAsync<InvalidOperationException>(() => catalog.UpsertManagedPackageAsync(new() { Id = "Mulse.Billing", AssemblyPath = assembly, Enabled = false }, default));
             var moduleViews = catalog.GetAll().Where(entry => entry.PackageId == "Mulse.Billing").Select(entry => View(entry.Descriptor)).ToArray();
             var html = await Render<NativeFlowEditor>(new() { ["Value"] = step.Settings["flowJson"], ["Modules"] = moduleViews });
             Assert.Contains("Filename time zone", html); Assert.Contains("CommonBilling field", html); Assert.Contains("TargetLocation", html);
+            Assert.Contains("Declared Billing context property", html); Assert.Contains("SourceProperty", html);
             Assert.DoesNotContain("Original JSON is preserved", html);
             var descriptor = View(new BillingFilenameTransformModule().Descriptor);
             var fields = await Render<ModuleSettingsFields>(new() { ["Descriptor"] = descriptor, ["Settings"] = EnvironmentSettings() });

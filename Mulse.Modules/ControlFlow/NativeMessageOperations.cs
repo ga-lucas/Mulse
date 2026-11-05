@@ -1,5 +1,6 @@
 using System.Xml;
 using System.Xml.Linq;
+using Mulse.Modules.Decisions;
 using Mulse.Modules.Mapping;
 
 namespace Mulse.Modules.ControlFlow;
@@ -40,25 +41,38 @@ internal static class NativeMessageOperations
         return new([payload with { Content = BinaryData.FromString(output) }]);
     }
 
+    public static IntegrationBatch ApplyRules(IntegrationBatch message, string policyJson, CancellationToken cancellationToken)
+    {
+        if (message.Count != 1) throw new InvalidOperationException("ApplyXmlRules requires exactly one named XML fact payload.");
+        var payload = message.Payloads[0];
+        var original = XmlMappingSchemas.ReadXml(payload.GetText(), preserveWhitespace: true);
+        var result = XmlRuleRuntime.Evaluate(XmlRuleRuntime.ReadPolicy(policyJson), payload.GetText(), cancellationToken, requireMatch: false);
+        if (result.MatchedRules.Count == 0) return message;
+        var document = XmlMappingSchemas.ReadXml(result.OutputXml, preserveWhitespace: true);
+        document.Declaration = original.Declaration;
+        var output = Serialize(document);
+        _ = XmlMappingSchemas.ReadXml(output, preserveWhitespace: true);
+        return new([payload with { Content = BinaryData.FromString(output) }]);
+    }
+
     public static IntegrationBatch SetValue(NativeMessageFact target, NativeScalar value, IntegrationBatch message)
     {
         target.Validate();
         if (message.Count != 1) throw new InvalidOperationException("SetMessageValue requires one named payload.");
         var payload = message.Payloads[0];
         var scalar = value.Read();
-        if (target.Kind == NativeMessageFactKind.Metadata)
-        {
-            if (scalar is not string text) throw new InvalidOperationException("Native metadata assignment requires a String; no scalar coercion is performed.");
-            var metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.Ordinal) { [target.MetadataKey] = text };
-            return new([payload with { Metadata = metadata }]);
-        }
         var formatted = (target.Kind, scalar) switch
         {
-            (NativeMessageFactKind.XmlString, string text) => text,
-            (NativeMessageFactKind.XmlInt32, int number) => XmlConvert.ToString(number),
-            (NativeMessageFactKind.XmlBoolean, bool boolean) => XmlConvert.ToString(boolean),
-            _ => throw new InvalidOperationException("Native XML assignment requires a value matching its explicit scalar type; null/coercion is unsupported.")
+            (NativeMessageFactKind.Metadata or NativeMessageFactKind.XmlString, string text) => text,
+            (NativeMessageFactKind.MetadataInt32 or NativeMessageFactKind.XmlInt32, int number) => XmlConvert.ToString(number),
+            (NativeMessageFactKind.MetadataBoolean or NativeMessageFactKind.XmlBoolean, bool boolean) => XmlConvert.ToString(boolean),
+            _ => throw new InvalidOperationException("Native assignment requires a value matching its explicit scalar type; null/coercion is unsupported.")
         };
+        if (target.IsMetadata)
+        {
+            var metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.Ordinal) { [target.MetadataKey] = formatted };
+            return new([payload with { Metadata = metadata }]);
+        }
         var document = XmlMappingSchemas.ReadXml(payload.GetText(), preserveWhitespace: true);
         target.ScalarElement(document).Value = formatted;
         var output = Serialize(document);

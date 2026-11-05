@@ -2,6 +2,7 @@ using System.Xml;
 using System.Xml.Linq;
 using System.Xml.Schema;
 using Mulse.Modules.ControlFlow;
+using Mulse.Modules.Decisions;
 using Mulse.Modules.Mapping;
 using Mulse.Modules.Orchestration;
 
@@ -94,6 +95,18 @@ internal sealed class NativeSourceMessageCatalog
         var message = member.Split('.')[0];
         throw new NotSupportedException(_failures.GetValueOrDefault(member, _failures.GetValueOrDefault(message,
             "Source member has no exact distinguished schema-field declaration; ordinary XML members and context properties are not inferred.")));
+    }
+
+    public void ValidatePolicyMessage(string message, XmlRulePolicy policy)
+    {
+        foreach (var field in policy.Rules.SelectMany(rule => rule.Conditions.Concat(rule.Assignments)))
+        {
+            var fact = Resolve(message + "." + field.Name);
+            var expected = field.Type == "boolean" ? NativeMessageFactKind.XmlBoolean : NativeMessageFactKind.XmlString;
+            if (fact.Kind != expected || fact.Steps.Count != 2 || fact.Steps[0].Name != policy.RootName || fact.Steps[0].Namespace != policy.RootNamespace
+                || fact.Steps[1].Name != field.Name || fact.Steps[1].Namespace != field.Namespace || fact.Steps.Any(step => step.Attribute))
+                throw new NotSupportedException("Policy fields require exact direct-child distinguished schema identities and matching scalar types.");
+        }
     }
 
     private static NativeMessageFactKind ScalarKind(XmlSchemaElement element)
