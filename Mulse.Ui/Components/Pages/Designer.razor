@@ -441,6 +441,17 @@
             <p class="canvas-placeholder" role="status">Analyzing sample files...</p>
         }
 
+        <div class="canvas-connection-help">
+            @if (_connectionFromId is not null)
+            {
+                <span role="status">Choose an input handle to connect.</span>
+                <button type="button" class="secondary-button" @onclick="() => _connectionFromId = null">Cancel connection</button>
+            }
+            else
+            {
+                <span>Connect sources: click output then input, or drag between the handles. Select a node for all settings.</span>
+            }
+        </div>
         <div class="zoom-controls" role="group" aria-label="Canvas zoom">
             <button class="secondary-button" @onclick="ZoomOutAsync" title="Zoom out" aria-label="Zoom out">−</button>
             <span class="zoom-label">@ZoomPercentLabel</span>
@@ -448,7 +459,7 @@
             <button class="secondary-button" @onclick="FitView" title="Reset to fit">Fit</button>
         </div>
 
-        <svg @ref="_canvasElement" class="flow-canvas" width="100%" height="100%" viewBox="@F(_viewX) @F(_viewY) @F(_viewW) @F(_viewH)" @onclick="() => _selectedNodeId = null">
+        <svg @ref="_canvasElement" class="flow-canvas" width="100%" height="100%" viewBox="@F(_viewX) @F(_viewY) @F(_viewW) @F(_viewH)" @onclick="() => _selectedNodeId = null" @onkeydown="HandleCanvasKey">
             <defs>
                 <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" class="edge-arrow" />
@@ -463,10 +474,12 @@
                 var bounds = LaneBounds(parse);
                 <g class="source-lane" @key="parse" data-lane-members="@string.Join(" ", LaneMembers(parse).Select(member => member.Id))">
                     <rect class="source-lane-body" x="@F(bounds.X)" y="@F(bounds.Y)" width="@F(bounds.Width)" height="@F(bounds.Height)" rx="18" ry="18" />
-                    <rect class="source-lane-handle" x="@F(bounds.X)" y="@F(bounds.Y)" width="@F(bounds.Width)" height="36">
+                    <rect class="source-lane-handle" x="@F(bounds.X + 8)" y="@F(bounds.Y + 6)" width="@F(bounds.Width - 16)" height="22" rx="8" ry="8">
                         <title>Drag this header to move the source group, including shared fetch nodes. Other groups containing shared nodes resize to match.</title>
                     </rect>
-                    <text class="source-lane-label" x="@F(bounds.X + 18)" y="@F(bounds.Y + 24)">@LaneLabel(parse)</text>
+                    <foreignObject class="source-lane-label" x="@F(bounds.X + 18)" y="@F(bounds.Y + 6)" width="@F(bounds.Width - 36)" height="22">
+                        <div class="source-lane-caption" title="@LaneLabel(parse)">@LaneLabel(parse)</div>
+                    </foreignObject>
                 </g>
             }
 
@@ -493,16 +506,29 @@
                 <g @key="node.Id"
                    class="flow-node stage-@node.Stage.ToString().ToLowerInvariant() @(string.Equals(node.Id, _selectedNodeId, StringComparison.Ordinal) ? "selected" : null)"
                    data-node-id="@node.Id"
+                   tabindex="0" role="group" aria-label="@($"{NodeHeading(node)}: {NodeTitle(node)}. Press Enter to edit properties.")"
                    transform="translate(@F(node.X), @F(node.Y))"
+                   @onkeydown="args => SelectNodeByKey(node, args)"
                    @onclick="() => SelectNode(node)" @onclick:stopPropagation="true">
                     <rect class="node-body" x="0" y="0" width="@F(NodeWidth)" height="@F(NodeHeight)" rx="14" ry="14" />
                     <text class="node-stage" x="16" y="26">@Truncate(NodeHeading(node), 18)</text>
                     <text class="node-title" x="16" y="52">@Truncate(NodeTitle(node), 26)</text>
                     <text class="node-subtitle" x="16" y="74">@NodeSubtitle(node)</text>
+                    @if (node.Stage is NodeStage.Fetch or NodeStage.Parse)
+                    {
+                        <foreignObject x="-14" y="32" width="28" height="32">
+                            <button type="button" class="node-port input-port" aria-label="@($"Connect to input of {NodeHeading(node)}")" title="Connect selected output here, or drop an output handle here"
+                                    @onclick="() => CompleteConnection(node)" @onclick:stopPropagation>&#8594;</button>
+                        </foreignObject>
+                        <foreignObject x="@F(NodeWidth - 14)" y="32" width="28" height="32">
+                            <button type="button" class="node-port output-port" draggable="true" aria-label="@($"Connect from output of {NodeHeading(node)}")" aria-pressed="@(_connectionFromId == node.Id)" title="Click then choose an input, or drag to an input handle"
+                                    @onclick="() => StartConnection(node)" @onclick:stopPropagation>&#8594;</button>
+                        </foreignObject>
+                    }
                     <foreignObject x="@F(NodeWidth - 34)" y="4" width="30" height="30">
                         <button type="button" class="node-remove" aria-label="@($"Remove {NodeHeading(node)}")"
                                 title="Remove only this node. Connected nodes stay; incomplete connections must be repaired before saving."
-                                @onclick="() => RemoveCanvasNode(node)" @onclick:stopPropagation="true">
+                                @onclick="() => RemoveCanvasNode(node)" @onclick:stopPropagation="true" @onkeydown:stopPropagation>
                             <span aria-hidden="true">&#215;</span>
                         </button>
                     </foreignObject>
@@ -511,7 +537,7 @@
                         <g class="badge-group">
                             <title>@(IsJoinNode(node) ? "Join sources matches rows using the configured keys and field mappings." : "Incoming payloads share a batch. No row matching happens here.")</title>
                             <circle class="merge-dot" cx="0" cy="@F(NodeHeight / 2)" r="6" />
-                            <text class="join-badge" x="-6" y="-8">@IncomingBatchLabel(node, incomingCount)</text>
+                            <text class="join-badge" x="-6" y="@F(NodeHeight + 14)">@IncomingBatchLabel(node, incomingCount)</text>
                         </g>
                     }
                     @if (outgoingCount >= 2)
@@ -519,7 +545,7 @@
                         <g class="badge-group">
                             <title>This output has @outgoingCount uses, including lookup inputs. Rows are not split or removed.</title>
                             <circle class="fork-dot" cx="@F(NodeWidth)" cy="@F(NodeHeight / 2)" r="6" />
-                            <text class="split-badge" x="@F(NodeWidth - 70)" y="-8">USES ×@outgoingCount</text>
+                            <text class="split-badge" x="@F(NodeWidth - 70)" y="@F(NodeHeight + 14)">USES ×@outgoingCount</text>
                         </g>
                     }
                 </g>
@@ -936,11 +962,18 @@
                     }
                 }
 
-                <h3>Add a setting</h3>
-                <div class="inline-row">
-                    <input class="mapping-input" @bind="_newSettingKey" @bind:event="oninput" placeholder="Setting key" />
-                    <button class="secondary-button" @onclick="() => AddCustomSetting(node)">Add</button>
-                </div>
+                <details>
+                    <summary>Advanced: add a module setting</summary>
+                    <p class="field-hint">Only add a key documented by this module. This does not create variables, map fields, or new behavior.</p>
+                    <div class="inline-row">
+                        <input class="mapping-input" aria-label="Custom module setting key" @bind="_newSettingKey" @bind:event="oninput" placeholder="Setting key" />
+                        <button class="secondary-button" @onclick="() => AddCustomSetting(node)">Add</button>
+                    </div>
+                </details>
+                <details @key='(node.Id, "retry")'>
+                    <summary>Step retry policy</summary>
+                    <RetryPolicyEditor Policy="node.Retry" PolicyChanged="value => node.Retry = value" />
+                </details>
 
                 @if (node.Stage == NodeStage.Augment)
                 {
@@ -964,12 +997,30 @@
                         <label class="field-label">Atomic scope (optional)</label>
                         <input class="mapping-input" value="@routeRender.AtomicScope" placeholder="e.g. order-commit"
                                @onchange="@(args => { routeRender.AtomicScope = NormalizeAtomicScope(args.Value?.ToString()); })" />
-                        <HelpTooltip Label="Atomic scope">Routes sharing a scope are all-or-nothing: if any delivery fails permanently, already-delivered actions are compensated and remaining ones skipped. Leave empty for independent, best-effort delivery.</HelpTooltip>
+                        <HelpTooltip Label="Atomic scope">If a delivery fails permanently, the host attempts configured compensation for earlier deliveries in this scope and skips remaining ones. Missing or failed compensation cannot undo a delivery. This is not a distributed transaction. Leave empty for independent delivery.</HelpTooltip>
                     }
 
-                    @if (node.Stage == NodeStage.Deliver && node.Compensation is { } compensation && !string.IsNullOrWhiteSpace(compensation.Module))
+                    @if (node.Stage == NodeStage.Deliver)
                     {
-                        <p class="field-hint">Compensation: <code>@compensation.Module</code> (kept as-is when saving; configure it through the flows API).</p>
+                        <details @key='(node.Id, "compensation")'>
+                            <summary>Delivery compensation</summary>
+                            <p class="field-hint">Optional undo action for deliveries in a named atomic scope. This is best-effort compensation, not a distributed transaction. The compensation module must be safe to repeat.</p>
+                            <label class="field-label">Compensation module
+                                <select class="selector" value="@(node.Compensation?.Module ?? "")" @onchange="args => SetCompensationModule(node, args.Value?.ToString())">
+                                    <option value="">None</option>
+                                    @foreach (var module in ModulesForStage(NodeStage.Deliver)) { <option value="@module.Id">@module.DisplayName (@module.Id)</option> }
+                                    @if (node.Compensation is { } missing && FindCatalogModule(missing.Module) is null) { <option value="@missing.Module">@missing.Module (not loaded)</option> }
+                                </select>
+                            </label>
+                            @if (node.Compensation is { } compensation)
+                            {
+                                @RenderSettingsEditor(FindCatalogModule(compensation.Module)?.Settings, compensation.Settings)
+                                @foreach (var key in compensation.Settings.Keys.Where(key => !(FindCatalogModule(compensation.Module)?.Settings.Any(setting => setting.Key.Equals(key, StringComparison.OrdinalIgnoreCase)) ?? false)).ToArray())
+                                {
+                                    <ReferenceInput Value="@compensation.Settings[key]" ValueChanged="value => compensation.Settings[key] = value" Label="@($"Compensation {key}")" References="_configReferences" />
+                                }
+                            }
+                        </details>
                     }
 
                     @if (route?.Render is null)

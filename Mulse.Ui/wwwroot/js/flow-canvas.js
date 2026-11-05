@@ -46,16 +46,19 @@ function updateSourceLanes(svg) {
         const y = Math.min(...positions.map(point => point.y)) - 38;
         const width = Math.max(...positions.map(point => point.x)) + NODE_WIDTH + 18 - x;
         const height = Math.max(...positions.map(point => point.y)) + NODE_HEIGHT + 18 - y;
-        for (const selector of ['.source-lane-body', '.source-lane-handle']) {
-            const element = lane.querySelector(selector);
-            element.setAttribute('x', x);
-            element.setAttribute('y', y);
-            element.setAttribute('width', width);
-            if (selector === '.source-lane-body') element.setAttribute('height', height);
-        }
+        const body = lane.querySelector('.source-lane-body');
+        body.setAttribute('x', x);
+        body.setAttribute('y', y);
+        body.setAttribute('width', width);
+        body.setAttribute('height', height);
+        const handle = lane.querySelector('.source-lane-handle');
+        handle.setAttribute('x', x + 8);
+        handle.setAttribute('y', y + 6);
+        handle.setAttribute('width', width - 16);
         const label = lane.querySelector('.source-lane-label');
         label.setAttribute('x', x + 18);
-        label.setAttribute('y', y + 24);
+        label.setAttribute('y', y + 6);
+        label.setAttribute('width', width - 36);
     });
 }
 
@@ -133,11 +136,11 @@ export function initialize(svg, dotNetRef) {
     };
 
     const onPointerDown = event => {
-        if (state.drag || event.button !== 0 || event.target.closest('.node-remove')) {
+        if (state.drag || event.button !== 0 || event.target.closest('.node-remove') || event.target.closest('.node-port')) {
             return;
         }
 
-        const handle = event.target.closest('.source-lane-handle');
+        const handle = event.target.closest('.source-lane-handle') || event.target.closest('.source-lane-caption');
         if (handle) {
             const lane = handle.closest('.source-lane');
             const members = laneNodes(svg, lane).map(group => ({ group, ...readTranslate(group) }));
@@ -283,13 +286,42 @@ export function initialize(svg, dotNetRef) {
         scheduleViewSync(svg, dotNetRef);
     };
 
+    const connectionType = 'application/x-mulse-source-node';
+    const onConnectionStart = event => {
+        const port = event.target.closest('.output-port');
+        if (!port) return;
+        event.dataTransfer.setData(connectionType, port.closest('.flow-node').dataset.nodeId);
+        event.dataTransfer.effectAllowed = 'link';
+    };
+    const acceptsConnection = event => event.target.closest('.input-port') && [...event.dataTransfer.types].includes(connectionType);
+    const onConnectionOver = event => {
+        if (!acceptsConnection(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'link';
+    };
+    const onConnectionDrop = event => {
+        if (!acceptsConnection(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const sourceId = event.dataTransfer.getData(connectionType);
+        const targetId = event.target.closest('.flow-node').dataset.nodeId;
+        return dotNetRef.invokeMethodAsync('OnSourceConnectionDrop', sourceId, targetId);
+    };
+    const onKeyDown = event => {
+        if (event.target.matches('.flow-node') && (event.key === 'Enter' || event.key === ' ')) event.preventDefault();
+    };
+
+    svg.addEventListener('dragstart', onConnectionStart);
+    svg.addEventListener('dragover', onConnectionOver);
+    svg.addEventListener('drop', onConnectionDrop);
+    svg.addEventListener('keydown', onKeyDown);
     svg.addEventListener('pointerdown', onPointerDown);
     svg.addEventListener('pointermove', onPointerMove);
     svg.addEventListener('pointerup', endDrag);
     svg.addEventListener('pointercancel', endDrag);
     svg.addEventListener('wheel', onWheel, { passive: false });
 
-    svg.__flowCanvas = { onPointerDown, onPointerMove, endDrag, onWheel, state };
+    svg.__flowCanvas = { onPointerDown, onPointerMove, endDrag, onWheel, onConnectionStart, onConnectionOver, onConnectionDrop, onKeyDown, state };
 }
 
 export function dispose(svg) {
@@ -312,6 +344,10 @@ export function dispose(svg) {
     svg.removeEventListener('pointerup', handlers.endDrag);
     svg.removeEventListener('pointercancel', handlers.endDrag);
     svg.removeEventListener('wheel', handlers.onWheel);
+    svg.removeEventListener('dragstart', handlers.onConnectionStart);
+    svg.removeEventListener('dragover', handlers.onConnectionOver);
+    svg.removeEventListener('drop', handlers.onConnectionDrop);
+    svg.removeEventListener('keydown', handlers.onKeyDown);
     delete svg.__flowCanvas;
 }
 

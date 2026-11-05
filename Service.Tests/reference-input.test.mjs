@@ -53,7 +53,7 @@ class Element {
 function editor() {
     const popup = new Element();
     const root = new Element();
-    root.querySelector = () => popup;
+    root.querySelector = selector => selector === "[data-reference-editor]" ? input : popup;
     root.contains = value => value === input;
     const input = new Element();
     input.value = "prefix {{";
@@ -97,5 +97,49 @@ test("pointer selection, Escape and blur dismiss correctly", () => {
     popup.children[2].listeners.get("pointerdown")({ preventDefault() { } });
     assert.equal(input.value, "prefix {{config:db-name}}");
     assert.equal(popup.hidden, true);
+    controller.dispose();
+});
+
+for (const kind of ["text", "password", "textarea"]) {
+    test(`picker inserts at the ${kind} editor selection and returns the binding value without a competing event`, () => {
+        const { root, popup, input, controller } = editor();
+        input.type = kind;
+        input.value = "before REPLACE after";
+        input.selectionStart = 7; input.selectionEnd = 14;
+        let changes = 0;
+        const update = root.listeners.get("input");
+        root.listeners.set("input", event => { changes++; update(event); });
+        const value = controller.insertReference("{{secret:credential}}");
+        assert.equal(input.value, "before {{secret:credential}} after");
+        assert.equal(value, input.value);
+        assert.equal(input.selectionStart, 28);
+        assert.equal(changes, 0);
+        assert.equal(popup.hidden, true);
+        controller.dispose();
+    });
+}
+
+test("picker replaces any unfinished token without duplicating closing braces", () => {
+    const { input, controller } = editor();
+    input.value = "x={{config:old}};next=value";
+    input.selectionStart = input.value.indexOf("}}");
+    controller.insertReference("{{secret:credential}}");
+    assert.equal(input.value, "x={{secret:credential}};next=value");
+    input.value = "{{sec tail"; input.selectionStart = 5;
+    controller.insertReference("{{config:db-host}}");
+    assert.equal(input.value, "{{config:db-host}} tail");
+    controller.dispose();
+});
+
+test("picker appends when selection is unavailable and rejects malformed tokens or missing editors", () => {
+    const { root, input, controller } = editor();
+    input.value = "prefix "; input.selectionStart = input.selectionEnd = null;
+    controller.insertReference("{{config:db-name}}");
+    assert.equal(input.value, "prefix {{config:db-name}}");
+    input.value = "replacement "; input.selectionStart = input.value.length;
+    assert.throws(() => controller.insertReference("{{secret:bad\nname}}"), /Invalid stored reference/);
+    assert.equal(input.value, "replacement ");
+    root.querySelector = () => null;
+    assert.throws(() => controller.insertReference("{{config:db-name}}"), /unavailable/);
     controller.dispose();
 });

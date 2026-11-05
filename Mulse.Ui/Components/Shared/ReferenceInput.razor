@@ -37,11 +37,29 @@
         {
             <button type="button" class="secondary-button" aria-pressed="@(!_masked ? "true" : "false")" @onclick="() => _masked = !_masked">@(_masked ? "Show value" : "Hide value")</button>
         }
+        <button type="button" class="secondary-button" aria-expanded="@_showPicker" @onclick="() => _showPicker = !_showPicker">Insert stored reference...</button>
         @if (IsChoice)
         {
             <button type="button" class="secondary-button" @onclick="UseLiteralAsync">Use literal value</button>
         }
+        @if (_showPicker)
+        {
+            <section class="reference-picker" aria-label="Stored reference picker">
+                <label>Find reference <input type="search" @bind="_referenceSearch" @bind:event="oninput" /></label>
+                <label>Reference kind <select @bind="_referenceKind"><option value="config">Config</option><option value="secret">Secret</option></select></label>
+                <p>Inserts at the last text selection. Only names are shown, never stored values.</p>
+                <div class="reference-picker-options">
+                    @foreach (var reference in MatchingReferences)
+                    {
+                        <button type="button" class="secondary-button" @onclick="() => InsertReferenceAsync(reference)">@($"{{{{{_referenceKind}:{reference}}}}}")</button>
+                    }
+                </div>
+                @if (!MatchingReferences.Any()) { <p role="status">No matching stored references. <a href="/config-values">Manage stored values</a>.</p> }
+                <button type="button" class="secondary-button" @onclick="() => _showPicker = false">Close picker</button>
+            </section>
+        }
     }
+    @if (_referenceError is not null) { <p role="alert">@_referenceError</p> }
     <div class="reference-suggestions" data-reference-popup hidden></div>
 </div>
 
@@ -57,6 +75,11 @@
     private bool IsChoice => InputKind is "Boolean" or "Select";
     private bool _useReference;
     private bool _masked;
+    private bool _showPicker;
+    private string? _referenceError;
+    private string _referenceSearch = "", _referenceKind = "config";
+    private IEnumerable<string> MatchingReferences => References.Where(name => !string.IsNullOrWhiteSpace(name) && name.IndexOfAny(['{', '}', '\r', '\n']) < 0
+        && name.Contains(_referenceSearch, StringComparison.OrdinalIgnoreCase)).Distinct(StringComparer.Ordinal).Order(StringComparer.OrdinalIgnoreCase);
     private ElementReference _root;
     private IJSObjectReference? _module;
     private IJSObjectReference? _controller;
@@ -83,13 +106,33 @@
     private async Task UseReferenceAsync()
     {
         _useReference = true;
+        _showPicker = true;
         await ValueChanged.InvokeAsync("{{");
     }
 
     private async Task UseLiteralAsync()
     {
         _useReference = false;
+        _showPicker = false;
         await ValueChanged.InvokeAsync(DefaultValue ?? (InputKind == "Boolean" ? "false" : Options.FirstOrDefault()?.Value ?? string.Empty));
+    }
+
+    private async Task InsertReferenceAsync(string name)
+    {
+        if (_controller is null) { _referenceError = "The reference editor is still loading. Try inserting again."; return; }
+        string value;
+        try
+        {
+            value = await _controller.InvokeAsync<string>("insertReference", $"{{{{{_referenceKind}:{name}}}}}");
+        }
+        catch (JSException exception)
+        {
+            _referenceError = $"Unable to insert the reference: {exception.Message}";
+            return;
+        }
+        _referenceError = null;
+        await ValueChanged.InvokeAsync(value);
+        _showPicker = false;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

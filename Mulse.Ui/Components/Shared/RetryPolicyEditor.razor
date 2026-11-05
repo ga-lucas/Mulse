@@ -1,0 +1,39 @@
+<section aria-label="Step retry policy">
+    <label class="field-label checkbox-row"><input type="checkbox" @bind="_enabled" @bind:after="PublishAsync" /> Override flow retry policy</label>
+    @if (_enabled)
+    {
+        <p class="field-hint">Max attempts includes the first attempt. Use 1 for no retry; leave blank for unlimited attempts. The host still blocks unsafe automatic replay of durable orchestration effects.</p>
+        <label class="field-label">Max attempts <input class="mapping-input" type="number" min="1" @bind="_attempts" @bind:after="PublishAsync" /></label>
+        <label class="field-label">Delay (seconds) <input class="mapping-input" type="number" min="0" step="any" @bind="_delay" @bind:after="PublishAsync" /></label>
+        <label class="field-label">Backoff <select class="selector" @bind="_backoff" @bind:after="PublishAsync"><option>Fixed</option><option>Linear</option><option>Exponential</option></select></label>
+        <label class="field-label">Max delay (seconds, optional) <input class="mapping-input" type="number" min="0" step="any" @bind="_maxDelay" @bind:after="PublishAsync" /></label>
+    }
+</section>
+
+@code {
+    [Parameter] public RetryPolicyRequestViewModel? Policy { get; set; }
+    [Parameter] public EventCallback<RetryPolicyRequestViewModel?> PolicyChanged { get; set; }
+    private RetryPolicyRequestViewModel? _loaded;
+    private bool _enabled;
+    private int? _attempts;
+    private double _delay = 1;
+    private double? _maxDelay;
+    private string _backoff = "Fixed";
+
+    protected override void OnParametersSet()
+    {
+        if (Equals(_loaded, Policy)) return;
+        _loaded = Policy;
+        _enabled = Policy is not null;
+        _attempts = Policy?.MaxAttempts;
+        _delay = Policy?.DelaySeconds ?? 1;
+        _maxDelay = Policy?.MaxDelaySeconds;
+        _backoff = Policy?.Backoff ?? "Fixed";
+    }
+
+    private async Task PublishAsync()
+    {
+        _loaded = _enabled ? new(_attempts, _delay, _backoff, _maxDelay) : null;
+        await PolicyChanged.InvokeAsync(_loaded);
+    }
+}

@@ -1,0 +1,53 @@
+.flow-list {
+    gap: 1.75rem;
+    padding: 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: var(--surface-preview);
+}
+
+.dashboard-flow {
+    padding: 0;
+    overflow: hidden;
+    border: 2px solid var(--text-muted);
+    border-inline-start: 6px solid var(--text-muted);
+    background: var(--surface-panel);
+    box-shadow: var(--shadow-panel);
+}
+
+.dashboard-flow.is-enabled { border-inline-start-color: var(--success-text); }
+.dashboard-flow:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
+.dashboard-flow > .flow-card-header {
+    padding: 1.25rem;
+    margin: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-card);
+    flex-wrap: wrap;
+}
+.flow-card-header > div:first-child { flex: 1 1 20rem; min-width: 0; }
+.flow-card-actions { flex: 0 1 29rem; }
+.flow-title { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; }
+.flow-title h3 { font-size: 1.2rem; margin-inline-end: auto; }
+.flow-title h3 a { color: var(--text-primary); text-decoration-thickness: 1px; }
+.flow-card-header details { padding: .5rem 0; }
+.dashboard-flow > .flow-metadata { padding: 1rem 1.25rem; margin: 0; border-bottom: 1px solid var(--border-subtle); }
+.flow-metadata dd { font-weight: 600; }
+.flow-stage-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .85rem; padding: 1.25rem; }
+.flow-stage { padding: .9rem; border: 1px solid var(--border-subtle); border-top: 4px solid var(--text-muted); border-radius: var(--radius-sm); min-width: 0; }
+.flow-stage h4 { margin: 0; color: var(--text-primary); }
+.flow-stage p { margin: .5rem 0 0; overflow-wrap: anywhere; }
+.stage-augment { background: var(--node-augment); border-top-color: var(--join-color); }
+.stage-render { background: var(--node-render); border-top-color: var(--success-text); }
+.stage-deliver { background: var(--node-deliver); border-top-color: var(--split-color); }
+.flow-operations { padding: 1rem 1.25rem; border-top: 1px solid var(--border-subtle); background: var(--surface-card); }
+.flow-operations ::deep summary { cursor: pointer; font-weight: 600; }
+.flow-filters { padding: 1rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-card); }
+.flow-filters label:not(.checkbox-label) { display: grid; gap: .35rem; min-width: 0; }
+.flow-filters input:not([type="checkbox"]), .flow-filters select { width: 100%; min-width: 0; min-height: 2.75rem; padding: .5rem; border: 1px solid var(--text-muted); border-radius: var(--radius-sm); background: var(--surface-input); color: var(--text-primary); }
+.flow-filters .checkbox-label { display: flex; align-items: center; gap: .5rem; }
+
+@media (max-width: 700px) {
+    .flow-list { padding: .5rem; }
+    .flow-stage-summary { grid-template-columns: 1fr; }
+    .flow-card-actions { flex-basis: 100%; }
+}

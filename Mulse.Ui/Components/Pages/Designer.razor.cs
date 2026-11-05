@@ -88,6 +88,7 @@ public partial class Designer : IAsyncDisposable
     private string? _statusMessage;
     private string? _errorMessage;
     private string? _selectedNodeId;
+    private string? _connectionFromId;
     private string _newSettingKey = string.Empty;
     private int _unresolvedConfigCount;
     private SeedSource _seedSource = SeedSource.Manual;
@@ -461,6 +462,7 @@ public partial class Designer : IAsyncDisposable
         _bizTalkWarnings = [];
         _migration = null;
         _selectedNodeId = null;
+        _connectionFromId = null;
         _seedSource = SeedSource.Manual;
         _flowId = string.Empty;
         _flowName = string.Empty;
@@ -497,6 +499,7 @@ public partial class Designer : IAsyncDisposable
         _bizTalkWarnings = [];
         _migration = flow.Migration;
         _selectedNodeId = null;
+        _connectionFromId = null;
 
         _flowId = flow.Id;
         _flowName = flow.Name ?? string.Empty;
@@ -524,18 +527,18 @@ public partial class Designer : IAsyncDisposable
 
         foreach (var fetch in flow.Fetches)
         {
-            CreateFetchNode(fetch.Id, fetch.Fetch.Module, fetch.Fetch.Settings, fetch.InputParseIds, fetch.Fetch.Name);
+            CreateFetchNode(fetch.Id, fetch.Fetch.Module, fetch.Fetch.Settings, fetch.InputParseIds, fetch.Fetch.Name).Retry = ToRetryRequest(fetch.Fetch.Retry);
         }
 
         foreach (var parse in flow.Parses)
         {
-            CreateParseNode(parse.Id, parse.Parse.Module, parse.Parse.Settings, parse.FetchNodeIds, parse.Parse.Name);
+            CreateParseNode(parse.Id, parse.Parse.Module, parse.Parse.Settings, parse.FetchNodeIds, parse.Parse.Name).Retry = ToRetryRequest(parse.Parse.Retry);
         }
 
         var order = 0;
         foreach (var augment in flow.Augments)
         {
-            CreateNode(NodeStage.Augment, augment.Module, augment.Settings, order: order++, name: augment.Name);
+            CreateNode(NodeStage.Augment, augment.Module, augment.Settings, order: order++, name: augment.Name).Retry = ToRetryRequest(augment.Retry);
         }
 
         var routeIndex = 0;
@@ -544,11 +547,13 @@ public partial class Designer : IAsyncDisposable
             var routeId = Guid.NewGuid().ToString("n");
             var render = CreateNode(NodeStage.Render, route.Render.Module, route.Render.Settings, order: routeIndex, routeId: routeId, name: route.Render.Name);
             render.AtomicScope = NormalizeAtomicScope(route.AtomicScope);
+            render.Retry = ToRetryRequest(route.Render.Retry);
             foreach (var action in route.Delivers ?? [])
             {
                 var deliver = CreateNode(NodeStage.Deliver, action.Deliver.Module, action.Deliver.Settings, order: routeIndex, routeId: routeId, name: action.Deliver.Name);
+                deliver.Retry = ToRetryRequest(action.Deliver.Retry);
                 deliver.Compensation = action.Compensation is { } compensation
-                    ? new FlowStepRequestViewModel(compensation.Module, new Dictionary<string, string>(compensation.Settings, StringComparer.OrdinalIgnoreCase), Name: compensation.Name)
+                    ? new FlowStepRequestViewModel(compensation.Module, new Dictionary<string, string>(compensation.Settings, StringComparer.OrdinalIgnoreCase), ToRetryRequest(compensation.Retry), compensation.Name)
                     : null;
             }
 
@@ -985,7 +990,22 @@ public partial class Designer : IAsyncDisposable
     private static string F(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
 
     private static FlowStepRequestViewModel ToStepRequest(FlowNode node)
-        => new(node.ModuleId, CreateSettingsCopy(node.Settings), Name: string.IsNullOrWhiteSpace(node.Name) ? null : node.Name.Trim());
+        => new(node.ModuleId, CreateSettingsCopy(node.Settings), node.Retry, Name: string.IsNullOrWhiteSpace(node.Name) ? null : node.Name.Trim());
+
+    private static RetryPolicyRequestViewModel? ToRetryRequest(RetryPolicyViewModel? retry)
+        => retry is null ? null : new(retry.MaxAttempts, retry.DelaySeconds, retry.Backoff, retry.MaxDelaySeconds);
+
+    private void SetCompensationModule(FlowNode node, string? moduleId)
+    {
+        _errorMessage = null;
+        if (string.IsNullOrWhiteSpace(moduleId)) { node.Compensation = null; return; }
+        if (string.Equals(node.Compensation?.Module, moduleId, StringComparison.OrdinalIgnoreCase)) return;
+        var module = ModulesForStage(NodeStage.Deliver).FirstOrDefault(candidate => string.Equals(candidate.Id, moduleId, StringComparison.OrdinalIgnoreCase));
+        if (module is null) { _errorMessage = "Select an installed delivery module for compensation."; return; }
+        var settings = module.Settings.Where(setting => setting.DefaultValue is not null)
+            .ToDictionary(setting => setting.Key, setting => setting.DefaultValue!, StringComparer.OrdinalIgnoreCase);
+        node.Compensation = new(module.Id, settings);
+    }
 
     /// <summary>
     /// The deliver node's carried-through compensation step, or null when it has none or it names no module (e.g. the
@@ -1077,9 +1097,11 @@ public partial class Designer : IAsyncDisposable
         /// </summary>
         public string? AtomicScope { get; set; }
 
+        public RetryPolicyRequestViewModel? Retry { get; set; }
+
         /// <summary>
         /// Deliver nodes only: the optional compensation step that undoes this deliver action inside an atomic scope.
-        /// Carried through load/save unchanged; it isn't edited on the canvas.
+        /// Configured in delivery Properties and preserved on load/save.
         /// </summary>
         public FlowStepRequestViewModel? Compensation { get; set; }
 

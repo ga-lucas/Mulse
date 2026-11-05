@@ -1,10 +1,17 @@
-export function completions(value, caret, references) {
+function referenceRange(value, caret) {
     const start = value.lastIndexOf("{{", caret - 1);
-    if (start < 0 || caret < start + 2) return [];
+    if (start < 0 || caret < start + 2) return null;
     const fragment = value.slice(start + 2, caret);
-    if (/[{}\r\n]/.test(fragment)) return [];
+    if (/[{}\r\n]/.test(fragment)) return null;
     const closing = value.indexOf("}}", caret);
     const end = closing >= 0 && !/[{}\r\n]/.test(value.slice(caret, closing)) ? closing + 2 : caret;
+    return { start, end, fragment };
+}
+
+export function completions(value, caret, references) {
+    const range = referenceRange(value, caret);
+    if (!range) return [];
+    const { start, end, fragment } = range;
     const query = fragment.toLowerCase();
     return references.filter(name => name.length && !/[{}\r\n]/.test(name))
         .flatMap(name => ["config", "secret"].map(kind => `${kind}:${name}`))
@@ -43,15 +50,17 @@ export function attach(root) {
         }
     }
 
-    function choose(index) {
+    function choose(index, notify = true) {
         const option = options[index];
         if (!option || !input) return;
-        input.value = input.value.slice(0, option.start) + option.token + input.value.slice(option.end);
+        const value = input.value.slice(0, option.start) + option.token + input.value.slice(option.end);
+        input.value = value;
         const caret = option.start + option.token.length;
         input.focus();
         input.setSelectionRange(caret, caret);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
+        if (notify) input.dispatchEvent(new Event("input", { bubbles: true }));
         close();
+        return value;
     }
 
     function show(event) {
@@ -108,6 +117,16 @@ export function attach(root) {
     root.addEventListener("focusout", focusout);
     return {
         updateReferences(names) { references = names; },
+        insertReference(token) {
+            if (!/^\{\{(?:config|secret):[^{}\r\n]+\}\}$/.test(token)) throw new Error("Invalid stored reference token.");
+            input = root.querySelector("[data-reference-editor]");
+            if (!input) throw new Error("Reference text editor is unavailable.");
+            const start = input.selectionStart ?? input.value.length;
+            const end = input.selectionEnd ?? start;
+            const active = referenceRange(input.value, start);
+            options = [{ token, start: active?.start ?? start, end: active?.end ?? end }];
+            return choose(0, false);
+        },
         dispose() {
             close();
             root.removeEventListener("input", show);

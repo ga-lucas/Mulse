@@ -25,7 +25,13 @@ public sealed class FlowWorkspaceRenderingTests
         Assert.Contains("Unresolved configuration only", html);
         Assert.Contains("12 of 12 flow(s) match", html);
         Assert.Contains("Page 1 of 2", html);
-        Assert.Equal(10, html.Split("class=\"flow-card\"").Length - 1);
+        Assert.Equal(10, html.Split("class=\"flow-card dashboard-flow ").Length - 1);
+        Assert.Equal(10, html.Split("aria-label=\"Pipeline stages\"").Length - 1);
+        Assert.Contains("stage-augment", html);
+        Assert.Contains("stage-render", html);
+        Assert.Contains("stage-deliver", html);
+        Assert.Contains("is-disabled", html);
+        Assert.Contains("href=\"/designer/flow-01\"", html);
         Assert.Contains("Categorize", html);
         Assert.Contains("Duplicate", html);
         Assert.Contains("Delete", html);
@@ -187,6 +193,7 @@ public sealed class FlowWorkspaceRenderingTests
         Assert.Contains($"type=\"{type}\"", html);
         Assert.Contains("role=\"combobox\"", html);
         Assert.Contains("data-reference-editor", html);
+        Assert.Contains("Insert stored reference...", html);
         Assert.Contains(value, html);
         if (kind == "Password") Assert.Contains("Show value", html);
     }
@@ -217,7 +224,13 @@ public sealed class FlowWorkspaceRenderingTests
     {
         var html = await RenderAsync<Designer>(flowId: "remove-test");
         Assert.Equal(5, html.Split("class=\"node-remove\"").Length - 1);
-        Assert.Equal(5, html.Split("<foreignObject").Length - 1);
+        Assert.Equal(10, html.Split("<foreignObject").Length - 1);
+        Assert.Equal(2, html.Split("class=\"node-port input-port\"").Length - 1);
+        Assert.Equal(2, html.Split("class=\"node-port output-port\"").Length - 1);
+        Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(html, "data-node-id=\"[^\"]+\" tabindex=\"0\" role=\"group\"").Count);
+        Assert.Contains("drag between the handles", html);
+        Assert.Contains("<svg", html);
+        Assert.Matches("<marker id=\"flow-arrow\"[^>]*viewBox=\"0 0 10 10\"[^>]*>\\s*<path[^>]*class=\"edge-arrow\"", html);
         Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(html, "<button[^>]*type=\"button\"[^>]*class=\"node-remove\"[^>]*aria-label=\"Remove ").Count);
         Assert.Contains("Remove only this node", html);
         Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(WebUtility.HtmlDecode(html), "<span[^>]*aria-hidden=\"true\"[^>]*>\\s*\\u00d7\\s*</span>").Count);
@@ -226,6 +239,9 @@ public sealed class FlowWorkspaceRenderingTests
         Assert.Contains("Batch flow:", html);
         Assert.Contains("data-lane-members=", html);
         Assert.Contains("class=\"source-lane-handle\"", html);
+        Assert.Contains("height=\"22\" rx=\"8\" ry=\"8\"", html);
+        Assert.Contains("<foreignObject class=\"source-lane-label\"", html);
+        Assert.Contains("class=\"source-lane-caption\" title=\"Source: parsed\"", html);
         Assert.Contains("Drag this header", html);
     }
 
@@ -239,6 +255,7 @@ public sealed class FlowWorkspaceRenderingTests
         Assert.Contains("Lookup input:", html);
         Assert.Contains("This does not join rows.", html);
         Assert.Contains("USES \u00d72", html);
+        Assert.Matches("class=\"split-badge\"[^>]*y=\"110\"", html);
         Assert.DoesNotContain("SPLITS", html);
         if (join)
         {
@@ -324,6 +341,12 @@ public sealed class FlowWorkspaceRenderingTests
             Invoke("SelectNode", deliver);
             await Refresh();
             Assert.Contains("Add render to this route", rendered.ToHtmlString());
+            Assert.Contains("Step retry policy", rendered.ToHtmlString());
+            Assert.Contains("Override flow retry policy", rendered.ToHtmlString());
+            Assert.Contains("Delivery compensation", rendered.ToHtmlString());
+            Assert.Contains("Compensation module", rendered.ToHtmlString());
+            Assert.Contains("not a distributed transaction", rendered.ToHtmlString());
+            Assert.DoesNotContain("configure it through the flows API", rendered.ToHtmlString());
             Invoke("AddRenderToRoute", Value(deliver, "RouteId"), null);
             await Refresh();
             Assert.DoesNotContain("Add render to this route", rendered.ToHtmlString());

@@ -226,15 +226,15 @@
 }
 
 .source-lane-body {
-    fill: var(--accent-soft);
-    fill-opacity: 0.45;
-    stroke: var(--border-subtle);
-    stroke-width: 1.5;
-    stroke-dasharray: 4 4;
+    fill: var(--surface-panel);
+    fill-opacity: 0.85;
+    stroke: var(--text-muted);
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
 }
 
 .source-lane-handle {
-    fill: transparent;
+    fill: var(--accent-soft);
     pointer-events: all;
     cursor: grab;
 }
@@ -244,12 +244,22 @@
 }
 
 .source-lane-label {
-    fill: var(--accent-soft-ink);
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.source-lane-caption {
+    color: var(--accent-soft-ink);
     font-size: 0.78rem;
     font-weight: 700;
+    line-height: 22px;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: auto;
+    cursor: grab;
 }
 
 .flow-node {
@@ -262,14 +272,19 @@
 
 .flow-node .node-body {
     fill: var(--surface-panel);
-    stroke: var(--border-subtle);
+    stroke: var(--text-muted);
     stroke-width: 1.5;
 }
 
-.flow-node.selected .node-body {
+.flow-node.selected .node-body, .flow-node:focus-visible .node-body {
     stroke: var(--accent);
-    stroke-width: 2.5;
+    stroke-width: 3;
 }
+
+.canvas-connection-help { position: absolute; top: .5rem; left: .5rem; right: .5rem; z-index: 4; width: fit-content; max-width: calc(100% - 1rem); padding: .5rem .75rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-panel); color: var(--text-secondary); font-size: .8rem; }
+.node-port { width: 28px; height: 28px; padding: 0; border: 2px solid var(--accent); border-radius: 50%; background: var(--surface-panel); color: var(--accent-soft-ink); cursor: crosshair; }
+.node-port:hover, .node-port[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.node-port:focus-visible { outline-offset: -5px; }
 
 .flow-node.stage-fetch .node-body { fill: var(--node-fetch); }
 .flow-node.stage-parse .node-body { fill: var(--node-parse); }

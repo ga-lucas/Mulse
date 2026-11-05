@@ -39,3 +39,9 @@
     background: var(--accent);
     color: var(--accent-ink);
 }
+
+.reference-picker { padding: .75rem; margin-top: .5rem; border: 1px solid var(--text-muted); border-radius: var(--radius-sm); background: var(--surface-preview); }
+.reference-picker label { display: grid; gap: .25rem; margin-bottom: .5rem; }
+.reference-picker p { font-size: .8rem; color: var(--text-secondary); }
+.reference-picker-options { display: grid; gap: .35rem; max-height: 15rem; overflow: auto; margin-bottom: .5rem; }
+.reference-picker-options button { text-align: left; overflow-wrap: anywhere; }

@@ -31,9 +31,10 @@ function setup(scale = 1, origin = { x: 0, y: 0 }) {
     };
     function lane(members) {
         const result = element({ laneMembers: members });
-        result.parts = Object.fromEntries(['body', 'handle', 'label'].map(name => [`.source-lane-${name}`, element()]));
+        result.parts = Object.fromEntries(['body', 'handle', 'label', 'caption'].map(name => [`.source-lane-${name}`, element()]));
         result.querySelector = selector => result.parts[selector];
         result.parts['.source-lane-handle'].closest = selector => selector === '.source-lane' ? result : null;
+        result.parts['.source-lane-caption'].closest = selector => selector === '.source-lane' ? result : null;
         return result;
     }
     const lanes = [lane('shared first'), lane('shared second')];
@@ -65,6 +66,7 @@ function setup(scale = 1, origin = { x: 0, y: 0 }) {
         button, pointerId: id, clientX: x, clientY: y, prevented: false,
         target: { closest: selector => {
             if (selector === '.source-lane-handle' && target === 'header') return lanes[0].parts[selector];
+            if (selector === '.source-lane-caption' && target === 'caption') return lanes[0].parts[selector];
             if (selector === '.flow-node' && target === 'node') return nodes.shared;
             if (selector === '.node-remove' && target === 'remove') return {};
             return null;
@@ -76,6 +78,25 @@ function setup(scale = 1, origin = { x: 0, y: 0 }) {
 
 function position(node) { return node.attributes.transform; }
 
+test('source caption stays inset above nodes and drags the same group as its background', async () => {
+    const app = setup();
+    const body = app.lanes[0].parts['.source-lane-body'].attributes;
+    const header = app.lanes[0].parts['.source-lane-handle'].attributes;
+    const label = app.lanes[0].parts['.source-lane-label'].attributes;
+    assert.equal(Number(header.x), Number(body.x) + 8);
+    assert.equal(Number(header.width), Number(body.width) - 16);
+    assert.equal(Number(label.x), Number(body.x) + 18);
+    assert.equal(Number(label.width), Number(body.width) - 36);
+    assert.ok(Number(header.y) + 22 < 100);
+    app.events.pointerdown(app.pointer(100, 80, { target: 'caption' }));
+    app.events.pointermove(app.pointer(120, 100, { target: 'caption' }));
+    await app.events.pointerup(app.pointer(120, 100, { target: 'caption' }));
+    assert.equal(app.calls[0][0], 'OnNodesMoved');
+    assert.equal(position(app.nodes.shared), 'translate(60, 120)');
+    assert.equal(position(app.nodes.first), 'translate(330, 120)');
+    assert.ok(Number(app.lanes[0].parts['.source-lane-label'].attributes.y) + 22 < 120);
+});
+
 test('header drag moves members once at 80% scale, updates both lanes and all connected edges, and commits atomically', async () => {
     const app = setup(1.25);
     app.events.pointerdown(app.pointer(100, 100));
@@ -85,7 +106,9 @@ test('header drag moves members once at 80% scale, updates both lanes and all co
     assert.equal(position(app.nodes.first), 'translate(410, 150)');
     assert.equal(position(app.nodes.second), 'translate(310, 300)');
     assert.equal(app.lanes[0].parts['.source-lane-body'].attributes.x, '122');
-    assert.equal(app.lanes[0].parts['.source-lane-handle'].attributes.y, '112');
+    assert.equal(app.lanes[0].parts['.source-lane-handle'].attributes.y, '118');
+    assert.equal(app.lanes[0].parts['.source-lane-handle'].attributes.x, '130');
+    assert.equal(app.lanes[0].parts['.source-lane-label'].attributes.width, '480');
     assert.equal(app.lanes[1].parts['.source-lane-body'].attributes.x, '122');
     assert.equal(app.lanes[1].parts['.source-lane-body'].attributes.height, '302');
     assert.equal(app.edges[0].attributes.d, 'M 350 198 C 380 198, 380 198, 410 198');
@@ -107,7 +130,7 @@ test('groups move past the origin without compressing spacing or clipping header
     assert.equal(position(app.nodes.shared), 'translate(-1060, -1000)');
     assert.equal(position(app.nodes.first), 'translate(-790, -1000)');
     assert.equal(app.lanes[0].parts['.source-lane-body'].attributes.x, '-1078');
-    assert.equal(app.lanes[0].parts['.source-lane-handle'].attributes.y, '-1038');
+    assert.equal(app.lanes[0].parts['.source-lane-handle'].attributes.y, '-1032');
     assert.equal(app.lanes[0].parts['.source-lane-body'].attributes.width, '516');
     assert.deepEqual(app.calls[0][1], [{ id: 'shared', x: -1060, y: -1000 }, { id: 'first', x: -790, y: -1000 }]);
 });

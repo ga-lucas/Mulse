@@ -168,7 +168,7 @@ public partial class Designer
     /// </summary>
     private void RemoveFetchNode(FlowNode fetch)
     {
-        _nodes.Remove(fetch);
+        RemoveNode(fetch);
 
         foreach (var parse in ParseNodes)
         {
@@ -194,7 +194,7 @@ public partial class Designer
             ? FetchesForParse(parse).Where(fetch => ParsesForFetch(fetch).All(other => ReferenceEquals(other, parse))).ToList()
             : [];
 
-        _nodes.Remove(parse);
+        RemoveNode(parse);
 
         foreach (var fetch in FetchNodes)
         {
@@ -214,7 +214,7 @@ public partial class Designer
 
         foreach (var fetch in exclusiveFetches)
         {
-            _nodes.Remove(fetch);
+            RemoveNode(fetch);
         }
 
         _selectedNodeId = null;
@@ -292,6 +292,65 @@ public partial class Designer
                 ids[index] = newId;
             }
         }
+    }
+
+    private void SelectNodeByKey(FlowNode node, Microsoft.AspNetCore.Components.Web.KeyboardEventArgs args)
+    {
+        if ((args.Key is "Enter" or " ") && _connectionFromId is null) SelectNode(node);
+    }
+
+    private void HandleCanvasKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") _connectionFromId = null;
+    }
+
+    [Microsoft.JSInterop.JSInvokable]
+    public Task OnSourceConnectionDrop(string sourceId, string targetId)
+    {
+        var source = _nodes.FirstOrDefault(node => node.Id == sourceId);
+        var target = _nodes.FirstOrDefault(node => node.Id == targetId);
+        if (source is null || target is null)
+        {
+            _connectionFromId = null;
+            _errorMessage = "The connection could not be added because a source node was removed. Select the current output and input handles.";
+        }
+        else
+        {
+            _connectionFromId = source.Id;
+            CompleteConnection(target);
+        }
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void StartConnection(FlowNode node)
+    {
+        _connectionFromId = _connectionFromId == node.Id ? null : node.Id;
+        _errorMessage = null;
+    }
+
+    private void CompleteConnection(FlowNode target)
+    {
+        _statusMessage = null;
+        _errorMessage = null;
+        var source = _nodes.FirstOrDefault(node => node.Id == _connectionFromId);
+        _connectionFromId = null;
+        if (source is null) { _errorMessage = "Choose an output handle first, then an input handle."; return; }
+        List<string> links;
+        string reference;
+        if (source.Stage == NodeStage.Fetch && target.Stage == NodeStage.Parse) { links = target.FetchNodeIds; reference = source.GraphId; }
+        else if (source.Stage == NodeStage.Parse && target.Stage == NodeStage.Fetch) { links = target.InputParseIds; reference = source.GraphId; }
+        else { _errorMessage = "Connect a fetch output to a parser input, or a parsed output to a lookup fetch input. Other stages are wired automatically."; return; }
+        if (links.Contains(reference, StringComparer.OrdinalIgnoreCase)) { _statusMessage = "These nodes are already connected. Uncheck the connection in Properties to remove it."; return; }
+        links.Add(reference);
+        if (FindSourceGraphCycle() is { } cycle)
+        {
+            links.Remove(reference);
+            _errorMessage = $"Connection was not added because it would create a cycle: {string.Join(" -> ", cycle)}.";
+            return;
+        }
+        _errorMessage = null;
+        SelectNode(target);
+        _statusMessage = $"Connected {NodeHeading(source)} to {NodeHeading(target)}. Review or remove this connection in Properties.";
     }
 
     /// <summary>Links/unlinks a fetch node as one of the raw inputs <paramref name="parse"/> parses.</summary>
@@ -764,6 +823,7 @@ public partial class Designer
         {
             _selectedNodeId = null;
         }
+        if (string.Equals(_connectionFromId, node.Id, StringComparison.Ordinal)) _connectionFromId = null;
     }
 
     private void RemoveRoute(string routeId)

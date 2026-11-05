@@ -321,6 +321,68 @@ public sealed class DesignerNodeRemovalTests
         Assert.Equal(-300d, Property<double>(render, "Y"));
     }
 
+    [Fact]
+    public void OutputAndInputClicks_AddBothKindsOfSourceLinkAndRejectCyclesWithoutLosingConnections()
+    {
+        var designer = new Designer();
+        var fetch = AddNode(designer, "Fetch", "input");
+        var parse = AddNode(designer, "Parse", "parsed");
+        var lookup = AddNode(designer, "Fetch", "lookup");
+        Invoke(designer, "StartConnection", fetch);
+        Invoke(designer, "CompleteConnection", parse);
+        Assert.Equal(["input"], Property<List<string>>(parse, "FetchNodeIds"));
+        Assert.Null(Field("_connectionFromId").GetValue(designer));
+        Assert.Equal(Property<string>(parse, "Id"), Field("_selectedNodeId").GetValue(designer));
+        Invoke(designer, "StartConnection", parse);
+        Invoke(designer, "CompleteConnection", lookup);
+        Assert.Equal(["parsed"], Property<List<string>>(lookup, "InputParseIds"));
+        Invoke(designer, "StartConnection", lookup);
+        Invoke(designer, "CompleteConnection", parse);
+        Assert.Contains("cycle", (string)Field("_errorMessage").GetValue(designer)!);
+        Assert.Equal(["input"], Property<List<string>>(parse, "FetchNodeIds"));
+        Assert.Equal(["parsed"], Property<List<string>>(lookup, "InputParseIds"));
+        Invoke(designer, "StartConnection", fetch);
+        Invoke(designer, "CompleteConnection", parse);
+        Assert.Single(Property<List<string>>(parse, "FetchNodeIds"));
+        Assert.Contains("already connected", (string)Field("_statusMessage").GetValue(designer)!);
+        Assert.Null(Field("_errorMessage").GetValue(designer));
+    }
+
+    [Fact]
+    public void Connections_RequireACompatiblePairAndCanBeCancelledWithoutChanges()
+    {
+        var designer = new Designer();
+        var fetch = AddNode(designer, "Fetch", "input");
+        var other = AddNode(designer, "Fetch", "other");
+        Invoke(designer, "CompleteConnection", fetch);
+        Assert.Contains("Choose an output", (string)Field("_errorMessage").GetValue(designer)!);
+        Invoke(designer, "StartConnection", fetch);
+        Invoke(designer, "CompleteConnection", other);
+        Assert.Contains("wired automatically", (string)Field("_errorMessage").GetValue(designer)!);
+        Assert.Empty(Property<List<string>>(other, "InputParseIds"));
+        Invoke(designer, "StartConnection", fetch);
+        Invoke(designer, "StartConnection", fetch);
+        Assert.Null(Field("_connectionFromId").GetValue(designer));
+        Invoke(designer, "StartConnection", fetch);
+        Invoke(designer, "HandleCanvasKey", new Microsoft.AspNetCore.Components.Web.KeyboardEventArgs { Key = "Escape" });
+        Assert.Null(Field("_connectionFromId").GetValue(designer));
+        Invoke(designer, "StartConnection", fetch);
+        Invoke(designer, "RemoveCanvasNode", fetch);
+        Assert.Null(Field("_connectionFromId").GetValue(designer));
+    }
+
+    [Theory]
+    [InlineData("Enter", true)]
+    [InlineData(" ", true)]
+    [InlineData("Tab", false)]
+    public void Nodes_CanBeSelectedWithoutAMouse(string key, bool selects)
+    {
+        var designer = new Designer();
+        var fetch = AddNode(designer, "Fetch", "input");
+        Invoke(designer, "SelectNodeByKey", fetch, new Microsoft.AspNetCore.Components.Web.KeyboardEventArgs { Key = key });
+        Assert.Equal(selects ? Property<string>(fetch, "Id") : null, Field("_selectedNodeId").GetValue(designer));
+    }
+
     private static object AddNode(Designer designer, string stage, string graphId)
     {
         var stageType = typeof(Designer).GetNestedType("NodeStage", BindingFlags.NonPublic)!;

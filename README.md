@@ -185,8 +185,10 @@ Always inspect `outcome` **and** `detail`, not just the HTTP status or `Complete
 
 An optional shared `atomicScope` compensates already committed deliveries in reverse order when that
 scope fails, skips its remaining actions, and lets unrelated routes proceed before reporting failure.
-Configure an explicit `compensation` deliver step per action through the API. Missing/failed
-compensation is logged; it is best effort, not an actual rollback of arbitrary external side effects.
+Configure an explicit `compensation` deliver step per action in **Delivery Properties > Delivery
+compensation** or through the API. Missing/failed compensation is logged; it is best effort, not an
+actual rollback of arbitrary external side effects. The host attempts each compensation once; its
+retry field is preserved on editing but is not applied by this best-effort cleanup path.
 
 Steps inherit the flow retry policy unless they have an override; no policy means one attempt.
 `maxAttempts` includes the first attempt; `null` means unlimited. Backoff is `Fixed`, `Linear` or
@@ -205,7 +207,9 @@ Steps inherit the flow retry policy unless they have an override; no policy mean
 
 This is a request fragment, not a complete flow. Persisted/runtime definitions instead use TimeSpan
 fields `delay` and `maxDelay`; do not copy the state file directly into an API request. The designer
-exposes the flow default; the API supports per-step overrides and compensation configuration.
+exposes the flow default in Flow overview and overrides under each node's **Step retry policy**.
+Uncheck **Override flow retry policy** to inherit again. Existing overrides on fetch, parse, augment,
+render and deliver steps, and compensation settings, are retained when a flow is reopened and saved.
 
 Retryable failures persist the failed stage/input and return `Retrying` with `nextAttemptAt`. The retry
 driver checks every two seconds and resumes from that stage, preserving prior resolved source batches
@@ -1147,7 +1151,7 @@ From the repository root:
 
 ```powershell
 dotnet test .\Service.Tests\Service.Tests.csproj
-node --test .\Mulse.Ui.Tests\theme.test.cjs .\Mulse.Ui.Tests\floating-panel.test.cjs .\Mulse.Ui.Tests\file-drop.test.cjs .\Mulse.Ui.Tests\node-remove.test.cjs .\Service.Tests\reference-input.test.mjs
+node --test .\Mulse.Ui.Tests\*.test.cjs .\Service.Tests\*.test.mjs
 ```
 
 The JavaScript suites need no npm dependencies.
@@ -1168,9 +1172,10 @@ execute code to enumerate module details; load one explicitly to inspect its mod
 
 1. Choose **Create flow** from the dashboard, give it a stable ID and optional display name, and keep it
    disabled while authoring. IDs are technical references; names are for people.
-2. Add **Source** for a linked fetch/parse pair, or add fetch/parse nodes separately. Choose modules and
-   configure real input locations. Link dependencies in node properties; moving a node is visual layout,
-   not a change to execution order or source wiring.
+2. Click or drag **Source** for a linked fetch/parse pair, or add fetch/parse nodes separately. Choose
+   modules and configure real input locations. Click an output handle then an input handle, or drag
+   between handles, to connect fetch-to-parse or parse-to-lookup-fetch. Cyclic connections are rejected.
+   Properties checkboxes also add/remove these links. Moving a node changes layout, not execution order.
 3. Add augments as needed. For `multi-source-join-map-augment`, choose inputs by **parse ID**, join keys,
    `Inner`/`Left`/`Right`/`Full` semantics and `FanOut` or `Nested` output. `*` selects the accumulated
    working document for chained joins. Map Left/Right/Literal values or transform results into targets.
@@ -1190,6 +1195,48 @@ Solid arrows carry batches; dashed arrows supply parsed input to a dependent fet
 lookup). **BATCH xN** means multiple inputs feed one batch, not a row-by-row join. **JOIN BY KEY** marks
 an actual join/map augment. **USES** counts consumers, including lookup dependencies: the original data
 remains available to downstream processing; the lookup arrow does not consume it.
+
+### Mouse and keyboard editing
+
+The canvas keeps its existing toolbox/node/group drag, pan, zoom and sample-file drop workflows.
+Output/input handles provide direct source wiring; click **Cancel connection**, click the selected
+output again, or press Escape inside the canvas to cancel. Other stages are wired by the ordered
+augment chain and delivery routes, not by arbitrary arrows. Use **Move earlier/later** to change augment
+order. Tab to a node and press Enter/Space to select its Properties; native handle and remove buttons
+are also keyboard accessible. Source headings are inset within their group; long titles use an ellipsis
+(hover for the full title). Batch/use badges sit below nodes, separate from the source heading.
+
+Module settings offer **Insert stored reference...** alongside typing. Search stored names, choose
+Config or Secret, and click a token to insert it at the last text selection (or replace an unfinished
+`{{...` reference). The picker never retrieves stored values. Boolean/select settings retain their
+literal controls and offer **Use config/secret reference**. The existing typed autocomplete still works.
+**Advanced: add a module setting** is for a documented custom module key, not for creating mapper fields.
+
+On delivery nodes, **Delivery compensation** selects an installed deliver module and its descriptor-driven
+settings. Choosing None removes it. Configure a named atomic scope on the route for it to be used.
+Changing the compensation module resets its module-specific settings to the new defaults; changing
+other node properties preserves the saved compensation.
+
+### UI access coverage and boundaries
+
+| Task | UI entry point |
+|---|---|
+| Flow CRUD, categories, copies, enable/disable and manual run | Dashboard cards, their title/configure links, and Flow overview. |
+| Source graph, lookup dependencies, stage modules and settings | Toolbox, canvas handles and node Properties. |
+| Parsed/XML field maps and transforms | Mapping Designer; click/drag fields and connections, choose transforms and edit their arguments. |
+| Joins, decisions, metadata, durable batching/state and renderer dispatch | Specialized node Properties editors and descriptor-driven settings. |
+| Flow/step retry and best-effort delivery compensation | Flow overview and node Properties. |
+| Checkpoint inspection and confirmed early batch release | Dashboard > Pending batches / orchestration checkpoints. |
+| Config/secrets, encryption, module catalog and hot reload | Configuration pages; refresh modules in an open Designer afterward. |
+| Encrypted backup, restore preview and confirmed bulk deletion | Backup & Restore. |
+
+Core authoring and administration are accessible without hand-authoring flow API requests. This is not
+universal graphical parity with every SDK language: SQL, XPath/XSLT, expression/program text and advanced
+JSON remain typed editors where applicable. Authoring/compiling DLLs, copying plugins and setting host
+keys/folders remain developer/deployment tasks. Exhausted source-outcome notification recovery remains
+an explicit API operation after operator review; the checkpoint UI does not offer destructive reset or
+indiscriminate replay. Import analysis/scaffold download is available in the Designer, but imported
+Billing execution remains blocked; this UI pass does not change compatibility or transaction guarantees.
 
 ### Adding or replacing a parser
 
@@ -1285,7 +1332,9 @@ flow list shows the ID as well. Names survive duplication, enable/disable, categ
 Search flows by name, ID, category, module, or source-node ID. Combine saved user-defined categories with
 status, trigger, module, and unresolved-configuration filters, sort by ID, and browse ten flows per page.
 Use **Categorize** to assign or clear a category; categories are saved in runtime state and retained
-when enabling a flow or saving it in the designer.
+when enabling a flow or saving it in the designer. Each dashboard flow has a stronger boundary and
+status stripe, a separate header/action area, metadata, labeled Augment/Render/Deliver tiles, and a
+checkpoint footer in both light and dark themes. Status remains written in text, not color alone.
 
 **Duplicate** asks for a unique new ID and copies the full definition, including category, settings,
 retry policies, and configuration references. Copies start disabled; review shared input locations,

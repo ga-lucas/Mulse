@@ -129,11 +129,11 @@
                     <div class="flow-list">
                         @foreach (var flow in VisibleFlows)
                         {
-                            <section class="flow-card" @key="flow.Id">
+                            <section class="flow-card dashboard-flow @(flow.Enabled ? "is-enabled" : "is-disabled")" @key="flow.Id" aria-label="@($"Flow {flow.DisplayName}")">
                                 <div class="flow-card-header">
                                     <div>
                                         <div class="flow-title">
-                                            <h3>@flow.DisplayName</h3>
+                                            <h3><a href="@($"/designer/{Uri.EscapeDataString(flow.Id)}")">@flow.DisplayName</a></h3>
                                             <span class="status-pill @(flow.Enabled ? "enabled" : null)">@(flow.Enabled ? "Enabled" : "Disabled")</span>
                                             <span class="status-pill">@(flow.Category ?? "Uncategorized")</span>
                                         </div>
@@ -217,10 +217,14 @@
                                         <dd>@(flow.Deliveries.Count == 0 ? "None" : flow.Deliveries.Count.ToString())</dd>
                                     </div>
                                 </dl>
-                                <p><strong>Augments:</strong> @FormatModules(flow.AugmentModules)</p>
-                                <p><strong>Renders:</strong> @FormatModules(flow.RenderModules)</p>
-                                <p><strong>Delivers:</strong> @FormatModules(flow.DeliverModules)</p>
-                                <FlowCheckpoints @key="flow.Id" FlowId="@flow.Id" AllowRelease="@(flow.Enabled && flow.Migration is null)" />
+                                <div class="flow-stage-summary" aria-label="Pipeline stages">
+                                    <section class="flow-stage stage-augment"><h4>Augment</h4><p>@FormatModules(flow.AugmentModules)</p></section>
+                                    <section class="flow-stage stage-render"><h4>Render</h4><p>@FormatModules(flow.RenderModules)</p></section>
+                                    <section class="flow-stage stage-deliver"><h4>Deliver</h4><p>@FormatModules(flow.DeliverModules)</p></section>
+                                </div>
+                                <div class="flow-operations">
+                                    <FlowCheckpoints @key="flow.Id" FlowId="@flow.Id" AllowRelease="@(flow.Enabled && flow.Migration is null)" />
+                                </div>
                             </section>
                         }
                     </div>
