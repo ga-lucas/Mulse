@@ -1,0 +1,104 @@
+@using System.Text.Json
+@using System.Text.Json.Serialization
+
+<fieldset>
+    <legend>Ordered renderer stages</legend>
+    <p>Each stage receives the entire previous output batch. Add stages and move them into execution order. Native pipelines work in scratch flows; they do not translate BizTalk components. Nested pipelines and dispatch stages are not supported.</p>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (!_loadFailed)
+    {
+        @foreach (var stage in _stages)
+        {
+            var index = _stages.IndexOf(stage);
+            var descriptor = Modules.FirstOrDefault(module => module.Kind == "Render" && module.Id.Equals(stage.Module, StringComparison.OrdinalIgnoreCase));
+            <fieldset @key="stage">
+                <legend>Stage @(index + 1)</legend>
+                <label>Renderer
+                    <select class="selector" aria-label="Pipeline stage renderer" value="@stage.Module" @onchange="@(args => ChangeModule(stage, args.Value?.ToString() ?? ""))">
+                        <option value="">Choose a renderer</option>
+                        @foreach (var module in Modules.Where(module => module.Kind == "Render" && !Excluded(module.Id)))
+                        { <option value="@module.Id">@module.DisplayName (@module.Id)</option> }
+                        @if (stage.Module.Length > 0 && (descriptor is null || Excluded(stage.Module)))
+                        { <option value="@stage.Module">@stage.Module (unavailable or unsupported)</option> }
+                    </select>
+                </label>
+                <p class="field-hint">Changing the renderer resets only this stage's settings.</p>
+                <ModuleSettingsFields Descriptor="descriptor" Settings="stage.Settings" References="References" Changed="Persist" />
+                <button type="button" class="secondary-button" disabled="@(index == 0)" @onclick="() => Move(stage, -1)">Move stage earlier</button>
+                <button type="button" class="secondary-button" disabled="@(index == _stages.Count - 1)" @onclick="() => Move(stage, 1)">Move stage later</button>
+                <button type="button" class="secondary-button" @onclick="() => Remove(stage)">Remove stage</button>
+            </fieldset>
+        }
+        <button type="button" class="secondary-button" disabled="@(_stages.Count >= 32)" @onclick="Add">Add renderer stage</button>
+    }
+    <details>
+        <summary>Advanced renderer stages JSON</summary>
+        <textarea class="mapping-input" aria-label="Renderer pipeline stages JSON" value="@Value" @onchange="ReplaceJson"></textarea>
+    </details>
+</fieldset>
+
+@code {
+    [Parameter] public string Value { get; set; } = "[]";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    [Parameter] public bool AllowEmpty { get; set; }
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+    private List<Stage> _stages = [];
+    private string? _loaded, _error;
+    private bool _loadFailed;
+    protected override void OnParametersSet()
+    {
+        if (_loaded != Value)
+        {
+            _loaded = Value; _error = null; _loadFailed = false;
+            try
+            {
+                if (Value.Length > 262144) throw new JsonException("Stages exceed 262144 characters.");
+                _stages = JsonSerializer.Deserialize<List<Stage>>(Value, Options) ?? throw new JsonException("Expected an array, not null.");
+                if (_stages.Count > 32 || _stages.Any(stage => stage is null || stage.Module is null || stage.Settings is null || stage.Settings.Any(pair => pair.Value is null)))
+                    throw new JsonException("Expected at most 32 non-null stages with non-null settings.");
+            }
+            catch (JsonException exception) { _loadFailed = true; _error = "Unable to edit stages: " + exception.Message + " Original JSON is preserved; repair it below."; }
+        }
+        if (!_loadFailed) Validate();
+    }
+    private static bool Excluded(string module) => module.Equals("render-pipeline", StringComparison.OrdinalIgnoreCase) || module.Equals("render-dispatch", StringComparison.OrdinalIgnoreCase);
+    private void Validate()
+    {
+        _error = _stages.Count == 0 && !AllowEmpty ? "Add at least one renderer stage before execution." :
+            _stages.Any(stage => string.IsNullOrWhiteSpace(stage.Module) || Excluded(stage.Module) || !Modules.Any(module => module.Kind == "Render" && module.Id.Equals(stage.Module, StringComparison.OrdinalIgnoreCase))
+                || stage.Settings.Count > 128 || stage.Settings.Any(pair => string.IsNullOrWhiteSpace(pair.Key)))
+            ? "Each stage needs a loaded renderer and valid settings. Unsupported or unavailable stages cannot execute." : null;
+    }
+    private async Task Persist()
+    {
+        Value = _loaded = JsonSerializer.Serialize(_stages, Options); Validate();
+        if (Value.Length > 262144) _error = "Stages exceed 262144 characters; reduce the definition before execution.";
+        await ValueChanged.InvokeAsync(Value);
+    }
+    private async Task Add() { if (_stages.Count >= 32) return; _stages.Add(new()); await Persist(); }
+    private async Task Remove(Stage stage) { _stages.Remove(stage); await Persist(); }
+    private async Task Move(Stage stage, int offset)
+    {
+        var index = _stages.IndexOf(stage); var target = index + offset;
+        if (index < 0 || target < 0 || target >= _stages.Count) return;
+        _stages.RemoveAt(index); _stages.Insert(target, stage); await Persist();
+    }
+    private async Task ChangeModule(Stage stage, string module)
+    {
+        if (stage.Module.Equals(module, StringComparison.OrdinalIgnoreCase)) return;
+        stage.Module = module; stage.Settings = Modules.FirstOrDefault(item => item.Id == module && item.Kind == "Render")?.Settings
+            .Where(setting => setting.DefaultValue is not null).ToDictionary(setting => setting.Key, setting => setting.DefaultValue!, StringComparer.OrdinalIgnoreCase) ?? [];
+        await Persist();
+    }
+    private async Task ReplaceJson(ChangeEventArgs args)
+    {
+        Value = args.Value?.ToString() ?? ""; _loaded = null; OnParametersSet(); await ValueChanged.InvokeAsync(Value);
+    }
+    private sealed class Stage
+    {
+        public string Module { get; set; } = "";
+        public Dictionary<string, string> Settings { get; set; } = [];
+    }
+}

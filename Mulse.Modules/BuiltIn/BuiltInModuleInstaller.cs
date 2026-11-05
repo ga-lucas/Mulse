@@ -10,6 +10,7 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
         builder.AddParse<JsonParseModule>();
         builder.AddOrchestrationAugment<JsonEnvelopeAugmentTransformModule>();
         builder.AddOrchestrationAugment<DecisionAugmentModule>();
+        builder.AddOrchestrationAugment<NativeControlFlowAugmentModule>();
         builder.AddOrchestrationAugment<XmlRulesAugmentModule>();
         builder.AddOrchestrationAugment<MultiSourceJoinMapAugmentModule>();
         builder.AddOrchestrationAugment<ParsedDataMapAugmentModule>();
@@ -22,6 +23,7 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
         builder.AddRender<JsonRenderModule>();
         builder.AddRender<XmlRenderModule>();
         builder.AddRender<RenderDispatchModule>();
+        builder.AddRender<RenderPipelineModule>();
         builder.AddDeliver<LoggingDeliverModule>();
         builder.AddDeliver<FileSystemDeliverModule>();
         builder.AddDeliver<HttpDeliverModule>();

@@ -48,6 +48,9 @@ public interface IMulseApiClient
 
     Task<FlowRunViewModel> ReleaseCollectedBatchAsync(string flowId, string instanceId, int expectedPayloadCount, CancellationToken cancellationToken);
 
+    Task<FlowRunViewModel> ReconcileNativeEffectAsync(string flowId, string instanceId, ReconcileNativeEffectRequestViewModel request, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support native effect reconciliation.");
+
     Task<FlowViewModel> SetFlowEnabledAsync(string flowId, bool enabled, CancellationToken cancellationToken);
 
     Task<FlowViewModel> DuplicateFlowAsync(string flowId, string newFlowId, CancellationToken cancellationToken);

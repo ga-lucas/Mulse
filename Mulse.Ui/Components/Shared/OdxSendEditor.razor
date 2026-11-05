@@ -1,0 +1,175 @@
+@using System.Text.Json
+@using System.Text.Json.Serialization
+
+<fieldset>
+    <legend>Outbound sends</legend>
+    <p>Select a program send, its delivery module and any ordered renderer stages. Responses use the request/reply port setting instead. This editor is available for native scratch programs as well as imported source; it does not approve imported execution.</p>
+    @if (_sourceError is not null) { <p class="status-banner error" role="alert">@_sourceError</p> }
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (!_loadFailed)
+    {
+        @foreach (var send in _sends)
+        {
+            var descriptor = Modules.FirstOrDefault(module => module.Kind == "Deliver" && module.Id.Equals(send.Module, StringComparison.OrdinalIgnoreCase));
+            <fieldset @key="send">
+                <legend>Send adapter</legend>
+                <label>Program send
+                    <select class="selector" aria-label="Outbound program send" value="@send.NodeId" @onchange="args => ChangeNode(send, args)">
+                        <option value="0">Choose a send</option>
+                        @foreach (var target in _targets.Where(target => target.Id == send.NodeId || !_sends.Any(other => other.NodeId == target.Id)))
+                        { <option value="@target.Id">@target.Label</option> }
+                        @if (send.NodeId != 0 && !_targets.Any(target => target.Id == send.NodeId))
+                        { <option value="@send.NodeId">Node @send.NodeId (missing or not an outbound send)</option> }
+                    </select>
+                </label>
+                <label>Delivery module
+                    <select class="selector" aria-label="Outbound delivery module" value="@send.Module" @onchange="@(args => ChangeModule(send, args.Value?.ToString() ?? ""))">
+                        <option value="">Choose delivery</option>
+                        @foreach (var module in Modules.Where(module => module.Kind == "Deliver"))
+                        { <option value="@module.Id">@module.DisplayName (@module.Id)</option> }
+                        @if (send.Module.Length > 0 && descriptor is null) { <option value="@send.Module">@send.Module (not loaded)</option> }
+                    </select>
+                </label>
+                <p class="field-hint">Changing delivery resets this send's delivery settings, not its renderer stages. Ambiguous send failures remain held; retries and compensation are not configured by this adapter.</p>
+                <ModuleSettingsFields Descriptor="descriptor" Settings="send.Settings" References="References" Changed="Persist" ExcludedKeys="ResponseKeys" />
+                <label class="field-label">Capture transport response</label>
+                <ReferenceInput Label="Capture transport response" InputKind="Boolean" Value="@send.Settings.GetValueOrDefault("expectsResponse", "false")" References="References"
+                                ValueChanged='value => SetResponse(send, value)' />
+                <p class="field-hint">Requires a request-response delivery module. Captures the transport reply; it does not route a named program receive.</p>
+                <RenderPipelineEditor Value="@(send.PipelineDraft ?? JsonSerializer.Serialize(send.Pipeline, Options))" ValueChanged="value => ChangePipeline(send, value)" Modules="Modules" References="References" AllowEmpty="true" />
+                <button type="button" class="secondary-button" @onclick="() => Remove(send)">Remove send adapter</button>
+            </fieldset>
+        }
+        <button type="button" class="secondary-button" disabled="@(_sends.Count >= 128 || !_targets.Any(target => !_sends.Any(send => send.NodeId == target.Id)))" @onclick="Add">Add send adapter</button>
+    }
+    <details>
+        <summary>Advanced outbound sends JSON</summary>
+        <textarea class="mapping-input" aria-label="Outbound sends JSON" value="@Settings.GetValueOrDefault("sendsJson", "[]")" @onchange="ReplaceJson"></textarea>
+    </details>
+</fieldset>
+
+@code {
+    [Parameter, EditorRequired] public Dictionary<string, string> Settings { get; set; } = [];
+    [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, MaxDepth = 256 };
+    private static readonly IReadOnlyList<string> ResponseKeys = ["expectsResponse"];
+    private List<Send> _sends = [];
+    private List<Target> _targets = [];
+    private string? _loaded, _source, _error, _sourceError;
+    private bool _loadFailed;
+    protected override void OnParametersSet()
+    {
+        var source = Settings.GetValueOrDefault("programJson", "");
+        if (_source != source)
+        {
+            _source = source; _sourceError = null; _targets = [];
+            try
+            {
+                if (source.Length > 8_000_000) throw new JsonException("Source program exceeds 8,000,000 characters.");
+                using var document = JsonDocument.Parse(source, new JsonDocumentOptions { MaxDepth = 256 });
+                if (document.RootElement.GetProperty("version").GetInt32() != 1) throw new JsonException("Expected a version-1 source program.");
+                var count = 0; var ids = new HashSet<int>();
+                void Visit(JsonElement nodes, int depth)
+                {
+                    if (depth > 64) throw new JsonException("Source exceeds 64 levels.");
+                    foreach (var node in nodes.EnumerateArray())
+                    {
+                        var id = node.GetProperty("id").GetInt32();
+                        if (++count > 10000 || !ids.Add(id)) throw new JsonException("Source must have at most 10000 unique nodes.");
+                        var properties = node.GetProperty("properties");
+                        if (node.GetProperty("shapeType").GetString() == "Send" && (!properties.TryGetProperty("OperationMessageName", out var operation) || operation.GetString() != "Response"))
+                        {
+                            string Property(string name) => properties.TryGetProperty(name, out var value) ? value.GetString() ?? "" : "";
+                            _targets.Add(new(id, $"{Property("Name")} — {Property("PortName")} / {Property("MessageName")} (node {id})"));
+                        }
+                        Visit(node.GetProperty("children"), depth + 1);
+                    }
+                }
+                Visit(document.RootElement.GetProperty("roots"), 0);
+            }
+            catch (Exception exception) when (exception is JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
+            { _targets = []; _sourceError = "Unable to list program sends: " + exception.Message + " Repair the private source program; adapters have not been replaced."; }
+        }
+        var json = Settings.GetValueOrDefault("sendsJson", "[]");
+        if (_loaded != json)
+        {
+            _loaded = json; _loadFailed = false; _error = null;
+            try
+            {
+                if (json.Length > 262144) throw new JsonException("Outbound sends exceed 262144 characters.");
+                _sends = JsonSerializer.Deserialize<List<Send>>(json, Options) ?? throw new JsonException("Expected an array, not null.");
+                if (_sends.Count > 128 || _sends.Any(send => send is null || send.Module is null || send.Settings is null || send.Settings.Any(pair => pair.Value is null)
+                    || send.Pipeline is null || send.Pipeline.Count > 32 || send.Pipeline.Any(stage => stage is null || stage.Module is null || stage.Settings is null || stage.Settings.Any(pair => pair.Value is null))))
+                    throw new JsonException("Expected at most 128 non-null sends, with non-null settings and at most 32 stages each.");
+            }
+            catch (JsonException exception) { _loadFailed = true; _error = "Unable to edit sends: " + exception.Message + " Original JSON is preserved; repair it below."; }
+        }
+        if (!_loadFailed) Validate();
+    }
+    private void Validate()
+    {
+        var ids = new HashSet<int>();
+        _error = _sends.Any(send => !_targets.Any(target => target.Id == send.NodeId) || !ids.Add(send.NodeId)
+            || !Modules.Any(module => module.Kind == "Deliver" && module.Id.Equals(send.Module, StringComparison.OrdinalIgnoreCase))
+            || send.Settings.Count > 128 || send.Settings.Keys.Any(string.IsNullOrWhiteSpace))
+            ? "Each adapter needs a unique existing outbound send, a loaded delivery module and valid settings. Invalid adapters cannot execute." : null;
+        if (_sends.Any(send => send.PipelineDraft is not null))
+            _error = "A renderer stages draft is invalid and has not been saved into its send adapter. Repair it before saving the flow.";
+        if (_sourceError is null && _targets.Any(target => !_sends.Any(send => send.NodeId == target.Id)))
+            _error ??= "Some program sends have no adapter. Configure every outbound send before execution.";
+    }
+    private Task Persist()
+    {
+        Settings["sendsJson"] = _loaded = JsonSerializer.Serialize(_sends, Options); Validate();
+        if (_loaded.Length > 262144) _error = "Outbound sends exceed 262144 characters; reduce the definition before execution.";
+        return Task.CompletedTask;
+    }
+    private async Task Add()
+    {
+        var target = _targets.FirstOrDefault(target => !_sends.Any(send => send.NodeId == target.Id));
+        if (target is null || _sends.Count >= 128) return;
+        _sends.Add(new() { NodeId = target.Id }); await Persist();
+    }
+    private async Task Remove(Send send) { _sends.Remove(send); await Persist(); }
+    private async Task SetResponse(Send send, string value) { send.Settings["expectsResponse"] = value; await Persist(); }
+    private async Task ChangeNode(Send send, ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out var id)) { send.NodeId = id; await Persist(); }
+    }
+    private async Task ChangeModule(Send send, string module)
+    {
+        if (send.Module.Equals(module, StringComparison.OrdinalIgnoreCase)) return;
+        send.Module = module; send.Settings = Modules.FirstOrDefault(item => item.Kind == "Deliver" && item.Id == module)?.Settings
+            .Where(setting => setting.DefaultValue is not null).ToDictionary(setting => setting.Key, setting => setting.DefaultValue!, StringComparer.OrdinalIgnoreCase) ?? [];
+        await Persist();
+    }
+    private async Task ChangePipeline(Send send, string value)
+    {
+        send.PipelineDraft = value;
+        try
+        {
+            if (value.Length > 262144) throw new JsonException("Stages exceed 262144 characters.");
+            var stages = JsonSerializer.Deserialize<List<Stage>>(value, Options) ?? throw new JsonException("Expected a stages array.");
+            if (stages.Count > 32 || stages.Any(stage => stage is null || stage.Module is null || stage.Settings is null || stage.Settings.Any(pair => pair.Value is null)))
+                throw new JsonException("Expected at most 32 non-null stages and settings.");
+            send.Pipeline = stages; send.PipelineDraft = null; await Persist();
+        }
+        catch (JsonException exception) { _error = "Invalid pipeline JSON: " + exception.Message + " The saved send pipeline has not been replaced; repair the visible draft."; }
+    }
+    private void ReplaceJson(ChangeEventArgs args) { Settings["sendsJson"] = args.Value?.ToString() ?? ""; _loaded = null; OnParametersSet(); }
+    private sealed record Target(int Id, string Label);
+    private sealed class Send
+    {
+        public int NodeId { get; set; }
+        public string Module { get; set; } = "";
+        public Dictionary<string, string> Settings { get; set; } = [];
+        public List<Stage> Pipeline { get; set; } = [];
+        [JsonIgnore] public string? PipelineDraft { get; set; }
+    }
+    private sealed class Stage
+    {
+        public string Module { get; set; } = "";
+        public Dictionary<string, string> Settings { get; set; } = [];
+    }
+}

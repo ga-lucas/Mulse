@@ -1,0 +1,214 @@
+@foreach (var node in Nodes)
+{
+    var index = Nodes.IndexOf(node);
+    <fieldset @key="node.Id">
+        <legend>@(string.IsNullOrWhiteSpace(node.Name) ? node.Kind : node.Name)</legend>
+        <label class="field-label">Node name <input class="mapping-input" @bind="node.Name" @bind:after="Notify" /></label>
+        <label class="field-label">Node kind
+            <select class="selector" value="@node.Kind" @onchange="args => ChangeKind(node, args.Value?.ToString())">
+                @foreach (var kind in Kinds) { <option value="@kind">@kind</option> }
+            </select>
+        </label>
+        <p class="field-hint">Changing kind resets module/condition settings, but retains child nodes. Remove incompatible children explicitly.</p>
+        @if (node.Kind == "Blocked")
+        {
+            <p class="status-banner error" role="alert">Unresolved: @node.BlockReason</p>
+            <label class="field-label">Blocking reason <input class="mapping-input" @bind="node.BlockReason" @bind:after="Notify" /></label>
+        }
+        @if (node.Kind is "SaveMessage" or "UseMessage" or "Reply" or "Receive" or "Deliver" or "CreateXmlMessage" or "CreateXmlRoot" or "AppendXmlMessage")
+        {
+            <label class="field-label">Named message
+                <input class="mapping-input" aria-label="Native named message" list="@(node.Id + "-messages")" @bind="node.MessageName" @bind:after="Notify" />
+                <datalist id="@(node.Id + "-messages")">@foreach (var name in MessageNames) { <option value="@name"></option> }</datalist>
+            </label>
+            <p class="field-hint">SaveMessage captures the working batch. UseMessage restores a copy. Receive names the accepted arrival. Reply captures the named batch; Deliver sends it without replacing other named messages.</p>
+        }
+        @if (node.Kind is "Wait" or "Receive")
+        {
+            <label class="field-label">@(node.Kind == "Wait" ? "Wait seconds" : "Receive timeout seconds (0 means no timeout)")
+                <input type="number" min="0" max="31622400" @bind="node.DurationSeconds" @bind:after="Notify" />
+            </label>
+        }
+        @if (node.Kind == "Receive")
+        {
+            <label class="field-label">Incoming channel <input class="mapping-input" @bind="node.Channel" @bind:after="Notify" /></label>
+            @foreach (var key in node.CorrelationKeys.ToArray())
+            {
+                var keyIndex = node.CorrelationKeys.IndexOf(key);
+                <label class="field-label">Pinned correlation metadata key <input class="mapping-input" value="@key" @onchange="args => ChangeCorrelation(node, keyIndex, args.Value?.ToString())" /></label>
+                <button type="button" class="secondary-button" @onclick="() => RemoveCorrelation(node, keyIndex)">Remove correlation key</button>
+            }
+            <button type="button" class="secondary-button" disabled="@(node.CorrelationKeys.Count >= 32)" @onclick="() => AddCorrelation(node)">Add correlation key</button>
+        }
+        @if (node.Kind is "Augment" or "Render" or "Deliver")
+        {
+            var descriptor = Modules.FirstOrDefault(module => module.Kind == ModuleKind(node.Kind) && module.Id.Equals(node.Module, StringComparison.OrdinalIgnoreCase));
+            <label class="field-label">Module
+                <select class="selector" value="@node.Module" @onchange="args => ChangeModule(node, args.Value?.ToString())">
+                    <option value="">Choose a module</option>
+                    @foreach (var module in Modules.Where(module => module.Kind == ModuleKind(node.Kind) && !Excluded(module.Id)))
+                    { <option value="@module.Id">@module.DisplayName (@module.Id)</option> }
+                    @if (node.Module.Length > 0 && (descriptor is null || Excluded(node.Module))) { <option value="@node.Module">@node.Module (unavailable or unsupported)</option> }
+                </select>
+            </label>
+            @if (node.Module == "render-pipeline")
+            {
+                <RenderPipelineEditor Value='@(node.Settings.GetValueOrDefault("stagesJson", "[]"))' ValueChanged='value => SetSetting(node, "stagesJson", value)' Modules="Modules" References="References" />
+            }
+            else if (node.Module is "render-dispatch" or "map-dispatch-augment")
+            {
+                <RenderDispatchEditor Settings="node.Settings" Modules="Modules" References="References" Changed="Notify" />
+            }
+            else
+            {
+                <ModuleSettingsFields Descriptor="descriptor" Settings="node.Settings" References="References" Changed="Notify" />
+            }
+        }
+        @if (node.Kind is "DeclareVariable" or "SetVariable")
+        {
+            <label class="field-label">Variable name <input class="mapping-input" @bind="node.Variable" @bind:after="Notify" /></label>
+            <p class="field-hint">Variables belong to this execution/instance and survive durable waits. Declare each once before use; assignments preserve the declared type. Scope-local declarations and implicit input facts are not inferred.</p>
+            @if (node.Kind == "DeclareVariable")
+            {
+                <label class="field-label">Declared type <select class="selector" @bind="node.VariableType" @bind:after="Notify"><option>String</option><option>Int32</option><option>Boolean</option></select></label>
+            }
+        }
+        @if (node.Kind is "If" or "While")
+        {
+            <label class="field-label">Predicate mode <select class="selector" value="@(node.Expression is null ? "Conditions" : "Expression")" @onchange="args => ChangePredicate(node, args.Value?.ToString())"><option>Conditions</option><option>Expression</option></select></label>
+            <p class="field-hint">Typed expressions use exact case-sensitive strings, Int32 arithmetic and short-circuit Boolean logic. Existing payload conditions retain case-insensitive comparisons.</p>
+        }
+        @if (node.Kind == "CreateXmlMessage")
+        {
+            <p class="field-hint">Creates/replaces a named XML payload from a String expression. XML is securely parsed; source metadata is not implicitly copied. The working payload and other named messages stay unchanged.</p>
+        }
+        @if (node.Kind == "CreateXmlRoot")
+        {
+            <p class="field-hint">Creates/replaces a named empty XML root with no inherited metadata. Choose the root local-name expression below and its namespace expression. Prefixed names and reserved namespaces fail.</p>
+            @if (node.NamespaceExpression is not null)
+            {
+                <fieldset><legend>Root namespace expression</legend><NativeExpressionEditor Value="node.NamespaceExpression" Variables="Variables" MessageNames="MessageNames" Changed="Changed" /></fieldset>
+            }
+        }
+        @if (node.Kind == "AppendXmlMessage")
+        {
+            <label class="field-label">Source XML message
+                <select class="selector" @bind="node.SourceMessage" @bind:after="Notify">
+                    <option value="">Choose a named source</option>
+                    @foreach (var name in MessageNames) { <option value="@name">@name</option> }
+                    @if (node.SourceMessage is { Length: > 0 } source && !MessageNames.Contains(source)) { <option value="@source">@source (not yet named)</option> }
+                </select>
+            </label>
+            <p class="field-hint">Appends a deep copy of the source's first/root element under the target root, preserving order and namespaces. One payload per message is required. Leading declarations, comments, processing instructions or whitespace fail rather than being skipped. Source, working payload and other copies stay unchanged. XML size/depth/node limits still apply.</p>
+        }
+        @if (node.Target is not null)
+        {
+            <fieldset><legend>Write target</legend><NativeMessageFactEditor Value="node.Target" MessageNames="MessageNames" Writable="true" Changed="Changed" /></fieldset>
+            <p class="field-hint">Writes a matching typed expression to one existing named XML scalar, or an exact metadata key. Missing/duplicate/nil XML targets and type mismatches fail. Other named messages and the working payload stay unchanged.</p>
+        }
+        @if (node.Expression is not null)
+        {
+            @if (node.Kind == "CreateXmlRoot") { <p class="field-label">Root local-name expression</p> }
+            <NativeExpressionEditor Value="node.Expression" Variables="Variables" MessageNames="MessageNames" Changed="Changed" />
+        }
+        @if (node.Expression is null && (node.Kind is "If" or "While" or "Receive"))
+        {
+            <p class="field-hint">All conditions must match. Requires exactly one payload; nest inside ForEach when processing a batch. Text comparisons use native case-insensitive semantics.</p>
+            @foreach (var condition in node.Conditions)
+            {
+                <fieldset @key="condition">
+                    <label class="field-label">Source <select class="selector" @bind="condition.Source" @bind:after="Notify">
+                        @foreach (var source in Sources) { <option value="@source">@source</option> }
+                    </select></label>
+                    <label class="field-label">Metadata key / JSON path / literal <input class="mapping-input" @bind="condition.Path" @bind:after="Notify" /></label>
+                    <label class="field-label">Comparison <select class="selector" @bind="condition.Operator" @bind:after="Notify">
+                        @foreach (var operation in Comparisons) { <option value="@operation">@operation</option> }
+                    </select></label>
+                    <label class="field-label">Value <input class="mapping-input" @bind="condition.Value" @bind:after="Notify" /></label>
+                    <button type="button" class="secondary-button" @onclick="() => RemoveCondition(node, condition)">Remove condition</button>
+                </fieldset>
+            }
+            <button type="button" class="secondary-button" disabled="@(node.Conditions.Count >= 32)" @onclick="() => AddCondition(node)">Add condition</button>
+        }
+        @if (node.Kind is "ForEach" or "While")
+        {
+            <label class="field-label">Maximum iterations <input type="number" min="1" max="10000" @bind="node.MaxIterations" @bind:after="Notify" /></label>
+            <p class="field-hint">ForEach processes original payloads in order and combines all outputs. While tests the updated output before each iteration and fails at its limit.</p>
+        }
+        @if (node.Kind is "Sequence" or "If" or "ForEach" or "While" or "Blocked" || node.Children.Count > 0)
+        {
+            <fieldset><legend>@(node.Kind == "If" ? "Then" : "Body")</legend>
+                <NativeFlowNodesEditor Nodes="node.Children" Modules="Modules" References="References" Changed="Changed" Depth="@(Depth + 1)" MessageNames="MessageNames" Variables="Variables" />
+            </fieldset>
+        }
+        @if (node.Kind == "If" || node.Otherwise.Count > 0)
+        {
+            <fieldset><legend>Else</legend>
+                <NativeFlowNodesEditor Nodes="node.Otherwise" Modules="Modules" References="References" Changed="Changed" Depth="@(Depth + 1)" MessageNames="MessageNames" Variables="Variables" />
+            </fieldset>
+        }
+        <button type="button" class="secondary-button" disabled="@(index == 0)" @onclick="() => Move(node, -1)">Move node earlier</button>
+        <button type="button" class="secondary-button" disabled="@(index == Nodes.Count - 1)" @onclick="() => Move(node, 1)">Move node later</button>
+        <button type="button" class="secondary-button" @onclick="() => Remove(node)">Remove node and children</button>
+    </fieldset>
+}
+<button type="button" class="secondary-button" disabled="@(Depth > 32 || Nodes.Count >= 1000)" @onclick="Add">Add native node</button>
+
+@code {
+    [Parameter, EditorRequired] public List<NativeFlowNodeViewModel> Nodes { get; set; } = [];
+    [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public int Depth { get; set; }
+    [Parameter] public IReadOnlyList<string> MessageNames { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> Variables { get; set; } = [];
+    private static readonly string[] Kinds = ["Sequence", "If", "ForEach", "While", "Augment", "Render", "Wait", "Receive", "SaveMessage", "UseMessage", "Reply", "Deliver", "DeclareVariable", "SetVariable", "CreateXmlMessage", "SetMessageValue", "CreateXmlRoot", "AppendXmlMessage", "Blocked"];
+    private static string ModuleKind(string kind) => kind == "Render" ? "Render" : kind == "Deliver" ? "Deliver" : "OrchestrationAugment";
+    private static readonly string[] Sources = ["Metadata", "Payload", "PayloadName", "ContentType", "Literal"];
+    private static readonly string[] Comparisons = ["Exists", "Equals", "NotEquals", "Contains", "StartsWith", "EndsWith", "In", "IsTrue", "IsFalse"];
+    private static bool Excluded(string id) => id is "native-control-flow-augment" or "odx-program-augment" or "stateful-orchestration-augment" or "durable-batch-augment";
+    private async Task AddCorrelation(NativeFlowNodeViewModel node) { node.CorrelationKeys.Add(""); await Notify(); }
+    private async Task ChangeCorrelation(NativeFlowNodeViewModel node, int index, string? value) { node.CorrelationKeys[index] = value ?? ""; await Notify(); }
+    private async Task RemoveCorrelation(NativeFlowNodeViewModel node, int index) { node.CorrelationKeys.RemoveAt(index); await Notify(); }
+    private Task Notify() => Changed.InvokeAsync();
+    private async Task Add() { Nodes.Add(new()); await Notify(); }
+    private async Task Remove(NativeFlowNodeViewModel node) { Nodes.Remove(node); await Notify(); }
+    private async Task Move(NativeFlowNodeViewModel node, int offset)
+    {
+        var index = Nodes.IndexOf(node); var target = index + offset;
+        if (index < 0 || target < 0 || target >= Nodes.Count) return;
+        Nodes.RemoveAt(index); Nodes.Insert(target, node); await Notify();
+    }
+    private async Task ChangeKind(NativeFlowNodeViewModel node, string? kind)
+    {
+        if (kind is null || kind == node.Kind || !Kinds.Contains(kind)) return;
+        node.Kind = kind; node.Module = ""; node.Settings.Clear(); node.Conditions.Clear();
+        node.MessageName = ""; node.Channel = ""; node.DurationSeconds = 0; node.CorrelationKeys.Clear();
+        node.Variable = kind is "DeclareVariable" or "SetVariable" ? "" : null;
+        node.VariableType = kind == "DeclareVariable" ? "String" : null;
+        node.Expression = kind is "DeclareVariable" or "SetVariable" or "CreateXmlMessage" or "SetMessageValue" or "CreateXmlRoot" ? new() : null;
+        node.Target = kind == "SetMessageValue" ? new() { Kind = "XmlString" } : null;
+        node.NamespaceExpression = kind == "CreateXmlRoot" ? new() : null;
+        node.SourceMessage = kind == "AppendXmlMessage" ? "" : null;
+        if (kind is "If" or "While") node.Conditions.Add(new());
+        await Notify();
+    }
+    private async Task ChangePredicate(NativeFlowNodeViewModel node, string? mode)
+    {
+        if (mode is not ("Conditions" or "Expression") || (mode == "Expression") == (node.Expression is not null)) return;
+        node.Conditions.Clear(); node.Expression = mode == "Expression" ? new() { Literal = new() { Type = "Boolean", Value = "false" } } : null;
+        if (mode == "Conditions") node.Conditions.Add(new());
+        await Notify();
+    }
+    private async Task ChangeModule(NativeFlowNodeViewModel node, string? module)
+    {
+        if (module is null || node.Module.Equals(module, StringComparison.OrdinalIgnoreCase)) return;
+        node.Module = module;
+        node.Settings = Modules.FirstOrDefault(item => item.Id.Equals(module, StringComparison.OrdinalIgnoreCase))?.Settings
+            .Where(setting => setting.DefaultValue is not null).ToDictionary(setting => setting.Key, setting => setting.DefaultValue!) ?? [];
+        await Notify();
+    }
+    private async Task SetSetting(NativeFlowNodeViewModel node, string key, string value) { node.Settings[key] = value; await Notify(); }
+    private async Task AddCondition(NativeFlowNodeViewModel node) { node.Conditions.Add(new()); await Notify(); }
+    private async Task RemoveCondition(NativeFlowNodeViewModel node, NativeFlowConditionViewModel condition) { node.Conditions.Remove(condition); await Notify(); }
+}

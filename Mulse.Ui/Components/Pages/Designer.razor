@@ -144,6 +144,8 @@
             <input id="additional-rule-paths" class="mapping-input" @bind="_additionalRulePaths" @bind:event="oninput" placeholder="C:\Exports\rules.xml" />
             <p class="field-hint">Semicolon-separated BRL export files. Versions and client rules are separate: each version can contain rules for many clients. No deployed version is inferred.</p>
 
+            <label class="field-label"><input type="checkbox" @bind="_generateNativeBizTalkFlow" /> Generate native control-flow draft</label>
+            <p class="field-hint">Uses native ordered nodes and exact logical port bindings. Unsupported statements/components remain explicit blockers. Does not execute ODX or approve imported execution.</p>
             <div class="action-row">
                 <button class="run-button" @onclick="AnalyzeBizTalkAsync" disabled="@_isAnalyzingBizTalk">@(_isAnalyzingBizTalk ? "Analyzing..." : "Analyze source")</button>
                 <button class="secondary-button" @onclick="ClearBizTalk" disabled="@_isAnalyzingBizTalk">Clear</button>
@@ -926,9 +928,18 @@
                 }
                 else if (node.ModuleId == "odx-program-augment")
                 {
-                    <p>Native durable subset only: original helpers, filtered receives and transaction scopes still require translation. Private source JSON is editable below; this does not approve imported execution.</p>
-                    @RenderSettingsEditor(catalogModule?.Settings.Where(setting => setting.Key != "casesJson").ToArray(), node.Settings)
+                    <p>Native durable subset: supported filters and scoped receive/send correlations execute with explicit bindings. Original helpers, transaction scopes and full source translation remain incomplete. Private source JSON is editable below; this does not approve imported execution.</p>
+                    @RenderSettingsEditor(catalogModule?.Settings.Where(setting => setting.Key is not ("casesJson" or "sendsJson")).ToArray(), node.Settings)
                     <RenderDispatchEditor @key="node.Id" Settings="node.Settings" Modules="_modules" References="_configReferences" OdxMode="true" />
+                    <OdxSendEditor @key='(node.Id, "sends")' Settings="node.Settings" Modules="_modules" References="_configReferences" />
+                }
+                else if (node.ModuleId == "native-control-flow-augment")
+                {
+                    <NativeFlowEditor @key="node.Id" Value='@(node.Settings.GetValueOrDefault("flowJson", "{\"version\":1,\"nodes\":[]}"))' ValueChanged='value => node.Settings["flowJson"] = value' Modules="_modules" References="_configReferences" />
+                }
+                else if (node.ModuleId == "render-pipeline")
+                {
+                    <RenderPipelineEditor @key="node.Id" Value="@node.Settings.GetValueOrDefault("stagesJson", "[]")" ValueChanged='value => node.Settings["stagesJson"] = value' Modules="_modules" References="_configReferences" />
                 }
                 else if (node.ModuleId is "render-dispatch" or "map-dispatch-augment")
                 {

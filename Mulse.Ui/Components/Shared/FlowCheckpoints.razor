@@ -15,6 +15,15 @@
                 <p><strong>@checkpoint.Bookmark</strong> - correlation: <code>@checkpoint.CorrelationKey</code></p>
                 <p>Instance: <code>@checkpoint.InstanceId</code>; updated: @checkpoint.UpdatedAt.ToString("u")</p>
                 <p>@checkpoint.PayloadCount payload(s); @checkpoint.PendingSourceCount pending source receipt(s).</p>
+                @if (checkpoint.Native)
+                {
+                    <p>Native persisted continuation. @(checkpoint.RecoveryPending ? "Held for recovery/completion. New runs are blocked; effects are not automatically replayed." : "Waiting for an eligible receive/deadline; sources remain pending.")</p>
+                    @if (checkpoint.DeadlineUtc is { } nativeDeadline) { <p>Native deadline (UTC): @nativeDeadline.ToString("u"). Enabled flows resume without fetching or replaying upstream steps.</p> }
+                    @if (checkpoint.RecoveryPending && checkpoint.EffectId is not null)
+                    {
+                        <NativeEffectRecoveryEditor FlowId="FlowId" Checkpoint="checkpoint" AllowResume="AllowRelease" Changed="RefreshAsync" />
+                    }
+                }
                 @if (checkpoint.TargetCount is { } count)
                 {
                     <p>Minimum count: @count. @(checkpoint.BatchReady == true ? "Released; awaiting completion or recovery. New runs are blocked to prevent replay." : "Collecting; sources remain pending.")</p>

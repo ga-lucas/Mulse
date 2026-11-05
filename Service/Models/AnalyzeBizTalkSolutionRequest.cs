@@ -30,4 +30,7 @@ public sealed record AnalyzeBizTalkSolutionRequest
 
     /// <summary>Explicit BRL XML policy/vocabulary exports. All policy versions are retained; none is silently selected as deployed.</summary>
     public IReadOnlyList<string> AdditionalRulePaths { get; init; } = [];
+
+    /// <summary>Generate a native control-flow review draft rather than heuristic augment proposals. Unsupported semantics remain explicit blockers.</summary>
+    public bool GenerateNativeFlow { get; init; }
 }

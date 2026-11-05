@@ -1,0 +1,68 @@
+<fieldset>
+    <legend>Typed native expression</legend>
+    <label class="field-label">Operation
+        <select class="selector" value="@Value.Kind" @onchange="ChangeKind">
+            @foreach (var kind in Kinds) { <option value="@kind">@kind</option> }
+        </select>
+    </label>
+    @if (Value.Kind == "Literal")
+    {
+        <label class="field-label">Literal type <select class="selector" value="@Value.Literal?.Type" @onchange="ChangeType">
+            @foreach (var type in Types) { <option value="@type">@type</option> }
+        </select></label>
+        @if (Value.Literal?.Type == "Boolean")
+        {
+            <label class="field-label">Boolean value <select class="selector" @bind="Value.Literal.Value" @bind:after="Notify"><option value="false">false</option><option value="true">true</option></select></label>
+        }
+        else if (Value.Literal is { Type: not "Null" } literal)
+        {
+            <label class="field-label">Literal value <input class="mapping-input" type="@(literal.Type == "Int32" ? "number" : "text")" @bind="literal.Value" @bind:after="Notify" /></label>
+        }
+    }
+    else if (Value.Kind == "Variable")
+    {
+        <label class="field-label">Variable
+            <select class="selector" @bind="Value.Variable" @bind:after="Notify">
+                <option value="">Choose declared variable</option>
+                @foreach (var name in Variables) { <option value="@name">@name</option> }
+                @if (!string.IsNullOrEmpty(Value.Variable) && !Variables.Contains(Value.Variable)) { <option value="@Value.Variable">@Value.Variable (undeclared)</option> }
+            </select>
+        </label>
+    }
+    @if (Value.Kind == "MessageValue" && Value.Fact is { } fact)
+    {
+        <NativeMessageFactEditor Value="fact" MessageNames="MessageNames" Changed="Changed" />
+    }
+    @for (var index = 0; index < Value.Operands.Count; index++)
+    {
+        <NativeExpressionEditor Value="Value.Operands[index]" Variables="Variables" MessageNames="MessageNames" Changed="Changed" Depth="@(Depth + 1)" />
+    }
+    @if (Depth >= 32) { <p class="field-hint">Maximum expression nesting reached. Choose a literal or variable here.</p> }
+</fieldset>
+
+@code {
+    [Parameter, EditorRequired] public NativeExpressionViewModel Value { get; set; } = new();
+    [Parameter] public IReadOnlyList<string> Variables { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> MessageNames { get; set; } = [];
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public int Depth { get; set; }
+    private static readonly string[] AllKinds = ["Literal", "Variable", "Not", "And", "Or", "Equal", "NotEqual", "Less", "LessOrEqual", "Greater", "GreaterOrEqual", "Add", "Subtract", "Multiply", "Divide", "Remainder", "Negate", "MessageValue"];
+    private IEnumerable<string> Kinds => Depth >= 32 ? AllKinds.Where(kind => kind is "Literal" or "Variable" or "MessageValue") : AllKinds;
+    private static readonly string[] Types = ["String", "Int32", "Boolean", "Null"];
+    private Task Notify() => Changed.InvokeAsync();
+    private async Task ChangeKind(ChangeEventArgs args)
+    {
+        if (args.Value is not string kind || !Kinds.Contains(kind) || kind == Value.Kind) return;
+        Value.Kind = kind; Value.Literal = kind == "Literal" ? new() : null; Value.Variable = kind == "Variable" ? "" : null;
+        Value.Fact = kind == "MessageValue" ? new() : null;
+        var arity = kind is "Literal" or "Variable" or "MessageValue" ? 0 : kind is "Not" or "Negate" ? 1 : 2;
+        Value.Operands = Enumerable.Range(0, arity).Select(_ => new NativeExpressionViewModel()).ToList();
+        await Notify();
+    }
+    private async Task ChangeType(ChangeEventArgs args)
+    {
+        if (Value.Literal is null || args.Value is not string type || !Types.Contains(type)) return;
+        Value.Literal.Type = type; Value.Literal.Value = type == "Int32" ? "0" : type == "Boolean" ? "false" : "";
+        await Notify();
+    }
+}

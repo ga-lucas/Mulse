@@ -37,7 +37,8 @@ public static class BizTalkMigrationEndpoints
                     SourcePath = request.SourcePath,
                     AdditionalSourcePaths = request.AdditionalSourcePaths,
                     AdditionalBindingPaths = request.AdditionalBindingPaths,
-                    AdditionalRulePaths = request.AdditionalRulePaths
+                    AdditionalRulePaths = request.AdditionalRulePaths,
+                    GenerateNativeFlow = request.GenerateNativeFlow
                 }, cancellationToken).ConfigureAwait(false);
 
                 var candidate = analysis.FlowCandidates.FirstOrDefault(flow => string.Equals(flow.SuggestedFlowId, request.SuggestedFlowId, StringComparison.OrdinalIgnoreCase))
@@ -136,7 +137,8 @@ public static class BizTalkMigrationEndpoints
             SourcePath = request.SourcePath,
             AdditionalSourcePaths = request.AdditionalSourcePaths,
             AdditionalBindingPaths = request.AdditionalBindingPaths,
-            AdditionalRulePaths = request.AdditionalRulePaths
+            AdditionalRulePaths = request.AdditionalRulePaths,
+            GenerateNativeFlow = request.GenerateNativeFlow
         }, cancellationToken).ConfigureAwait(false);
 
         return analysis.FlowCandidates.FirstOrDefault(flow => string.Equals(flow.SuggestedFlowId, request.SuggestedFlowId, StringComparison.OrdinalIgnoreCase))

@@ -24,4 +24,8 @@ public interface IFlowRuntime
 
     /// <summary>Explicitly retry exhausted source notifications, without fetching or delivering data again.</summary>
     Task<FlowExecutionResult> RetrySourceOutcomesAsync(string flowId, CancellationToken cancellationToken);
+
+    Task<FlowExecutionResult> ReconcileNativeEffectAsync(string flowId, string instanceId, string expectedEffectId, string evidence,
+        IntegrationBatch? output, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This runtime does not support native effect reconciliation.");
 }

@@ -1,0 +1,165 @@
+@using System.Text.Json
+@using System.Text.Json.Serialization
+
+<fieldset>
+    <legend>Native control flow</legend>
+    <p>Build native sequences, branches, loops and named-message operations. Enable durable execution for persisted waits, correlated receives and journaled effects. No ODX source is needed. Transactions are not emulated; ambiguous effects remain held for review, not blindly replayed.</p>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (!_loadFailed)
+    {
+        <label class="field-label"><input type="checkbox" @bind="_model.Durable" @bind:after="Persist" /> Durable execution</label>
+        @if (_model.Durable)
+        {
+            <label class="field-label">Instance metadata key <input class="mapping-input" @bind="_model.CorrelationMetadataKey" @bind:after="Persist" /></label>
+            <label class="field-label">Stable message ID metadata key <input class="mapping-input" @bind="_model.MessageIdMetadataKey" @bind:after="Persist" /></label>
+            <p class="field-hint">Each arrival needs a stable unique ID and a case-sensitive instance value. Receive channels use the incoming channel metadata. Source acknowledgements remain deferred until downstream success.</p>
+        }
+        <label class="field-label">Output named message (blank uses working batch) <input class="mapping-input" @bind="_model.OutputMessage" @bind:after="Persist" /></label>
+        <NativeFlowNodesEditor Nodes="_model.Nodes" Modules="Modules" References="References" Changed="Persist" MessageNames="SavedMessageNames" Variables="VariableNames" />
+    }
+    <details><summary>Advanced native definition JSON</summary>
+        <textarea class="mapping-input" aria-label="Native control-flow JSON" value="@Value" @onchange="ReplaceJson"></textarea>
+    </details>
+</fieldset>
+
+@code {
+    [Parameter] public string Value { get; set; } = "{\"version\":1,\"nodes\":[]}";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, MaxDepth = 128 };
+    private NativeFlowEditorModel _model = new();
+    private string? _loaded, _error;
+    private bool _loadFailed;
+    private IReadOnlyList<string> VariableNames => AllNodes(_model.Nodes).Where(node => node.Kind == "DeclareVariable" && !string.IsNullOrWhiteSpace(node.Variable)).Select(node => node.Variable!).Distinct(StringComparer.Ordinal).ToArray();
+    private IReadOnlyList<string> SavedMessageNames => AllNodes(_model.Nodes).Select(node => node.MessageName).Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal).ToArray();
+    private static IEnumerable<NativeFlowNodeViewModel> AllNodes(IEnumerable<NativeFlowNodeViewModel> nodes)
+    {
+        foreach (var node in nodes) { yield return node; foreach (var child in AllNodes(node.Children)) yield return child; foreach (var child in AllNodes(node.Otherwise)) yield return child; }
+    }
+    protected override void OnParametersSet()
+    {
+        if (_loaded == Value) return;
+        _loaded = Value; _error = null; _loadFailed = false;
+        try
+        {
+            if (Value.Length > 1_000_000) throw new JsonException("Definition exceeds 1,000,000 characters.");
+            var model = JsonSerializer.Deserialize<NativeFlowEditorModel>(Value, Options) ?? throw new JsonException("Expected a definition, not null.");
+            if (model.Version != 1 || model.Nodes is null || model.CorrelationMetadataKey is null || model.MessageIdMetadataKey is null || model.OutputMessage is null)
+                throw new JsonException("Expected version 1, a nodes array and non-null metadata keys.");
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            void Check(List<NativeFlowNodeViewModel> nodes, int depth)
+            {
+                if (nodes.Count > 0 && depth > 32) throw new JsonException("Definition exceeds 32 levels.");
+                foreach (var node in nodes)
+                {
+                    if (node is null || node.Id is null || !ids.Add(node.Id) || ids.Count > 1000 || node.Name is null || node.Module is null
+                        || node.Settings is null || node.Conditions is null || node.Children is null || node.Otherwise is null || node.BlockReason is null
+                        || node.Kind is not ("Sequence" or "If" or "ForEach" or "While" or "Augment" or "Render" or "Blocked" or "Wait" or "Receive" or "SaveMessage" or "UseMessage" or "Reply" or "Deliver" or "DeclareVariable" or "SetVariable" or "CreateXmlMessage" or "SetMessageValue" or "CreateXmlRoot" or "AppendXmlMessage")
+                        || node.MessageName is null || node.Channel is null || node.CorrelationKeys is null || node.CorrelationKeys.Any(key => key is null)
+                        || node.Settings.Any(pair => pair.Value is null) || node.Conditions.Any(condition => condition is null || condition.Source is null || condition.Path is null || condition.Operator is null))
+                        throw new JsonException("Expected at most 1000 unique nodes with known kinds and non-null fields.");
+                    if (node.Expression is not null) CheckExpression(node.Expression);
+                    if (node.NamespaceExpression is not null) CheckExpression(node.NamespaceExpression);
+                    if (node.Target is not null) CheckExpression(new() { Kind = "MessageValue", Literal = null, Fact = node.Target });
+                    Check(node.Children, depth + 1); Check(node.Otherwise, depth + 1);
+                }
+            }
+            Check(model.Nodes, 0); _model = model; ValidateDraft();
+        }
+        catch (JsonException exception) { _loadFailed = true; _error = "Unable to edit native flow: " + exception.Message + " Original JSON is preserved; repair it below."; }
+    }
+    private static void CheckExpression(NativeExpressionViewModel expression)
+    {
+        var count = 0;
+        void Visit(NativeExpressionViewModel value, int depth)
+        {
+            if (value is null || depth > 32 || ++count > 256 || value.Operands is null
+                || value.Kind is not ("Literal" or "Variable" or "Not" or "And" or "Or" or "Equal" or "NotEqual" or "Less" or "LessOrEqual" or "Greater" or "GreaterOrEqual" or "Add" or "Subtract" or "Multiply" or "Divide" or "Remainder" or "Negate" or "MessageValue")
+                || (value.Kind == "Literal") != (value.Literal is not null) || (value.Kind == "Variable") != (value.Variable is not null)
+                || (value.Kind == "MessageValue") != (value.Fact is not null)
+                || value.Operands.Count != (value.Kind is "Literal" or "Variable" or "MessageValue" ? 0 : value.Kind is "Not" or "Negate" ? 1 : 2)
+                || value.Literal is { } literal && (literal.Type is not ("String" or "Int32" or "Boolean" or "Null") || literal.Value is null))
+                throw new JsonException("Expected a bounded typed expression tree with active operands only.");
+            if (value.Fact is { } fact && (fact.Kind is not ("Metadata" or "XmlText" or "XmlCount" or "XmlExists" or "XmlString" or "XmlInt32" or "XmlBoolean")
+                || fact.MessageName is null || fact.MetadataKey is null || fact.Steps is null || fact.Steps.Count > 32
+                || fact.Steps.Any(step => step is null || step.Name is null || step.Namespace is null)))
+                throw new JsonException("Expected a bounded message fact with known kind and non-null XML path steps.");
+            foreach (var operand in value.Operands) Visit(operand, depth + 1);
+        }
+        Visit(expression, 0);
+    }
+    private static bool CompleteExpression(NativeExpressionViewModel value)
+    {
+        if (value.Kind == "Variable" && (string.IsNullOrWhiteSpace(value.Variable) || value.Variable.Length > 128
+            || !(char.IsAsciiLetter(value.Variable[0]) || value.Variable[0] == '_') || value.Variable.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '_'))) return false;
+        if (value.Literal is { } literal && (literal.Value.Length > 4096 || literal.Type == "Boolean" && literal.Value is not ("true" or "false")
+            || literal.Type == "Null" && literal.Value != "" || literal.Type == "Int32" && !int.TryParse(literal.Value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out _))) return false;
+        if (value.Fact is { } fact && !CompleteFact(fact)) return false;
+        return value.Operands.All(CompleteExpression);
+    }
+    private static bool CompleteFact(NativeMessageFactViewModel fact)
+    {
+        if (fact.MessageName.Length > 128 || fact.MessageName != fact.MessageName.Trim()) return false;
+        if (fact.Kind == "Metadata") return !string.IsNullOrWhiteSpace(fact.MetadataKey) && fact.MetadataKey.Length <= 2048 && fact.Steps.Count == 0;
+        if (fact.MetadataKey.Length != 0 || fact.Steps.Count == 0
+            || (fact.Kind is "XmlString" or "XmlInt32" or "XmlBoolean") && fact.Steps.Any(step => step.Attribute)) return false;
+        for (var index = 0; index < fact.Steps.Count; index++)
+        {
+            var step = fact.Steps[index];
+            if (step.Name.Length is 0 or > 256 || step.Namespace.Length > 2048 || step.Attribute && (index == 0 || index != fact.Steps.Count - 1)) return false;
+            try { System.Xml.XmlConvert.VerifyNCName(step.Name); }
+            catch (System.Xml.XmlException) { return false; }
+        }
+        return true;
+    }
+    private void ValidateDraft()
+    {
+        IEnumerable<NativeFlowNodeViewModel> All(IEnumerable<NativeFlowNodeViewModel> nodes)
+        {
+            foreach (var node in nodes)
+            {
+                yield return node;
+                foreach (var child in All(node.Children)) yield return child;
+                foreach (var child in All(node.Otherwise)) yield return child;
+            }
+        }
+        var nodes = All(_model.Nodes).ToArray();
+        _error = Value.Length > 1_000_000 || nodes.Length > 1000 ? "Definition exceeds its size/node limits; reduce it before execution." :
+            nodes.Any(node => node.Kind == "Blocked") ? "This definition contains unresolved nodes. All blockers must be implemented before execution, including unselected branches." :
+            nodes.Any(node => string.IsNullOrWhiteSpace(node.Id) || node.Id.Length > 128 || node.Settings.Count > 128
+                || (node.Kind is "If" or "While") && node.Expression is null && (node.Conditions.Count is < 1 or > 32)
+                || (node.Kind is "DeclareVariable" or "SetVariable") && (string.IsNullOrWhiteSpace(node.Variable) || node.Expression is null)
+                || node.Kind == "DeclareVariable" && node.VariableType is not ("String" or "Int32" or "Boolean")
+                || node.Expression is not null && (!CompleteExpression(node.Expression) || node.Conditions.Count != 0
+                    || node.Kind is not ("DeclareVariable" or "SetVariable" or "If" or "While" or "CreateXmlMessage" or "SetMessageValue" or "CreateXmlRoot"))
+                || (node.Kind is "CreateXmlMessage" or "SetMessageValue" or "CreateXmlRoot") && node.Expression is null
+                || (node.Kind == "CreateXmlRoot") != (node.NamespaceExpression is not null)
+                || node.NamespaceExpression is not null && !CompleteExpression(node.NamespaceExpression)
+                || (node.Kind == "AppendXmlMessage") != (node.SourceMessage is not null)
+                || node.SourceMessage is { } source && (string.IsNullOrWhiteSpace(source) || source.Length > 128 || source != source.Trim())
+                || (node.Kind is "CreateXmlRoot" or "AppendXmlMessage") && node.Children.Count > 0
+                || (node.Kind == "SetMessageValue") != (node.Target is not null)
+                || node.Target is { } target && (!CompleteFact(target) || target.MessageName.Length == 0 || target.Kind is not ("Metadata" or "XmlString" or "XmlInt32" or "XmlBoolean"))
+                || (node.Kind is "ForEach" or "While") && (node.MaxIterations is < 1 or > 10000)
+                || node.Kind != "If" && node.Otherwise.Count > 0
+                || (node.Kind is "Augment" or "Render" or "Deliver") && (node.Children.Count > 0 || !Modules.Any(module => module.Id.Equals(node.Module, StringComparison.OrdinalIgnoreCase)
+                    && module.Kind == (node.Kind == "Render" ? "Render" : node.Kind == "Deliver" ? "Deliver" : "OrchestrationAugment")))
+                || (node.Kind is "SaveMessage" or "UseMessage" or "Reply" or "Receive" or "Deliver" or "CreateXmlMessage" or "CreateXmlRoot" or "AppendXmlMessage") && string.IsNullOrWhiteSpace(node.MessageName)
+                || node.Kind == "Wait" && node.DurationSeconds <= 0 || node.DurationSeconds is < 0 or > 31622400
+                || node.Kind == "Receive" && (string.IsNullOrWhiteSpace(node.Channel) || node.CorrelationKeys.Any(string.IsNullOrWhiteSpace))
+                || !_model.Durable && (node.Kind is "Wait" or "Receive" or "Deliver" or "CreateXmlMessage" or "SetMessageValue" or "CreateXmlRoot" or "AppendXmlMessage")
+                || _model.Durable && (string.IsNullOrWhiteSpace(_model.CorrelationMetadataKey) || string.IsNullOrWhiteSpace(_model.MessageIdMetadataKey))
+                || node.Conditions.Any(condition => (condition.Source is "Metadata" or "Payload" or "Literal") && string.IsNullOrWhiteSpace(condition.Path)))
+            ? "Some nodes are incomplete or incompatible. Choose loaded modules, valid conditions and loop limits; remove inactive branches/children before execution." : null;
+    }
+    private async Task Persist()
+    {
+        Value = _loaded = JsonSerializer.Serialize(_model, Options); ValidateDraft();
+        await ValueChanged.InvokeAsync(Value);
+    }
+    private async Task ReplaceJson(ChangeEventArgs args)
+    {
+        Value = args.Value?.ToString() ?? ""; _loaded = null; OnParametersSet(); await ValueChanged.InvokeAsync(Value);
+    }
+}

@@ -19,7 +19,9 @@ public static class XmlMappingSchemas
         return ReadXml(new string(characters, 0, length));
     }
 
-    public static XDocument ReadXml(string text)
+    public static XDocument ReadXml(string text) => ReadXml(text, preserveWhitespace: false);
+
+    public static XDocument ReadXml(string text, bool preserveWhitespace)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length > MaximumCharacters)
             throw new ArgumentException("XML is required and must not exceed 1,000,000 characters.");
@@ -35,7 +37,7 @@ public static class XmlMappingSchemas
                 }
             }
             using var reader = XmlReader.Create(new StringReader(text), Settings());
-            return XDocument.Load(reader, LoadOptions.SetLineInfo);
+            return XDocument.Load(reader, LoadOptions.SetLineInfo | (preserveWhitespace ? LoadOptions.PreserveWhitespace : LoadOptions.None));
         }
         catch (XmlException exception) { throw new ArgumentException($"Invalid mapping/schema XML: {exception.Message}", exception); }
     }

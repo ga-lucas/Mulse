@@ -87,6 +87,31 @@ internal sealed class BizTalkSchemaSourceCatalog
             matches.Take(MaximumCandidates).ToArray(), _warningCount, limitation);
     }
 
+    public IReadOnlyList<string> ReadSchemaDocuments(string sourcePath)
+    {
+        XNamespace xs = "http://www.w3.org/2001/XMLSchema";
+        var declared = _byClass.Values.SelectMany(matches => matches).Select(candidate => candidate.SourcePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var documents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        void Read(string path)
+        {
+            if (documents.ContainsKey(path)) return;
+            if (!declared.Contains(path) || documents.Count >= 16) throw new NotSupportedException("Schema imports require exact declared source files and at most 16 documents.");
+            var document = XmlMappingSchemas.ReadXmlFile(path);
+            if (document.Root?.Name != xs + "schema") throw new NotSupportedException("Declared schema source is not XSD.");
+            documents.Add(path, document.ToString(SaveOptions.DisableFormatting));
+            foreach (var import in document.Root.Elements().Where(element => element.Name == xs + "import" || element.Name == xs + "include" || element.Name == xs + "redefine"))
+            {
+                var location = (string?)import.Attribute("schemaLocation");
+                if (import.Name != xs + "import" || !Literal(location) || Uri.TryCreate(location, UriKind.Absolute, out _)
+                    || Path.IsPathRooted(location!)) throw new NotSupportedException("Only explicit relative XSD imports of declared project files are supported; no resolver or external URL is used.");
+                var target = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, location!.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar)));
+                Read(target);
+            }
+        }
+        Read(sourcePath);
+        return documents.Values.ToArray();
+    }
+
     private void Warn(string message)
     {
         _warningCount++;

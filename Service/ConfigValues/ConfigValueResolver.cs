@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Mulse.Modules;
 
@@ -96,7 +98,7 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
         return new ModuleStepDefinition
         {
             Module = step.Module,
-            Settings = ResolveSettings(step.Settings, configValues, missingReferences),
+            Settings = ResolveSettings(step.Module, step.Settings, configValues, missingReferences),
             Retry = step.Retry
         };
     }
@@ -115,16 +117,46 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
         };
     }
 
-    private static Dictionary<string, string> ResolveSettings(Dictionary<string, string> settings, IReadOnlyDictionary<string, string> configValues, List<string> missingReferences)
+    private static Dictionary<string, string> ResolveSettings(string module, Dictionary<string, string> settings, IReadOnlyDictionary<string, string> configValues, List<string> missingReferences)
     {
         var resolved = new Dictionary<string, string>(settings, StringComparer.OrdinalIgnoreCase);
-
+        var structured = module.Equals("render-pipeline", StringComparison.OrdinalIgnoreCase)
+            || module.Equals("render-dispatch", StringComparison.OrdinalIgnoreCase) || module.Equals("map-dispatch-augment", StringComparison.OrdinalIgnoreCase)
+            || module.Equals("odx-program-augment", StringComparison.OrdinalIgnoreCase);
         foreach (var (key, value) in settings)
         {
-            resolved[key] = Substitute(value, configValues, missingReferences.Add);
+            resolved[key] = module.Equals("native-control-flow-augment", StringComparison.OrdinalIgnoreCase) && key.Equals("flowJson", StringComparison.OrdinalIgnoreCase)
+                ? SubstituteJson(value, configValues, missingReferences.Add, sizeLimit: 1_000_000)
+                : structured && key is "stagesJson" or "casesJson" or "sendsJson"
+                    ? SubstituteJson(value, configValues, missingReferences.Add) : Substitute(value, configValues, missingReferences.Add);
         }
-
         return resolved;
+    }
+
+    internal static string SubstituteJson(string value, IReadOnlyDictionary<string, string>? configValues, Action<string> onMissing, int depth = 0, bool dependenciesOnly = false, int sizeLimit = 262144)
+    {
+        if (depth > 8 || value.Length > sizeLimit) throw new ArgumentException("Structured configuration exceeds its JSON depth or size limit.");
+        var token = TokenPattern().Match(value);
+        // A whole-value reference contains the definition, not an escaped JSON string. Stored values are never expanded recursively.
+        if (token.Success && token.Index == 0 && token.Length == value.Length) return Substitute(value, configValues, onMissing);
+        var maxDepth = sizeLimit == 1_000_000 ? 128 : 64;
+        JsonNode root;
+        try { root = JsonNode.Parse(value, documentOptions: new JsonDocumentOptions { MaxDepth = maxDepth }) ?? throw new ArgumentException("Structured configuration JSON cannot be null."); }
+        catch (JsonException exception) { throw new ArgumentException("Invalid structured configuration JSON.", exception); }
+        JsonNode? Visit(JsonNode? node, string? key, int level)
+        {
+            if (level > maxDepth) throw new ArgumentException($"Structured configuration JSON exceeds {maxDepth} levels.");
+            if (node is JsonValue scalar && scalar.TryGetValue<string>(out var text))
+                return JsonValue.Create(key is "stagesJson" or "casesJson" or "sendsJson" or "policyJson" or "mappingJson" or "decisionJson" or "promotionsJson"
+                    ? SubstituteJson(text, configValues, onMissing, depth + 1, dependenciesOnly)
+                    : dependenciesOnly && key != "module" ? text : Substitute(text, configValues, onMissing));
+            if (node is JsonObject record)
+                return new JsonObject(record.Select(pair => new KeyValuePair<string, JsonNode?>(pair.Key, Visit(pair.Value, pair.Key, level + 1))));
+            if (node is JsonArray array)
+                return new JsonArray(array.Select(item => Visit(item, null, level + 1)).ToArray());
+            return node?.DeepClone();
+        }
+        return Visit(root, null, 0)!.ToJsonString();
     }
 
     internal static string Substitute(string value, IReadOnlyDictionary<string, string>? configValues, Action<string> onMissing)

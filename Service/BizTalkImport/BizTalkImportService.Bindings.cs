@@ -76,7 +76,13 @@ public sealed partial class BizTalkImportService
                 .Select(service => new BindingServiceAnalysis(
                     (module.Attribute("Name")?.Value ?? "").Split(',')[0].Trim(),
                     service.Attribute("Name")?.Value ?? "",
-                    PortReferences(service, "SendPortRef"), PortReferences(service, "ReceivePortRef"))))
+                    PortReferences(service, "SendPortRef"), PortReferences(service, "ReceivePortRef"))
+                {
+                    LogicalPorts = service.Elements().Where(element => element.Name.LocalName == "Ports")
+                        .SelectMany(element => element.Elements().Where(port => port.Name.LocalName == "Port"))
+                        .Select(port => new BindingLogicalPortAnalysis(port.Attribute("Name")?.Value ?? "",
+                            DirectReferences(port, "SendPortRef"), DirectReferences(port, "ReceivePortRef"))).ToArray()
+                }))
             .ToArray();
         return new BindingFileAnalysis(
             Path.GetFileName(filePath),
@@ -88,6 +94,8 @@ public sealed partial class BizTalkImportService
             .Where(element => element.Name.LocalName == "Ports").SelectMany(element => element.Descendants())
             .Where(element => element.Name.LocalName == kind).Select(element => element.Attribute("Name")?.Value ?? "")
             .Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal).ToArray();
+        static string[] DirectReferences(XElement port, string kind) => port.Descendants().Where(element => element.Name.LocalName == kind)
+            .Select(element => element.Attribute("Name")?.Value ?? "").Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal).ToArray();
     }
 
     private static ReceivePortAnalysis ParseReceivePort(XElement portElement)

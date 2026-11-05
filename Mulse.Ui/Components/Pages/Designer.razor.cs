@@ -124,6 +124,7 @@ public partial class Designer : IAsyncDisposable
     private string _additionalSourcePaths = string.Empty;
     private string _additionalBindingPaths = string.Empty;
     private string _additionalRulePaths = string.Empty;
+    private bool _generateNativeBizTalkFlow = true;
     private BizTalkSolutionAnalysisViewModel? _bizTalkAnalysis;
 
     private bool IsExistingFlow => !string.IsNullOrWhiteSpace(FlowId);
@@ -714,9 +715,9 @@ public partial class Designer : IAsyncDisposable
             }
 
             var routes = Routes;
-            if (routes.Count == 0)
+            if (routes.Count == 0 && !_nodes.Any(node => node.Stage == NodeStage.Augment && node.ModuleId == "native-control-flow-augment"))
             {
-                throw new InvalidOperationException("At least one delivery route is required.");
+                throw new InvalidOperationException("At least one delivery route or native control-flow block with internal delivery/reply behavior is required.");
             }
 
             foreach (var route in routes)

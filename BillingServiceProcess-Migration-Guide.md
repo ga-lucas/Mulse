@@ -164,6 +164,116 @@ wiring remain open. Original helpers remain deliberately untranslated. Atomic/lo
 explicitly rejected, not represented by local checkpoint writes. No source-oracle Billing end-to-end parity is
 claimed and no imported execution gate has changed.
 
+Native capabilities are also exposed for flows built from scratch: **Ordered renderer pipeline** Properties
+supports visual stage selection, settings and reordering; **Durable ODX program > Outbound sends** supports
+named send selection, delivery settings, optional response capture and the same outbound stage editor.
+These reuse installed/hot-loadable native modules; they are not implementations of Billing's missing maps,
+pipeline components or helpers. Source program authoring is still typed JSON, not a visual control-flow builder.
+
+## Native-only migration direction (2026-11-05)
+
+The selected execution target is native-only flows, not completing Billing against the ODX interpreter first.
+The first native control-flow foundation now provides source-independent Sequence, If/Else, ForEach and bounded
+While nodes, with visual authoring, installed augment/render invocation and full nested dependency checks.
+Synthetic fixtures exercise both branches, ordered payload processing, real native XML rules/map dispatch,
+loop limits and fail-before-fetch missing dependencies. This is not imported Billing execution evidence.
+
+Native durable blocks now persist waits/receives, named batches, execution cursors and activity-effect intent.
+Timer continuation skips source/upstream replay; ambiguous effects remain held rather than automatically resent.
+The UI exposes durable IDs, channels, correlations, named-message operations and checkpoint holds. This is not
+DTC or automatic transaction compensation. Existing ODX checkpoints are neither rewritten nor discarded.
+
+Opt-in native draft generation (default in the import UI) translates safe ordered structure, simple receives,
+exact named-message copies and uniquely owned physical sends/replies. Logical port references are preserved
+from the supplied bindings rather than selected by endpoint/name similarity. Native JSON is downloadable.
+Service-level String/Int32/Boolean declarations, supported complete scalar statements, first-match decisions
+and bounded loops now translate to native typed trees. They are visually editable and survive durable restart.
+Complete XPath count/string/boolean reads of declared messages now translate to native expanded-name selectors
+for absolute child/attribute paths. Billing's seven complete counting blocks retain all 21 XML reads, additions
+and final source overrides; comments are recognized lexically, not executed or stored in the native expression.
+No XPath/source interpreter runs at execution time. Native scratch flows can author XML and explicit metadata
+facts with graphical controls and clickable unsaved sample paths.
+Exact distinguished schema members now resolve from unique declared XSD ownership and compiled explicit relative
+imports of declared schema files, with built-in String/Int32/Boolean types and exact nonrepeating element paths.
+Native XmlString/XmlInt32/XmlBoolean reads fail on missing/duplicate/nil/invalid fields rather than guessing values.
+Complete source LoadXml/copy/typed-member-write blocks now compile to CreateXmlMessage/SetMessageValue nodes.
+Construct-owned message references are retained as structural declarations. Source scalar defaults are null/zero/false.
+The same operations are graphically authorable from scratch: choose a named message, target path/key and value
+expression; sample-path clicks never persist the sample. Created XML inherits no implicit metadata; writes change
+only the named snapshot. Synthetic imported construction/copy/typed writes/reply survive disk restart without
+changing the source or other copies. Unsupported field types/ownership/context properties remain explicit blockers.
+
+Native XML accumulation now translates the trailer batch's dynamic empty-prefix root construction, header/body
+initialization, subsequent body append and trailer append: one CreateXmlRoot and four AppendXmlMessage nodes.
+The main service similarly translates one root and three fragment appends. Temporary XmlElement aliases are
+eliminated only in a complete root-construction block with proven lexical ownership; their enclosing scopes and
+transactions stay blocked. These reusable operations are also fully graphical for scratch flows. They preserve
+ordered fragments, namespaces, CDATA and internal comments/PIs; named copies remain independent over disk restart.
+The append requires one payload per named message and its first document node to be the root element. Leading
+XML declarations/comments/PIs/whitespace fail explicitly instead of being skipped. Combined output is checked
+against the existing character/depth/node limits before replacement. Synthetic import fixtures verify actual
+execution/restart/reply, bounds and graphical authoring; analysis of Billing itself verifies translation only.
+This does not implement the partner maps producing those fragments or prove Billing batch parity. All generic
+composition belongs to the native runtime; sample-specific transforms/modules belong in `Mulse.Billing`.
+
+Unsupported helpers, general XPath/schema members, scope/transaction/pipeline behavior and unproven policy fact wiring
+remain explicit structured Blocked nodes. Supplied BRL policy proposals are attached as review evidence at
+call sites, not assumed deployed-version/fact parity. Their absence is not the blocker. All imported flows
+remain disabled; synthetic native fixture success is not actual Billing end-to-end business verification.
+
+### Native Billing modules now available separately
+
+The new `Mulse.Billing` SDK-only plugin independently implements four explicit native activities:
+
+| Module | Native capability | UI location |
+|---|---|---|
+| `billing-filename-transform` | One-text-input filename macros | Map parsed data transform selector |
+| `billing-filename-augment` | Literal/exact-metadata template to a configured metadata key | Augment toolbox / Native control flow Augment |
+| `billing-field-augment` | Exact CommonBilling schema field to explicit text metadata | Augment toolbox / Native control flow Augment |
+| `billing-remove-namespaces-render` | Namespace-removal XML renderer with collision rejection | Renderer selector / Ordered renderer pipeline |
+
+Build `Mulse.slnx`, then enable **Mulse.Billing** in **Modules**. A scratch native flow can select **Read
+CommonBilling field**, choose **TargetLocation** and `billing.TargetLocation`, then **Expand Billing target
+filename** using that exact metadata key and a chosen output key. Configure the original server's time zone
+and culture explicitly; defaults are UTC/Invariant, not inferred deployment settings. Later delivery must opt in
+to the output metadata: these modules do not change destinations or send messages. Renderer selection and
+all helper settings use existing graphical controls; no handwritten native-flow JSON is required.
+
+Field reads require `{http://Shs.SpaceTrax2.Interfaces.Core.Schemas.Services.Billing.CommonBilling}Billing`
+and the source schema's unqualified ConfigurationInfo/Details children. Thirteen nonsensitive promoted fields
+are selectable; credential/certificate fields are excluded. Values remain text. Missing/duplicate/complex/nil
+or oversized fields fail; no defaults, namespace guesses or automatic BRE fact binding are supplied.
+
+The filename helper supports the source's DATE/DATETIME/TIME/UTC/DAY/GUID/TICKS/SECONDS macros, bounded to
+4096 characters. SECONDS retains the 2001-01-01 local-wall-clock epoch. Execution-start snapshot and explicit
+zone/culture deliberately replace ambient/repeated clock calls. Invalid known formats throw rather than returning
+`INV_FORMAT_` or unresolved known tokens. A durable native augment journals the returned GUID filename; tested
+wait/restart continuation retains that result rather than regenerating it. Standalone mapper retry is not replay-safe.
+
+The renderer reproduces namespace-removal semantics without loading the supplied stylesheet/helper assembly.
+Text, CDATA, comments and processing instructions survive; colliding attribute local names fail explicitly.
+The inspected AddBlockCharacters source returns its input unchanged: no HL7 framing has been invented from its
+name. Existing native renderer dispatch/pipelines remain the explicit replacement seam for dynamic transforms;
+actual selected partner maps and pipeline assembly behavior are **not** implemented by these four modules.
+
+Synthetic verification covers every allowlisted schema field, macro semantics and bounds, real hot-loaded
+catalog/mapper invocation, UI controls, dependency protection/unload, and disk-backed native
+field-read → GUID filename → wait/restart → namespace-removal execution. No production transport, legacy
+helper DLL or real Billing payload is executed. Import call-site adapters, broader context/schema facts,
+policy binding, outbound/scoped correlations, remaining maps/pipelines, configuration-pattern helpers,
+throttling and transactions still require implementation. Imported flows stay disabled; full Billing support
+and source-oracle parity are not claimed.
+
+Read-only native analysis using the supplied binding/policy exports retains every one of the 192, 196 and
+574 source nodes for DoubleBody, Trailer and Service respectively. Their compact review drafts contain 195, 205
+and 669 native nodes, including 113, 112 and 287 explicit blocked nodes; each includes a policy proposal.
+Those counts include unresolved declaration/contract nodes as well as activities and are not executable-path
+coverage or a completion percentage. Bound outbound Billing deliveries, correlations, policy facts, actual
+maps/pipelines, helper call-site adapters and transactions remain unresolved. No legacy helpers or production
+destinations were executed. Generic synthetic fixtures verify supported receive/copy/send/reply flows,
+construction/typed writes across disk restart, graphical scratch authoring, and verified-committed reconciliation
+through the UI/API without replaying the held effect. This is deliberately not actual Billing parity proof.
+
 ## Decision
 
 - **Importable as a disabled analysis/draft:** Yes. The current importer accepts an `.odx` path when exactly one sibling `.btproj` explicitly includes that file. Parent-reported completed verification (not rerun in this documentation task): 314 related tests pass, the full solution build succeeds, and actual Billing analysis assertions pass. The local analysis reported 19 BizTalk projects, 17 custom projects, 20 candidates, all three Billing orchestration candidates, and 574 designer elements for `BillingServiceProcess.odx`.
@@ -201,9 +311,9 @@ The schema source project includes relevant local files such as `Services.Billin
 
 ### Business Rules, maps, and bindings
 
-`BillingServiceProcess.odx` contains a `CallRules` shape named **Retrieve Map**, with policy name `Billing Processing Policy` and policy version `-1`. No `.rules` policy export was found in the local `Shs.SpaceTrax2.Interfaces` source tree. The metadata identifies a call; it does not include the deployed policy implementation or establish what `-1` resolves to in the deployed BRE environment. The BizTalk team must supply the approved policy/vocabulary export and explain version-selection behavior.
+`BillingServiceProcess.odx` contains a `CallRules` shape named **Retrieve Map**, with policy name `Billing Processing Policy` and policy version `-1`. No `.rules` policy export was found inside the local `Shs.SpaceTrax2.Interfaces` source tree, but the separately supplied policy/vocabulary export is now available (47 versions, 1.6-1.52). The source metadata does not establish what `-1` resolves to in the deployed BRE environment. Remaining work is native fact binding, approved version selection and behavior verification, not obtaining an export.
 
-Message assignments dynamically obtain map types using `System.Type.GetType` and invoke BizTalk `transform` operations. The selection fields include `msgBre.HeaderMapName`, `msgBre.PreprocessingMapName`, `msgBre.MapName`, and `msgBre.TrailerMapName`; the main orchestration contains 29 dynamic transform call sites. Billing’s `.btproj` does not include `.btm` files, and no policy was available to identify the complete set of map names. The migration report now lists `.btm` files found across the analyzed source scope, including maps owned by separate projects, with schema references and analyzer counts. This helps the team inspect available candidates, but does not establish that the deployed policy selects any listed map; nearby maps are not safe substitutes. The existing map analyzer can produce limited starter XSLT for some direct links/constants, but does not translate script/functoid behavior or wire a complete map into this flow.
+Message assignments dynamically obtain map types using `System.Type.GetType` and invoke BizTalk `transform` operations. The selection fields include `msgBre.HeaderMapName`, `msgBre.PreprocessingMapName`, `msgBre.MapName`, and `msgBre.TrailerMapName`; the main orchestration contains 29 dynamic transform call sites. Billing’s `.btproj` does not include `.btm` files. The supplied policy export is available for reviewing selected map names, but export availability does not implement those maps or establish deployed-version parity. The migration report lists `.btm` files found across the analyzed source scope, including maps owned by separate projects, with schema references and analyzer counts. This helps inspect candidates, but nearby maps are not safe substitutes for confirmed deployed selections. The existing map analyzer can produce limited starter XSLT for some direct links/constants, but does not translate script/functoid behavior or wire a complete map into this flow.
 
 Fresh source analysis indexes nine workspace maps, including the seven PartnerMaps files. Each source/target reference now shows schema class/file candidates based on explicit Namespace/TypeName metadata or labeled literal naming conventions, with case-sensitive matching and explicit missing/ambiguous/incomplete states. This is source evidence, not evaluated build/deployed identity or policy selection.
 
@@ -212,7 +322,7 @@ Two concrete findings help avoid false ownership assumptions:
 - The header target `BTAHL7Schemas.MSH_25_GLO_DEF` is explicitly declared by `Shs.SpaceTrax2.InterFaces.Common.HL7Schemas\Shs.SpaceTrax2.Interfaces.Common.HL7Schemas.btproj`, at `2.X\MSH_25_GLO_DEF.xsd`. Its project Namespace/TypeName metadata explains why filename-derived class lookup was insufficient.
 - `Shs.SpaceTrax2.Interfaces.Core.Custom\Schemas\PartnerSchemas\TestSchema.xsd` and `TstTrailerSchema.xsd` exist, but that Custom `Schemas.btproj` includes only two PropertySchemas entries and no PartnerSchemas entries. The trailer's source/target type ownership therefore remains unresolved. Confirm the intended build/source history before claiming these disk files are the deployed schema classes; Mulse does not silently add them to the BizTalk project.
 
-No Billing-specific binding export is in the Billing project folder. The wider local source root contains two binding-info filenames for PatientRegistration, not Billing; their contents were not opened. A deployed Billing binding export is still needed for authoritative endpoint, subscription, transport, retry, and environment configuration. Do not paste unredacted secrets into tickets or this guide.
+No Billing-specific binding export is in the Billing project folder. The wider local source root contains two binding-info filenames for PatientRegistration, not Billing; their contents were not opened. The separately supplied Billing binding export is now available to the importer for endpoint, subscription, transport and retry evidence; native adaptation and verification remain necessary. Do not paste unredacted secrets into tickets or this guide.
 
 ### Helpers and pipeline behavior
 
@@ -235,7 +345,7 @@ The main process declares correlation sets/types, including batch/service-result
 1. Open **Designer → Import from BizTalk**.
 2. Set **Source path** to the local `BillingServiceProcess.odx`. The file must be explicitly included by exactly one sibling `.btproj`; this file is. If ownership is ambiguous or missing, select the owning `.btproj` or solution instead.
 3. Set **Additional solutions/projects** to the local `Shs.SpaceTrax2.Interfaces` source root so the importer can inventory sibling schema, pipeline, and helper projects. This makes source available for analysis, but does not resolve the four `Build`-path references described above.
-4. If the BizTalk team provides an approved Billing binding export, supply it under **Additional binding export paths**. Do not substitute the unrelated PatientRegistration exports.
+4. Supply the already-provided Billing binding export under **Additional binding export paths** and the supplied policy export under **Rule policy XML exports**. Do not substitute the unrelated PatientRegistration exports.
 5. Click **Analyze source**. Review the dependency report, all three Billing candidates, each blocking diagnostic, the shape inventory/source-line references, the workspace map inventory, and the warnings. Confirm whether sibling project references are resolved or unresolved; inspect each map's owning project and schema references, then ask the BizTalk team to confirm which maps the deployed policy actually selects. Do not treat candidates as runnable workflows.
 6. Use **Load onto canvas** only to inspect/edit the disabled draft. Expand each pipeline artifact's **Pipeline source inventory** in its Migration report to inspect declared stage/component order, class/version, source lines, property names and any omitted counts. Saved drafts retain the import-time snapshot; reanalyze for current evidence.
 7. Use each candidate's **Scaffolded modules > Download / Download all (.zip)** for starter artifacts. Downloaded orchestration and pipeline C# modules are labeled **unimplemented migration stubs**, honor cancellation and throw `NotSupportedException`; they do not pass through, implement Billing logic or lift the execution gate. Pipeline starters contain names-only evidence and are not installed/wired. Choose the correct native parse/augment/render stages before implementing components, configuration, ordering and context effects. Starter XSLT may still be incomplete. A successful build confirms scaffold shape only, not translated behavior.
@@ -243,7 +353,7 @@ The main process declares correlation sets/types, including batch/service-result
 
 ### Native map work available without the BizTalk team
 
-The Mapping Designer now includes XSD schema trees, conservative `.btm` proposals, explicit missing-value policies, ordered native string operations and persisted runtime XSD validation. These tools are available for both scratch-built workflows and disabled imported drafts. They do not resolve the missing deployed policy or make Billing runnable.
+The Mapping Designer includes XSD schema trees, conservative `.btm` proposals, explicit missing-value policies, ordered native string operations and persisted runtime XSD validation. These tools are available for both scratch-built workflows and disabled imported drafts. They do not prove deployed-version/fact parity for the supplied policy or make Billing runnable.
 
 1. In **Flow Designer > Mapping**, add/select an **XML mapping render** node using the render-node selector. Mapping is a full-workspace tab beside **Flow**, not a floating window. **Edit XML mapping** in Flow Properties opens that node directly. For a new render route, return to Flow and add a deliver node before saving; do not connect it to a production destination. Switching tabs preserves transient inputs/previews but does not save them. Descriptions are available via **?** help (hover, keyboard focus or click; Escape dismisses); errors and execution blocks remain visible. Advanced map/field settings and **Test mapping** are collapsible.
 2. Open **XSD schema trees and BizTalk map import**. Paste/upload the exact source and target `.xsd` files, including any explicitly supplied import dependencies. **Inspect source schema tree / Inspect target schema tree** shows expanded-name paths, namespaces, cardinality and unsupported shapes. Select scalar fields to add editable links; no arbitrary XPath is required.
@@ -267,7 +377,7 @@ In a fresh **Analyze source** result, expand **Maps found in analyzed source** a
 ### Prioritized developer work
 
 1. **Resolve dependency ownership safely.** Add a user-selectable, persisted exact project-path assertion for unresolved references (or align build outputs and HintPaths with verifiable literal paths). Keep ambiguous/missing paths blocking; do not fall back to assembly-name guessing. This is a recommended improvement, not an available feature.
-2. **Obtain and translate the actual BRE policy and maps.** Pin the relevant policy/version, input/output vocabulary, all map class names selected by the policy, and their source `.btm`/XSLT. Implement decision/map selection as native code and translate every required map/function/functoid, including headers, preprocessing, body, trailer, and multi-input transforms.
+2. **Wire and verify the supplied BRE policy and maps.** Pin the relevant approved policy/version, input/output vocabulary, all map class names selected by the policy, and their source `.btm`/XSLT. Implement decision/map selection as native code and translate every required map/function/functoid, including headers, preprocessing, body, trailer, and multi-input transforms.
 3. **Implement native message and context semantics.** Translate message/variable assignments and dynamic transforms; define the payload model, metadata/property promotion, safe configuration lookup, filename generation, and error representation. BizTalk XLANG `transform`, message context, ports, and runtime types are BizTalk APIs, not portable C# scripts. Only pure helper logic should be reused after review; BizTalk-bound logic needs an explicit native equivalent.
 4. **Translate pipeline and transport behavior.** Recreate and validate the HL7 cast/assembly, flat-file assembly, property setters, MIME/SMIME handling, transport-specific behavior, subscriptions, retries, and secure settings using native Mulse modules.
 5. **Model all three orchestrations together.** Explicitly map the direct MessageBox handoff into a reviewed Mulse flow-to-flow or equivalent internal route, preserving ordering, correlation, batch/body/trailer behavior and request/reply response completion. Preserve the two batch variants as distinct required behaviors unless the process owner approves a documented replacement.

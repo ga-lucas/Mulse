@@ -1,0 +1,115 @@
+@using System.Xml
+@using System.Xml.Linq
+
+<fieldset>
+    <legend>Message fact</legend>
+    <label class="field-label">Message
+        <select class="selector" @bind="Value.MessageName" @bind:after="Notify">
+            <option value="" disabled="@Writable">@(Writable ? "Choose a named target" : "Current working payload")</option>
+            @foreach (var name in MessageNames) { <option value="@name">@name</option> }
+            @if (Value.MessageName.Length > 0 && !MessageNames.Contains(Value.MessageName)) { <option value="@Value.MessageName">@Value.MessageName (not yet named)</option> }
+        </select>
+    </label>
+    <label class="field-label">Fact kind
+        <select class="selector" value="@Value.Kind" @onchange="ChangeKind">
+            @foreach (var kind in AvailableKinds) { <option value="@kind">@kind</option> }
+        </select>
+    </label>
+    @if (Value.Kind == "Metadata")
+    {
+        <label class="field-label">Exact metadata key <input class="mapping-input" @bind="Value.MetadataKey" @bind:after="Notify" /></label>
+        <p class="field-hint">Returns a String. Keys are case-sensitive and missing keys fail. Promoted BizTalk properties are not inferred from similarly named metadata.</p>
+    }
+    else
+    {
+        <p class="field-hint">Absolute path from the document root, using exact local names and namespace URIs. XmlCount returns Int32; XmlExists returns Boolean; XmlText returns the first text (empty when absent). XmlString/XmlInt32/XmlBoolean require one simple non-nil element at every step and parse the explicit XML scalar type; missing/duplicate/invalid values fail. Requires one payload. No arbitrary XPath is executed.</p>
+        @foreach (var step in Value.Steps)
+        {
+            var index = Value.Steps.IndexOf(step);
+            <fieldset @key="step">
+                <legend>XML path step @(index + 1)</legend>
+                <label class="field-label">Local name <input class="mapping-input" @bind="step.Name" @bind:after="Notify" /></label>
+                <label class="field-label">Namespace URI <input class="mapping-input" @bind="step.Namespace" @bind:after="Notify" /></label>
+                <label class="field-label"><input type="checkbox" disabled="@(TypedScalar || index == 0 || index != Value.Steps.Count - 1)" @bind="step.Attribute" @bind:after="Notify" /> Attribute (final step only; typed scalars require elements)</label>
+                <button type="button" class="secondary-button" @onclick="() => RemoveStep(index)">Remove this step and descendants</button>
+            </fieldset>
+        }
+        <button type="button" class="secondary-button" disabled="@(Value.Steps.Count >= 32 || Value.Steps.LastOrDefault()?.Attribute == true)" @onclick="AddStep">Add XML child step</button>
+        <details>
+            <summary>Choose XML path from a sample (not saved)</summary>
+            <label class="field-label">Sample XML <textarea class="sample-textarea" @bind="_sample" @bind:after="ClearSample" /></label>
+            <button type="button" class="secondary-button" @onclick="InspectSample">Inspect XML paths</button>
+            @if (_sampleError is not null) { <p class="status-banner error" role="alert">@_sampleError</p> }
+            @foreach (var path in _paths)
+            {
+                <button type="button" class="secondary-button" @onclick="() => SelectPath(path)">Use @Label(path)</button>
+            }
+        </details>
+    }
+</fieldset>
+
+@code {
+    [Parameter, EditorRequired] public NativeMessageFactViewModel Value { get; set; } = new();
+    [Parameter] public IReadOnlyList<string> MessageNames { get; set; } = [];
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public bool Writable { get; set; }
+    private static readonly string[] Kinds = ["Metadata", "XmlText", "XmlCount", "XmlExists", "XmlString", "XmlInt32", "XmlBoolean"];
+    private IEnumerable<string> AvailableKinds => Writable ? Kinds.Where(kind => kind is "Metadata" or "XmlString" or "XmlInt32" or "XmlBoolean") : Kinds;
+    private bool TypedScalar => Value.Kind is "XmlString" or "XmlInt32" or "XmlBoolean";
+    private string _sample = "";
+    private string? _sampleError;
+    private List<List<NativeXmlStepViewModel>> _paths = [];
+    private Task Notify() => Changed.InvokeAsync();
+    private void ClearSample() { _paths.Clear(); _sampleError = null; }
+    private async Task ChangeKind(ChangeEventArgs args)
+    {
+        if (args.Value is not string kind || !AvailableKinds.Contains(kind) || kind == Value.Kind) return;
+        Value.Kind = kind; Value.MetadataKey = "";
+        if (kind == "Metadata" || TypedScalar && Value.Steps.Any(step => step.Attribute)) Value.Steps.Clear();
+        ClearSample();
+        await Notify();
+    }
+    private async Task AddStep() { Value.Steps.Add(new()); await Notify(); }
+    private async Task RemoveStep(int index) { Value.Steps.RemoveRange(index, Value.Steps.Count - index); await Notify(); }
+    private async Task SelectPath(List<NativeXmlStepViewModel> path)
+    {
+        Value.Steps = path.Select(step => new NativeXmlStepViewModel { Name = step.Name, Namespace = step.Namespace, Attribute = step.Attribute }).ToList();
+        await Notify();
+    }
+    private static string Label(List<NativeXmlStepViewModel> path) => "/" + string.Join("/", path.Select(step => (step.Attribute ? "@" : "") + (step.Namespace.Length == 0 ? "" : "{" + step.Namespace + "}") + step.Name));
+    private void InspectSample()
+    {
+        ClearSample();
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_sample) || _sample.Length > 1_000_000) throw new ArgumentException("Supply sample XML of at most 1,000,000 characters.");
+            var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 1_000_000 };
+            using (var probe = XmlReader.Create(new StringReader(_sample), settings))
+            {
+                var nodes = 0;
+                while (probe.Read())
+                    if (probe.Depth >= 32 || ++nodes > 50_000) throw new ArgumentException("Sample exceeds the 32-level/50,000-node inspection limit.");
+            }
+            using var reader = XmlReader.Create(new StringReader(_sample), settings);
+            var root = XDocument.Load(reader).Root!;
+            var paths = new Dictionary<string, List<NativeXmlStepViewModel>>(StringComparer.Ordinal);
+            foreach (var element in root.DescendantsAndSelf())
+            {
+                var path = element.AncestorsAndSelf().Reverse().Select(item => new NativeXmlStepViewModel { Name = item.Name.LocalName, Namespace = item.Name.NamespaceName }).ToList();
+                if (!TypedScalar || !element.HasElements && !element.Attributes().Any(attribute => !attribute.IsNamespaceDeclaration)) Add(path);
+                if (!TypedScalar)
+                    foreach (var attribute in element.Attributes().Where(attribute => !attribute.IsNamespaceDeclaration))
+                        Add([.. path, new() { Name = attribute.Name.LocalName, Namespace = attribute.Name.NamespaceName, Attribute = true }]);
+            }
+            _paths = paths.Values.ToList();
+            void Add(List<NativeXmlStepViewModel> path)
+            {
+                if (path.Count > 32) throw new ArgumentException("Sample path exceeds 32 steps.");
+                paths.TryAdd(System.Text.Json.JsonSerializer.Serialize(path), path);
+                if (paths.Count > 512) throw new ArgumentException("Sample exceeds 512 distinct XML paths; use a smaller representative sample.");
+            }
+        }
+        catch (Exception exception) when (exception is XmlException or ArgumentException)
+        { _paths.Clear(); _sampleError = "Unable to inspect sample: " + exception.Message; }
+    }
+}

@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Mulse.Modules.Mapping;
@@ -38,11 +37,7 @@ public static class OdxSendBindings
                 throw new ArgumentException("ODX send bindings require unique positive node IDs, delivery module IDs, non-null settings and at most 32 pipeline stages.");
             binding.Settings = new(binding.Settings, StringComparer.OrdinalIgnoreCase);
             ModuleSettingReader.GetBoolean(binding.Settings, "expectsResponse", false, binding.Module);
-            RenderDispatchDefinition.Read(JsonSerializer.Serialize(binding.Pipeline.Select((stage, index) => new RenderDispatchCase
-            {
-                Value = index.ToString(CultureInfo.InvariantCulture), Module = stage.Module,
-                Settings = new(stage.Settings, StringComparer.OrdinalIgnoreCase)
-            }), Options), allowEmpty: true);
+            RenderPipelineDefinition.Read(JsonSerializer.Serialize(binding.Pipeline, Options), allowEmpty: true);
         }
         return bindings;
     }

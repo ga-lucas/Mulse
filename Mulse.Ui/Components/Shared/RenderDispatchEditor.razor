@@ -11,9 +11,9 @@
     {
         <p>A preceding decision or metadata promotion sets the selection value. Each payload uses exactly one configured choice. Selection values are case-sensitive; unknown values fail.</p>
         <label>Selection metadata key</label>
-        <ReferenceInput Label="Renderer selection metadata key" Value="@Settings.GetValueOrDefault("metadataKey", "")" ValueChanged="@(value => Settings["metadataKey"] = value)" References="References" />
+        <ReferenceInput Label="Renderer selection metadata key" Value="@Settings.GetValueOrDefault("metadataKey", "")" ValueChanged='value => SetTopSetting("metadataKey", value)' References="References" />
         <label>Renderer input grouping</label>
-        <ReferenceInput Label="Renderer input grouping" InputKind="Select" Options="BatchModes" Value="@Settings.GetValueOrDefault("batchMode", "PerPayload")" ValueChanged="@(value => Settings["batchMode"] = value)" References="References" />
+        <ReferenceInput Label="Renderer input grouping" InputKind="Select" Options="BatchModes" Value="@Settings.GetValueOrDefault("batchMode", "PerPayload")" ValueChanged='value => SetTopSetting("batchMode", value)' References="References" />
         <p>Default: process each payload separately in order. Grouping sends all current inputs with the same selection to one renderer call, in first-seen group order; it can reorder nonadjacent messages. The renderer decides whether to combine outputs. This does not collect messages across runs or wait for batch boundaries. Use distinct selection values for client groups that must remain separate, even when they use the same renderer.</p>
     }
     @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
@@ -42,6 +42,10 @@
                         {
                             <XmlMappingEditor Value="@choice.Settings.GetValueOrDefault(setting.Key, "")" ValueChanged="value => SetSetting(choice, setting.Key, value)" />
                         }
+                        else if (choice.Module.Equals("render-pipeline", StringComparison.OrdinalIgnoreCase) && setting.Key == "stagesJson")
+                        {
+                            <RenderPipelineEditor Value="@choice.Settings.GetValueOrDefault(setting.Key, "[]")" ValueChanged="value => SetSetting(choice, setting.Key, value)" Modules="Modules" References="References" />
+                        }
                         else
                         {
                             <label>@setting.Label @(setting.IsRequired ? "*" : "")</label>
@@ -67,6 +71,7 @@
     [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
     [Parameter] public IReadOnlyList<string> References { get; set; } = [];
     [Parameter] public bool OdxMode { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
     private static readonly IReadOnlyList<ModuleSettingOptionViewModel> BatchModes = [new("PerPayload", "Each payload separately"), new("PerSelection", "Group current batch by selection")];
     private List<RendererChoice> _choices = [];
@@ -88,7 +93,7 @@
         }
         catch (JsonException ex) { _loadFailed = true; _error = "Unable to edit renderer choices: " + ex.Message + " Repair the original JSON below; it has not been replaced."; }
     }
-    private void Persist()
+    private async Task Persist()
     {
         _loaded = JsonSerializer.Serialize(_choices, Options);
         Settings["casesJson"] = _loaded;
@@ -99,23 +104,25 @@
                 || choice.Module.Equals("render-dispatch", StringComparison.OrdinalIgnoreCase)
                 || choice.Settings.Count > 128 || choice.Settings.Any(setting => string.IsNullOrWhiteSpace(setting.Key)))
             ? "Supply 1 to 128 choices with unique nonblank values and loaded renderer IDs; nested render-dispatch is not allowed. Invalid choices cannot execute." : null;
+        await Changed.InvokeAsync();
     }
-    private void Add()
+    private async Task Add()
     {
         if (_choices.Count >= 128) { _error = "At most 128 choices are supported."; return; }
-        _choices.Add(new()); Persist();
+        _choices.Add(new()); await Persist();
     }
-    private void Remove(RendererChoice choice) { _choices.Remove(choice); Persist(); }
-    private void SetSetting(RendererChoice choice, string key, string value) { choice.Settings[key] = value; Persist(); }
-    private void ChangeModule(RendererChoice choice, ChangeEventArgs args)
+    private async Task Remove(RendererChoice choice) { _choices.Remove(choice); await Persist(); }
+    private async Task SetSetting(RendererChoice choice, string key, string value) { choice.Settings[key] = value; await Persist(); }
+    private async Task SetTopSetting(string key, string value) { Settings[key] = value; await Changed.InvokeAsync(); }
+    private async Task ChangeModule(RendererChoice choice, ChangeEventArgs args)
     {
         var module = args.Value?.ToString() ?? "";
         if (module == choice.Module) return;
         choice.Module = module;
         choice.Settings.Clear();
-        Persist();
+        await Persist();
     }
-    private void ReplaceJson(ChangeEventArgs args) { Settings["casesJson"] = args.Value?.ToString() ?? ""; _loaded = null; OnParametersSet(); }
+    private async Task ReplaceJson(ChangeEventArgs args) { Settings["casesJson"] = args.Value?.ToString() ?? ""; _loaded = null; OnParametersSet(); await Changed.InvokeAsync(); }
     private sealed class RendererChoice
     {
         public string Value { get; set; } = "";

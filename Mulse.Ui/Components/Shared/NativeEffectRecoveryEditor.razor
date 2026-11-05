@@ -1,0 +1,117 @@
+@inject IMulseApiClient ApiClient
+
+<details>
+    <summary>Reconcile independently verified committed effect</summary>
+    <p>Effect: <code>@Checkpoint.EffectId</code>; @Checkpoint.EffectKind / @Checkpoint.EffectModule.</p>
+    <p class="status-banner error">Only use this after independently proving this effect already committed. It records its result and resumes later native activities, which may deliver messages. It never retries the held effect or fetches new input. If the outcome is unknown, leave it held.</p>
+    <label class="field-label">Verification evidence / incident reference
+        <textarea maxlength="4096" @bind="_evidence" @bind:after="ResetVerification" disabled="@_busy"></textarea>
+    </label>
+    @if (Checkpoint.RequiresEffectOutput)
+    {
+        <p>Supply the exact observed output batch, including required metadata. Do not invent a replacement result.</p>
+        <InputFile OnChange="LoadOutput" multiple disabled="@(_busy || _loadingOutput)" />
+        <label class="field-label"><input type="checkbox" @bind="_emptyOutput" @bind:after="ResetVerification" disabled="@(_busy || _loadingOutput || _output.Count > 0)" /> Verified that this effect produced an empty batch</label>
+        @foreach (var payload in _output.ToArray())
+        {
+            var index = _output.IndexOf(payload);
+            <fieldset>
+                <legend>Recorded output @payload.Name</legend>
+                <label class="field-label">Name <input value="@payload.Name" @onchange="args => ChangePayload(index, name: args.Value?.ToString())" disabled="@_busy" /></label>
+                <label class="field-label">Content type <input value="@payload.ContentType" @onchange="args => ChangePayload(index, contentType: args.Value?.ToString())" disabled="@_busy" /></label>
+                @foreach (var pair in payload.Metadata ?? new Dictionary<string, string>())
+                {
+                    <label class="field-label">@pair.Key <input value="@pair.Value" @onchange="args => SetMetadata(index, pair.Key, args.Value?.ToString())" disabled="@_busy" /></label>
+                    <button type="button" class="secondary-button" @onclick="() => RemoveMetadata(index, pair.Key)" disabled="@_busy">Remove metadata</button>
+                }
+                <label class="field-label">New metadata key <input @bind="_metadataKey" disabled="@_busy" /></label>
+                <button type="button" class="secondary-button" @onclick="() => AddMetadata(index)" disabled="@(_busy || string.IsNullOrWhiteSpace(_metadataKey))">Add metadata key</button>
+                <button type="button" class="secondary-button" @onclick="() => RemovePayload(index)" disabled="@_busy">Remove recorded output</button>
+            </fieldset>
+        }
+    }
+    <label class="field-label"><input type="checkbox" @bind="_verified" disabled="@(_busy || _loadingOutput)" /> I independently verified the effect committed and the supplied output is exact</label>
+    <button type="button" class="secondary-button" disabled="@(!CanReconcile)" @onclick="ReconcileAsync">@(_busy ? "Reconciling..." : "Record committed effect and resume")</button>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (_notice is not null) { <p role="status">@_notice</p> }
+</details>
+
+@code {
+    [Parameter, EditorRequired] public string FlowId { get; set; } = "";
+    [Parameter, EditorRequired] public FlowCheckpointViewModel Checkpoint { get; set; } = null!;
+    [Parameter] public bool AllowResume { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+    private string? _loadedIdentity, _error, _notice;
+    private string _evidence = "", _metadataKey = "";
+    private bool _verified, _emptyOutput, _busy, _loadingOutput;
+    private readonly List<NativeRecoveryPayloadViewModel> _output = [];
+    private void ResetVerification() => _verified = false;
+    private void RemovePayload(int index) { _output.RemoveAt(index); ResetVerification(); }
+    private bool CanReconcile => AllowResume && !_busy && !_loadingOutput && _verified && !string.IsNullOrWhiteSpace(_evidence) && Checkpoint.EffectId is not null
+        && (!Checkpoint.RequiresEffectOutput || _emptyOutput || _output.Count > 0);
+    protected override void OnParametersSet()
+    {
+        var identity = FlowId + ":" + Checkpoint.InstanceId + ":" + Checkpoint.EffectId;
+        if (identity == _loadedIdentity) return;
+        _loadedIdentity = identity; _evidence = ""; _metadataKey = ""; _verified = false; _emptyOutput = false;
+        _output.Clear(); _error = null; _notice = null;
+    }
+    private async Task LoadOutput(InputFileChangeEventArgs args)
+    {
+        if (_busy || _loadingOutput) return;
+        var identity = _loadedIdentity;
+        _loadingOutput = true; _error = null; _verified = false; _emptyOutput = false; _output.Clear();
+        try
+        {
+            long total = 0;
+            var outputs = new List<NativeRecoveryPayloadViewModel>();
+            foreach (var file in args.GetMultipleFiles(100))
+            {
+                total += file.Size;
+                if (total > 16_777_216) throw new InvalidOperationException("Recorded output exceeds 16 MiB.");
+                await using var input = file.OpenReadStream(16_777_216);
+                using var bytes = new MemoryStream(); await input.CopyToAsync(bytes);
+                outputs.Add(new(file.Name, string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType, Convert.ToBase64String(bytes.ToArray())));
+            }
+            if (identity == _loadedIdentity) _output.AddRange(outputs);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException)
+        { if (identity == _loadedIdentity) _error = "Unable to load recorded output: " + exception.Message; }
+        finally { _loadingOutput = false; }
+    }
+    private void ChangePayload(int index, string? name = null, string? contentType = null)
+    {
+        _output[index] = _output[index] with { Name = name ?? _output[index].Name, ContentType = contentType ?? _output[index].ContentType }; _verified = false;
+    }
+    private void SetMetadata(int index, string key, string? value)
+    {
+        var metadata = new Dictionary<string, string>(_output[index].Metadata ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase) { [key] = value ?? "" };
+        _output[index] = _output[index] with { Metadata = metadata }; _verified = false;
+    }
+    private void AddMetadata(int index)
+    {
+        var key = _metadataKey.Trim();
+        if (key.Length == 0) return;
+        SetMetadata(index, key, ""); _metadataKey = "";
+    }
+    private void RemoveMetadata(int index, string key)
+    {
+        var metadata = new Dictionary<string, string>(_output[index].Metadata ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
+        metadata.Remove(key); _output[index] = _output[index] with { Metadata = metadata }; _verified = false;
+    }
+    private async Task ReconcileAsync()
+    {
+        if (!CanReconcile) return;
+        _busy = true; _error = null; _notice = null;
+        try
+        {
+            var result = await ApiClient.ReconcileNativeEffectAsync(FlowId, Checkpoint.InstanceId,
+                new(Checkpoint.EffectId!, _evidence, Checkpoint.RequiresEffectOutput ? _output.ToArray() : null), CancellationToken.None);
+            _notice = $"Native continuation: {result.Outcome}. {result.Detail}";
+            _verified = false; _output.Clear(); await Changed.InvokeAsync();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or System.Text.Json.JsonException)
+        { _error = "Native reconciliation failed: " + exception.Message; _verified = false; await Changed.InvokeAsync(); }
+        finally { _busy = false; }
+    }
+}

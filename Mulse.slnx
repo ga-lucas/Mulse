@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="Mulse.AppHost/Mulse.AppHost.csproj" />
+  <Project Path="Mulse.Billing/Mulse.Billing.csproj" />
   <Project Path="Mulse.CompatibilityPack/Mulse.CompatibilityPack.csproj" />
   <Project Path="Mulse.Dbms.SqlServer/Mulse.Dbms.SqlServer.csproj" />
   <Project Path="Mulse.Excel/Mulse.Excel.csproj" />

@@ -242,11 +242,13 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
         if (rulePolicies.Length > 0)
             warnings.Add($"{rulePolicies.Length} rule policy versions were inventoried. Select versions explicitly; exports do not prove which version is deployed. Native XML rule proposals do not translate CallRules wiring or approve orchestration execution.");
         var mapInventory = CreateMigrationMapInventory(hydratedAnalyses);
+        var nativeSchemas = request.GenerateNativeFlow ? BizTalkSchemaSourceCatalog.Read(hydratedProjects.Select(project => project.ProjectPath)) : null;
         var reservedFlowIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var flowCandidates = candidateProjects
             .OrderBy(static project => project.Response.ProjectPath, StringComparer.OrdinalIgnoreCase)
             .SelectMany(project => CreateFlowCandidates(project, customAssemblies, bindingAnalyses, mapInventory, reservedFlowIds))
             .Select(candidate => AttachRuleEvidence(candidate, rulePolicies))
+            .Select(candidate => request.GenerateNativeFlow ? AttachNativeFlow(candidate, bindingAnalyses, rulePolicies, nativeSchemas!) : candidate)
             .ToArray();
 
         return Task.FromResult(new BizTalkSolutionAnalysisResponse(

@@ -130,6 +130,12 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<FlowRunViewModel>(response, cancellationToken, "batch release response").ConfigureAwait(false);
     }
 
+    public async Task<FlowRunViewModel> ReconcileNativeEffectAsync(string flowId, string instanceId, ReconcileNativeEffectRequestViewModel request, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync($"/api/flows/{Uri.EscapeDataString(flowId)}/native/{Uri.EscapeDataString(instanceId)}/reconcile", request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<FlowRunViewModel>(response, cancellationToken, "native recovery response").ConfigureAwait(false);
+    }
+
     public async Task<FlowViewModel> SetFlowEnabledAsync(string flowId, bool enabled, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PatchAsJsonAsync($"/api/flows/{Uri.EscapeDataString(flowId)}/enabled", new SetFlowEnabledRequestViewModel(enabled), cancellationToken).ConfigureAwait(false);

@@ -21,4 +21,6 @@ public sealed class FlowOrchestrationCheckpoint
     public FlowBatchCheckpointState? Batch { get; init; }
 
     public FlowOdxCheckpointState? Odx { get; init; }
+
+    public FlowNativeCheckpointState? Native { get; init; }
 }

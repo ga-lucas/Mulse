@@ -13,6 +13,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<WorkspaceBackupService>();
         services.AddSingleton<IModuleCatalog, ModuleCatalog>();
         services.AddSingleton<IModuleInvoker, ModuleInvoker>();
+        services.AddSingleton<Mulse.Modules.Abstractions.IAugmentModuleInvoker, AugmentModuleInvoker>();
         services.AddSingleton<Mulse.Modules.Abstractions.IRenderModuleInvoker, RenderModuleInvoker>();
         services.AddSingleton<Mulse.Modules.Abstractions.IDeliverModuleInvoker, DeliverModuleInvoker>();
         services.AddSingleton<IFlowDefinitionService, FlowDefinitionService>();

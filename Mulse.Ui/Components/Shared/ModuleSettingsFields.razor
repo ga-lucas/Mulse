@@ -1,0 +1,51 @@
+@if (Descriptor is not null)
+{
+    <p class="field-hint">@Descriptor.Description</p>
+    @foreach (var setting in Descriptor.Settings.Where(setting => !ExcludedKeys.Contains(setting.Key, StringComparer.OrdinalIgnoreCase)))
+    {
+        <label class="field-label">@setting.Label @(setting.IsRequired ? "*" : "")</label>
+        @if (Descriptor.Id.Equals("xml-mapping-render", StringComparison.OrdinalIgnoreCase) && setting.Key == "mappingJson")
+        {
+            <XmlMappingEditor Value="@Settings.GetValueOrDefault(setting.Key, setting.DefaultValue ?? "")" ValueChanged="value => Set(setting.Key, value)" />
+        }
+        else if (Descriptor.Id.Equals("xml-rules-augment", StringComparison.OrdinalIgnoreCase) && setting.Key == "policyJson")
+        {
+            <XmlRulePolicyEditor PolicyJson='@(Settings.GetValueOrDefault(setting.Key, ""))' PolicyJsonChanged="value => Set(setting.Key, value)" />
+        }
+        else
+        {
+            <ReferenceInput @key="(Descriptor.Id, setting.Key)" Label="@setting.Label" InputKind="@setting.InputKind" Options="setting.Options" References="References"
+                            DefaultValue="@setting.DefaultValue" Value="@Settings.GetValueOrDefault(setting.Key, setting.DefaultValue ?? "")" ValueChanged="value => Set(setting.Key, value)" />
+        }
+        <p class="field-hint">@setting.Description</p>
+    }
+}
+@foreach (var key in Settings.Keys.Where(key => !ExcludedKeys.Contains(key, StringComparer.OrdinalIgnoreCase) && Descriptor?.Settings.Any(setting => setting.Key.Equals(key, StringComparison.OrdinalIgnoreCase)) != true).Order(StringComparer.OrdinalIgnoreCase).ToArray())
+{
+    <label class="field-label">@key</label>
+    <ReferenceInput Label="@key" Value="@Settings[key]" References="References" ValueChanged="value => Set(key, value)" />
+    <button type="button" class="secondary-button" @onclick="() => Remove(key)">Remove setting @key</button>
+}
+<details>
+    <summary>Advanced: add documented module setting</summary>
+    <p class="field-hint">Use a key supported by this module. Adding a key does not add new behavior.</p>
+    <input class="mapping-input" aria-label="Additional module setting key" @bind="_key" />
+    <button type="button" class="secondary-button" disabled="@(string.IsNullOrWhiteSpace(_key) || Settings.Count >= 128)" @onclick="Add">Add setting</button>
+</details>
+
+@code {
+    [Parameter] public ModuleViewModel? Descriptor { get; set; }
+    [Parameter, EditorRequired] public Dictionary<string, string> Settings { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> ExcludedKeys { get; set; } = [];
+    [Parameter] public EventCallback Changed { get; set; }
+    private string _key = "";
+    private async Task Set(string key, string value) { Settings[key] = value; await Changed.InvokeAsync(); }
+    private async Task Remove(string key) { Settings.Remove(key); await Changed.InvokeAsync(); }
+    private async Task Add()
+    {
+        var key = _key.Trim();
+        if (key.Length == 0 || Settings.Count >= 128) return;
+        Settings.TryAdd(key, ""); _key = ""; await Changed.InvokeAsync();
+    }
+}

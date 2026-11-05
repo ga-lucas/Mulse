@@ -30,6 +30,124 @@ See the exact signatures in `Mulse.Modules\Abstractions`. Fetch/parse graph edge
 routes and retry/compensation boundaries belong to the saved `PipelineDefinition`, not to registration order.
 Do not use a deliver extension to hide parsing errors or an augment to perform untracked delivery effects.
 
+## Source-independent native control flow
+
+`Mulse.Modules.ControlFlow.NativeFlowDefinition` is a version-1 native contract, independent of BizTalk source.
+The installed `native-control-flow-augment` executes sequences, If/Else, ForEach payloads, bounded While,
+and leased augment/render module nodes. The Designer has matching nested editors and reuses graphical XML
+rules/maps and renderer pipeline/dispatch controls. `IAugmentModuleInvoker` joins `IRenderModuleInvoker` as
+an SDK lease boundary; plugins receive the same execution context, batch and configured settings as top-level modules.
+
+`Read` validates the entire definition before any module call; explicit Blocked nodes fail even in unused branches.
+Use `allowBlocked: true` only to inspect well-formed drafts, never to execute them. IDs are native stable strings,
+not source statement IDs. Limits are 1000 nodes, 32 levels, 1-10000 loop iterations and 100000 executed nodes.
+Conditions reuse native decision semantics and require one payload; ForEach collects zero/one/many outputs in
+original input order. Synchronous mode retains whole-step flow retries. Optional `Durable` definitions persist
+native cursors, named batches, waits/receives and effect intents using `FlowOrchestrationCheckpoint.Native`.
+Stable instance/message IDs and receive channels/correlation metadata must be supplied explicitly. Leased
+`IDeliverModuleInvoker` handles native delivery; ambiguous invocations freeze rather than re-execute. Source
+receipts/checkpoints complete only after downstream success and acknowledgements. Definitions are hash-pinned;
+editing/deleting held work is rejected. `NativeDurableRecovery` inspects sanitized effect identity and records
+independently verified committed outcomes with evidence and explicit output. The host's per-flow lock serializes
+reconciliation/continuation; stale identities, missing output and mismatched definitions reject. No reset or
+ambiguous-effect retry is provided. No ODX executor is involved in native continuation.
+
+`NativeExpression` is a bounded typed tree, not an ODX/source interpreter. `DeclareVariable` requires an explicit
+String/Int32/Boolean type and initializer; `SetVariable` preserves that type (String also accepts null). If/While
+accept either the existing payload `Conditions` or an `Expression`, never both. Expression equality uses exact
+scalar types and ordinal strings; And/Or short-circuit, arithmetic is checked Int32, and invalid values/overflow
+fail explicitly. Limits are 128 instance-scoped variables, 4096 characters per string, and 256 expression nodes
+at 32 levels. Durable checkpoints persist values/types. Local initialization does not consume an arrival before
+its first Receive. Newly optional definition fields are omitted when unused, preserving existing pinned hashes.
+The Designer exposes recursive typed operation/literal/variable controls plus the named output selector.
+
+`NativeExpressionKind.MessageValue` uses an explicit `NativeMessageFact`: Metadata/XmlText/XmlString (String),
+XmlCount/XmlInt32 (Int32), or XmlExists/XmlBoolean (Boolean). Blank MessageName reads the current working batch;
+other names resolve only from durable named snapshots. Each requires one payload; missing named messages and exact metadata keys
+fail, never fall back. XML paths have 1-32 exact expanded-name steps, with an optional final attribute. XmlText
+uses XPath string-value/first-node semantics (including whitespace, empty on absence); count/existence return
+zero/false on absence. XML is bounded to 1,000,000 characters, 64 levels and 50,000 nodes, with DTDs/external
+resolution prohibited. Scalar results retain the 4096-character limit. No XPath evaluator is used at runtime.
+The recursive UI supports fact kinds, message selection, manual path steps and clickable paths from a bounded,
+unsaved XML sample. Optional Fact is omitted when unused, preserving previous definition hashes.
+XmlString/XmlInt32/XmlBoolean require element-only paths with exactly one match at every step and one simple,
+non-nil leaf without type/context attributes. String preserves text; Int32/Boolean parse XML lexical forms.
+Missing, repeated or invalid values fail; these are not the first/empty semantics of XmlText.
+
+Durable `CreateXmlMessage` requires MessageName and a String Expression containing bounded, securely parsed XML.
+It creates one application/xml payload with empty metadata. `SetMessageValue` requires Expression and Target,
+with an explicit named message and Metadata/XmlString/XmlInt32/XmlBoolean fact. The value must match the target
+scalar type; metadata requires String. XML targets must already exist and be single/simple/non-nil. Operations
+replace only the named snapshot, preserving other copies and the working batch. XML output retains payload
+name/content type/metadata and is limited to 1,000,000 characters. These local operations and SaveMessage/UseMessage
+do not accept an arrival before the initial Receive matches. Checkpoints retain their results over disk restart.
+Native snapshots explicitly preserve case-distinct metadata keys, including independently verified effect output;
+legacy snapshot capture/restore remains case-insensitive. The snapshot's optional PreserveMetadataCase flag is
+persisted only when true. Optional Target is omitted when unused, so existing pinned definition hashes are
+unchanged. The UI provides node kinds, named-target selection, recursive value expressions and clickable
+element-only sample paths.
+
+Durable `CreateXmlRoot` uses MessageName, Expression (String local name, 1-256 characters) and NamespaceExpression
+(String namespace, 0-2048 characters). Prefixes/markup and reserved XML/XMLNS namespaces are rejected. The result
+is a named empty root with no inherited metadata. `AppendXmlMessage` requires MessageName and SourceMessage,
+each resolving to exactly one existing payload. It deep-copies the source's first/root element beneath the target
+root, preserving order and namespaces, without changing source/working/other named snapshots. XML declarations,
+leading comments/PIs/whitespace are not silently replaced by root selection: these inputs fail explicitly.
+Combined output must meet the existing 1,000,000-character, maximum reader depth 64 and 50,000-reader-node bounds
+before the named target changes. Self-append copies the original tree once. The UI provides named-message
+selection and both recursive root expressions; both operations survive disk restart and do not accept arrivals
+before a matching Receive. Optional NamespaceExpression/SourceMessage are omitted when unused, preserving old
+hashes. Native XML construction retains leading nodes/declaration identity; serialization preserves declarations
+but writes UTF-8 encoding to match the actual bytes, including after typed writes and append.
+
+The import-time scalar reader consumes complete statements and conditions (no arbitrary CLR calls, XML member
+assumptions or source execution). Ordered source Decision branches become nested native If/Else nodes, preserving
+first-match behavior and source IDs. Unsupported predicates retain all branch bodies as Blocked review structure.
+Constant xpath(message, ...) calls support only count/string/boolean over absolute child/terminal-attribute
+paths (plain unqualified names or local-name()/namespace-uri() equality steps). Explicit ToInt32 of a count is
+safe because the bounded native count is already Int32. Comments are parsed lexically; complete source suffixes
+and overrides are preserved. Other XPath functions/axes/predicates and arbitrary CLR conversions remain blockers.
+Unique service-level scalar declarations without an initializer use language defaults (null String/zero Int32/false
+Boolean). Exact distinguished members resolve only through unique source schema ownership, compiled explicit
+declared relative XSD imports, one global root and nonrepeating sequence/all paths with explicit built-in types.
+An unsupported distinguished field remains blocked without invalidating unrelated proven fields; duplicate member
+identities remain ambiguous. Complete LoadXml, message copy and typed member-write blocks compile to the native
+operations above; an empty XmlDocument constructor is recognized only when immediately replaced by LoadXml/copy
+or a complete empty-prefix CreateElement plus AppendChild root initialization. That pattern requires an exact,
+unique, nonconstructed temporary XmlElement declaration with proven lexical service/scope ownership. Its alias
+is eliminated inside the complete statement block; arbitrary DOM aliasing is unsupported. Deep
+DocumentElement.AppendChild(owner.ImportNode(namedMessage.FirstChild, true)) compiles to AppendXmlMessage only
+with matching declared owner/source identities. Other node selectors, shallow imports and unsupported suffixes
+reject the whole block, never emit a partial successful prefix. Construct-owned exact message
+references are structural declarations, not executable activities. Native draft JSON is compact to stay within the
+existing 1,000,000-character limit; limits are not raised to accommodate source expansion.
+Scope-local scalar/stateful declarations, unproven schema/context properties and policy fact adapters remain
+unresolved; eliminating a temporary root alias does not implement scope or transaction behavior. Import is not
+execution approval.
+
+Stateful collectors/interpreters cannot be nested. Do not hide transport effects or claim transaction guarantees
+in a nested augment/renderer. Conservative import wiring preserves unsupported semantics as Blocked nodes;
+imported Billing execution and DTC/business parity are not claimed.
+
+### Separate Billing feature pack
+
+`Mulse.Billing` demonstrates source-specific behavior outside the host/core: an `IModuleInstaller` registers a
+filename `ITransformModule`, a journalable filename augment, an exact CommonBilling field adapter and a
+namespace-removal renderer. It references only `Mulse.Modules` and is discovered unloaded under
+`Service\plugins\Mulse.Billing`; enable it from **Modules**. Do not add a production host reference or load
+original BizTalk/.NET Framework helper assemblies. Standard descriptor settings provide the native editor,
+parsed mapper and pipeline-stage UI without source-specific UI branches.
+
+The field adapter explicitly models the supplied schema's names and returns text metadata; it is not full XSD
+validation, a source property bag, implicit credential promotion or a policy fact adapter. The namespace renderer
+uses bounded secure XML parsing and fails on attribute local-name collisions. Filename generation uses explicit
+time zone/culture, execution-start time, a 4096-character bound, and source-evidenced macro semantics (including
+the 2001 local-wall-clock SECONDS epoch). It does no file I/O or routing. GUID output is nondeterministic at
+invocation time; only a successfully checkpointed durable augment result is reused after continuation. Ambiguous
+outcomes remain subject to normal native recovery holds. No transaction or exactly-once guarantee is added.
+The README lists the macro contract and UI composition; import helper call sites remain blockers rather than
+being auto-bound by a similar module/assembly name.
+
 ## Objects available to conversion code
 
 - `IntegrationPayload`: name, `BinaryData Content`, content type, and string metadata. Read bytes with
@@ -384,7 +502,13 @@ silently dropping them. This is not a named ODX response-receive router. Both re
 tracked for availability and package unloading, including config-backed plans. Stages/sends run under the existing
 external-effect journal; an ambiguous failure freezes replay, not an automatic resend. Setting-level retry/compensation
 inside this adapter is not provided. Other declarations, helpers and transactions still require translation.
-Native timer seconds do not interpret source DateTime expressions. Keep all source-bearing JSON private.
+The Designer now provides named-send selection, delivery/settings/response controls and ordered stage editing for
+`sendsJson`; developers need not hand-write adapter JSON. The generic `render-pipeline` renderer exposes the same
+stage editor for scratch routes and dynamic renderer choices without ODX. It accepts 1-32 stages in `stagesJson`,
+uses host renderer leases, and rejects nested pipelines/dispatch stages. Dependencies include each stage; helper
+implementations are never substituted automatically. Native timer seconds do not interpret source DateTime
+expressions. Private ODX source/program authoring is still a typed editor, not a graphical control-flow builder.
+Keep all source-bearing JSON private.
 
 The host polls persisted deadlines without fetching or replaying upstream steps. Source acknowledgements wait
 for downstream completion; delivery/source-notification retries retain their own stages. Pending checkpoints

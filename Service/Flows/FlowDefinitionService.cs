@@ -85,9 +85,9 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
             throw new ArgumentException($"Flow '{pipeline.Id}' must define at least one fetch node and one parse node.", nameof(pipeline));
         }
 
-        if (pipeline.Deliveries.Count == 0)
+        if (pipeline.Deliveries.Count == 0 && !pipeline.Augments.Any(step => step.Module.Equals(Mulse.Modules.ControlFlow.NativeFlowDefinition.ModuleId, StringComparison.OrdinalIgnoreCase)))
         {
-            throw new ArgumentException($"Flow '{pipeline.Id}' must define at least one delivery route.", nameof(pipeline));
+            throw new ArgumentException($"Flow '{pipeline.Id}' must define at least one delivery route, or a native control-flow block with internal delivery/reply behavior.", nameof(pipeline));
         }
 
         if (pipeline.Enabled)
@@ -101,6 +101,8 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
         if (pipeline.Enabled && pipeline.Augments.Any(step => step.Module.Equals("durable-batch-augment", StringComparison.OrdinalIgnoreCase)))
             DurableBatchSafety.ValidateResolvedSchedule(new ConfigValueResolver(runtimeConfigurationStore).Resolve(pipeline));
         FlowModuleDependencies.EnsureAvailable(pipeline, available, runtimeConfigurationStore.GetState().ConfigValues);
+        if (pipeline.Enabled && pipeline.Augments.Any(step => step.Module.Equals(Mulse.Modules.ControlFlow.NativeFlowDefinition.ModuleId, StringComparison.OrdinalIgnoreCase)))
+            DurableBatchSafety.Validate(new ConfigValueResolver(runtimeConfigurationStore).Resolve(pipeline));
         if (existingFlow is not null)
             DurableBatchSafety.EnsureUnchanged(existingFlow, pipeline, runtimeConfigurationStore.GetState().OrchestrationCheckpoints);
 

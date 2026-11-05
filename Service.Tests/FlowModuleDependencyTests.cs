@@ -170,6 +170,24 @@ public sealed class FlowModuleDependencyTests
         Assert.Contains(FlowModuleDependencies.FindMissing(flow, loaded.GetAll(), values), error => error.Contains("ODX send bindings"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RendererPipelinesTrackEveryStageInRoutesAndDynamicChoices(bool dynamic)
+    {
+        var settings = new Dictionary<string, string> { ["stagesJson"] = "{{config:stages}}" };
+        var render = dynamic ? new ModuleStepDefinition { Module = "render-dispatch", Settings = new()
+        {
+            ["casesJson"] = System.Text.Json.JsonSerializer.Serialize(new[] { new Mulse.Modules.Mapping.RenderDispatchCase { Value = "A", Module = "render-pipeline", Settings = settings } }, System.Text.Json.JsonSerializerOptions.Web)
+        } } : new ModuleStepDefinition { Module = "render-pipeline", Settings = settings };
+        var flow = new PipelineDefinition { Id = "pipeline", Deliveries = [new() { Render = render }] };
+        var values = new Dictionary<string, string> { ["stages"] = "[{\"module\":\"first\",\"settings\":{}},{\"module\":\"last\",\"settings\":{}}]" };
+        Assert.Contains(("first", ModuleKind.Render), FlowModuleDependencies.References(flow, values));
+        Assert.Contains(("last", ModuleKind.Render), FlowModuleDependencies.References(flow, values));
+        values["stages"] = "[{\"module\":\"render-pipeline\",\"settings\":{}}]";
+        Assert.Throws<ArgumentException>(() => FlowModuleDependencies.References(flow, values).ToArray());
+    }
+
     [Fact]
     public async Task RunPreflight_RejectsMissingLaterStageBeforeFetchingAnything()
     {

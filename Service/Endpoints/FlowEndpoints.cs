@@ -49,8 +49,15 @@ public static class FlowEndpoints
                 return TypedResults.Ok(store.GetState().OrchestrationCheckpoints
                     .Where(checkpoint => checkpoint.FlowId.Equals(flowId, StringComparison.OrdinalIgnoreCase))
                     .OrderBy(checkpoint => checkpoint.CorrelationKey, StringComparer.OrdinalIgnoreCase)
-                    .Select(checkpoint => new FlowCheckpointResponse(checkpoint.InstanceId, checkpoint.CorrelationKey, checkpoint.Bookmark,
-                        checkpoint.UpdatedAt, checkpoint.Payloads.Count, checkpoint.SourceReceipts.Count, checkpoint.Batch?.TargetCount, checkpoint.Batch?.Ready, checkpoint.Batch?.DeadlineUtc ?? checkpoint.Odx?.DeadlineUtc)).ToArray());
+                    .Select(checkpoint =>
+                    {
+                        var effect = Mulse.Modules.ControlFlow.NativeDurableRecovery.Inspect(checkpoint);
+                        return new FlowCheckpointResponse(checkpoint.InstanceId, checkpoint.CorrelationKey, checkpoint.Bookmark,
+                            checkpoint.UpdatedAt, checkpoint.Payloads.Count, checkpoint.SourceReceipts.Count, checkpoint.Batch?.TargetCount, checkpoint.Batch?.Ready,
+                            checkpoint.Batch?.DeadlineUtc ?? checkpoint.Odx?.DeadlineUtc ?? checkpoint.Native?.DeadlineUtc,
+                            checkpoint.Native is not null, checkpoint.Native?.RecoveryPending == true || checkpoint.Odx?.RecoveryPending == true,
+                            effect?.EffectId, effect?.Kind.ToString(), effect?.Module, effect?.RequiresOutput == true);
+                    }).ToArray());
             })
             .WithName("GetFlowCheckpoints")
             .WithSummary("Inspect pending batch and orchestration checkpoint counts without message bodies or source settings")
@@ -198,10 +205,10 @@ public static class FlowEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
-        return app;
+        return app.MapNativeFlowRecoveryEndpoints();
     }
 
-    private static IReadOnlyList<FlowRunResponsePayload>? ToResponsePayloads(IReadOnlyList<IntegrationPayload>? payloads)
+    internal static IReadOnlyList<FlowRunResponsePayload>? ToResponsePayloads(IReadOnlyList<IntegrationPayload>? payloads)
         => payloads is null || payloads.Count == 0
             ? null
             : payloads.Select(payload => new FlowRunResponsePayload(

@@ -21,11 +21,36 @@ internal static class FlowModuleDependencies
         foreach (var step in flow.Augments)
         {
             yield return (step.Module, ModuleKind.OrchestrationAugment);
-            foreach (var choice in DispatchChoices(flow.Id, step, configValues)) yield return (choice.Module, ModuleKind.Render);
+            if (step.Module.Equals(Mulse.Modules.ControlFlow.NativeFlowDefinition.ModuleId, StringComparison.OrdinalIgnoreCase))
+            {
+                var nativeJson = ConfigValueResolver.SubstituteJson(step.Settings.GetValueOrDefault("flowJson", ""), configValues, reference =>
+                    throw new ArgumentException($"Flow '{flow.Id}' requires configuration '{reference}' for native control-flow dependencies."), dependenciesOnly: true, sizeLimit: 1_000_000);
+                var native = Mulse.Modules.ControlFlow.NativeFlowDefinition.Read(nativeJson, allowBlocked: !flow.Enabled);
+                foreach (var node in native.AllNodes())
+                {
+                    if (node.Kind == Mulse.Modules.ControlFlow.NativeFlowNodeKind.Deliver)
+                    {
+                        yield return (node.Module, ModuleKind.Deliver);
+                        continue;
+                    }
+                    var nested = new ModuleStepDefinition { Module = node.Module, Settings = node.Settings };
+                    var child = node.Kind == Mulse.Modules.ControlFlow.NativeFlowNodeKind.Augment
+                        ? new PipelineDefinition { Id = flow.Id, Enabled = flow.Enabled, Augments = [nested] }
+                        : node.Kind == Mulse.Modules.ControlFlow.NativeFlowNodeKind.Render
+                            ? new PipelineDefinition { Id = flow.Id, Enabled = flow.Enabled, Deliveries = [new() { Render = nested }] } : null;
+                    if (child is not null)
+                        foreach (var reference in References(child, configValues)) yield return reference;
+                }
+            }
+            foreach (var choice in DispatchChoices(flow.Id, step, configValues))
+            {
+                yield return (choice.Module, ModuleKind.Render);
+                foreach (var stage in PipelineStages(flow.Id, choice.Module, choice.Settings, configValues, resolveReferences: false)) yield return (stage.Module, ModuleKind.Render);
+            }
             if (string.Equals(step.Module, Mulse.Modules.BuiltIn.Augment.OdxProgramAugmentModule.ModuleId, StringComparison.OrdinalIgnoreCase))
             {
-                var sendsJson = ConfigValueResolver.Substitute(step.Settings.GetValueOrDefault("sendsJson", "[]"), configValues, reference =>
-                    throw new ArgumentException($"Flow '{flow.Id}' requires configuration '{reference}' to determine its outbound ODX dependencies."));
+                var sendsJson = ConfigValueResolver.SubstituteJson(step.Settings.GetValueOrDefault("sendsJson", "[]"), configValues, reference =>
+                    throw new ArgumentException($"Flow '{flow.Id}' requires configuration '{reference}' to determine its outbound ODX dependencies."), dependenciesOnly: true);
                 foreach (var send in OdxSendBindings.Read(sendsJson))
                 {
                     yield return (send.Module, ModuleKind.Deliver);
@@ -53,7 +78,12 @@ internal static class FlowModuleDependencies
         foreach (var route in flow.Deliveries)
         {
             yield return (route.Render.Module, ModuleKind.Render);
-            foreach (var choice in DispatchChoices(flow.Id, route.Render, configValues)) yield return (choice.Module, ModuleKind.Render);
+            foreach (var stage in PipelineStages(flow.Id, route.Render.Module, route.Render.Settings, configValues)) yield return (stage.Module, ModuleKind.Render);
+            foreach (var choice in DispatchChoices(flow.Id, route.Render, configValues))
+            {
+                yield return (choice.Module, ModuleKind.Render);
+                foreach (var stage in PipelineStages(flow.Id, choice.Module, choice.Settings, configValues, resolveReferences: false)) yield return (stage.Module, ModuleKind.Render);
+            }
             foreach (var action in route.Delivers)
             {
                 yield return (action.Deliver.Module, ModuleKind.Deliver);
@@ -70,7 +100,7 @@ internal static class FlowModuleDependencies
                     && string.Equals(entry.Descriptor.Id, reference.Id, StringComparison.OrdinalIgnoreCase)))
                 .Select(reference => $"{reference.Kind}: {reference.Id}").Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         }
-        catch (ArgumentException exception)
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
         {
             return [exception.Message];
         }
@@ -88,9 +118,18 @@ internal static class FlowModuleDependencies
         var isOdx = step.Module.Equals(Mulse.Modules.BuiltIn.Augment.OdxProgramAugmentModule.ModuleId, StringComparison.OrdinalIgnoreCase);
         if (!string.Equals(step.Module, RenderDispatchDefinition.ModuleId, StringComparison.OrdinalIgnoreCase)
             && !string.Equals(step.Module, RenderDispatchDefinition.AugmentModuleId, StringComparison.OrdinalIgnoreCase) && !isOdx) yield break;
-        var json = ConfigValueResolver.Substitute(step.Settings.GetValueOrDefault("casesJson", isOdx ? "[]" : ""), configValues, reference =>
-            throw new ArgumentException($"Flow '{flowId}' requires configuration '{reference}' to determine its render dispatch dependencies."));
+        var json = ConfigValueResolver.SubstituteJson(step.Settings.GetValueOrDefault("casesJson", isOdx ? "[]" : ""), configValues, reference =>
+            throw new ArgumentException($"Flow '{flowId}' requires configuration '{reference}' to determine its render dispatch dependencies."), dependenciesOnly: true);
         foreach (var choice in RenderDispatchDefinition.Read(json, allowEmpty: isOdx)) yield return choice;
+    }
+
+    private static IEnumerable<RenderPipelineStage> PipelineStages(string flowId, string module, IReadOnlyDictionary<string, string> settings, IReadOnlyDictionary<string, string>? configValues, bool resolveReferences = true)
+    {
+        if (!module.Equals(RenderPipelineDefinition.ModuleId, StringComparison.OrdinalIgnoreCase)) return [];
+        var json = settings.GetValueOrDefault("stagesJson", "[]");
+        if (resolveReferences) json = ConfigValueResolver.SubstituteJson(json, configValues, reference =>
+            throw new ArgumentException($"Flow '{flowId}' requires configuration '{reference}' to determine its renderer pipeline dependencies."), dependenciesOnly: true);
+        return RenderPipelineDefinition.Read(json);
     }
 
     private static WorkflowFieldMappingDefinition[] ParseMappings(string flowId, string json)

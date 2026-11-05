@@ -172,6 +172,25 @@ public class ConfigValueResolverTests
     }
 
     [Fact]
+    public void RendererJsonReferencesPreserveQuotesBackslashesAndNestedDefinitionsWithoutExpandingStoredTokens()
+    {
+        var literal = "C:\\test\\\"quoted\"\n{{config:never-expanded}}";
+        var state = new RuntimeMulseState { ConfigValues = { ["path"] = literal } };
+        var stages = System.Text.Json.JsonSerializer.Serialize(new[] { new Mulse.Modules.Mapping.RenderPipelineStage("first", new Dictionary<string, string> { ["path"] = "{{secret:path}}" }) }, System.Text.Json.JsonSerializerOptions.Web);
+        var cases = System.Text.Json.JsonSerializer.Serialize(new[] { new Mulse.Modules.Mapping.RenderDispatchCase { Value = "A", Module = "render-pipeline", Settings = new() { ["stagesJson"] = stages } } }, System.Text.Json.JsonSerializerOptions.Web);
+        var flow = new PipelineDefinition { Id = "nested", Deliveries = [new() { Render = new() { Module = "render-dispatch", Settings = new() { ["casesJson"] = cases } } }] };
+        var resolved = new ConfigValueResolver(new FakeRuntimeConfigurationStore(state)).Resolve(flow);
+        var choice = Mulse.Modules.Mapping.RenderDispatchDefinition.Read(resolved.Deliveries[0].Render.Settings["casesJson"]).Single();
+        Assert.Equal(literal, Mulse.Modules.Mapping.RenderPipelineDefinition.Read(choice.Settings["stagesJson"]).Single().Settings["path"]);
+        Assert.Equal(cases, flow.Deliveries[0].Render.Settings["casesJson"]);
+        Assert.Contains(("first", ModuleKind.Render), Service.Flows.FlowModuleDependencies.References(resolved));
+        Assert.Contains(("first", ModuleKind.Render), Service.Flows.FlowModuleDependencies.References(flow, state.ConfigValues));
+        state.ConfigValues.Clear();
+        var error = Assert.Throws<InvalidOperationException>(() => new ConfigValueResolver(new FakeRuntimeConfigurationStore(state)).Resolve(flow));
+        Assert.Contains("path", error.Message); Assert.DoesNotContain("quoted", error.Message);
+    }
+
+    [Fact]
     public void FindReferenceUsages_ReportsResolvedAndUnresolvedTokensWithSettingPath()
     {
         var state = new RuntimeMulseState { ConfigValues = { ["ftp-host"] = "sftp.example.com" } };

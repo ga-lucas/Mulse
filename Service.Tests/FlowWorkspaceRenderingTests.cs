@@ -354,6 +354,18 @@ public sealed class FlowWorkspaceRenderingTests
             Assert.Contains(deliver, nodes.Cast<object>());
             Assert.Contains("transform=\"translate(-120, -160)\"", rendered.ToHtmlString());
 
+            var renderNode = Find("Render");
+            renderNode.GetType().GetProperty("ModuleId")!.SetValue(renderNode, "render-pipeline");
+            Invoke("SelectNode", renderNode);
+            await Refresh();
+            Assert.Contains("Ordered renderer stages", rendered.ToHtmlString());
+            Assert.Contains("Add renderer stage", rendered.ToHtmlString());
+            var renderSettings = (Dictionary<string, string>)renderNode.GetType().GetProperty("Settings")!.GetValue(renderNode)!;
+            renderSettings["stagesJson"] = "[{\"module\":\"json-render\",\"settings\":{}}]";
+            await Refresh();
+            Assert.Contains("Move stage earlier", rendered.ToHtmlString());
+            Assert.Contains("Move stage later", rendered.ToHtmlString());
+
             var fetch = Find("Fetch");
             var removedParser = Find("Parse");
             Invoke("RemoveCanvasNode", removedParser);

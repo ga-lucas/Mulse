@@ -374,6 +374,133 @@ Imported flows stay disabled. See [Module-Developer-Guide.md](Module-Developer-G
 for SDK contracts and limits and [BillingServiceProcess-Migration-Guide.md](BillingServiceProcess-Migration-Guide.md)
 for the remaining compatibility work.
 
+### Native control flow: branches and collection loops
+
+Add **Native control flow** (`native-control-flow-augment`) from the augment toolbox. Properties provides
+nested **Sequence**, **If** with Then/Else, **ForEach** payload and bounded **While** nodes. Add, name, reorder
+and remove nodes; select installed augment/render modules and configure their descriptor settings. Renderer
+pipelines, dynamic choices, XML maps and XML rule policies reuse their visual editors. Definitions save with
+the flow; no ODX source, source IDs or generated DLL is required. Unsupported native/imported behavior can be
+represented by an explicit **Blocked** node with a reason; even an unselected blocked branch prevents execution.
+
+The default **Conditions** mode uses all-match native decision semantics (case-insensitive text comparisons).
+These payload predicates require one payload; use ForEach around them for batches. Switch If/While to
+**Expression** mode for typed scalar predicates: exact case-sensitive strings, Int32 arithmetic/comparisons,
+null equality, and short-circuit And/Or/Not. Add **DeclareVariable** and **SetVariable** nodes; the recursive
+operation/type/value/variable pickers require no expression text or JSON. Variables are instance-scoped,
+explicitly initialized, and survive durable waits/restarts. They are not inferred message/XML fields.
+Choose **MessageValue** for explicit metadata or XML facts from the working payload, or a named durable message.
+XML text/count/existence selectors use exact element/attribute names and namespace URIs, not arbitrary XPath.
+Use **Choose XML path from a sample** and click a discovered path, or add child steps manually; the sample and
+its values are not saved. Metadata keys are exact/case-sensitive and missing keys fail. XML count/existence
+return zero/false when absent; XML text returns the first matching node's text, or empty when absent. Named
+messages must exist and contain exactly one payload; they are never substituted with the working message.
+For required typed fields, choose **XmlString**, **XmlInt32** or **XmlBoolean**. These require exactly one simple,
+non-nil element at every path step; missing/duplicate/invalid values fail rather than returning defaults.
+Int32 and Boolean use XML Schema lexical forms, while String preserves whitespace.
+ForEach preserves original payload order and combines all body
+outputs, with a 1-10000 input limit. While evaluates the updated output before every iteration and throws if
+its configured 1-10000 limit is exceeded. Definitions allow 1000 unique nodes, 32 nested levels, 100000 node
+executions and 1000000 JSON characters. Every nested module in either branch is checked/pinned before fetching.
+
+Enable **Durable execution** in Properties for persisted Wait/Receive nodes, named SaveMessage/UseMessage,
+Reply and leased Deliver operations. Configure stable instance/message metadata keys and incoming channels;
+receive filters and pinned correlation keys are editable without source code. Timer polling resumes directly
+at the persisted cursor without fetching or replaying upstream nodes. Named batches and source receipts survive
+restart. Checkpoints expose wait deadlines/recovery holds, not message bodies or credentials. Configuration edits
+and flow deletion are prevented while native work is pending. Internal delivery/reply flows need no outer route.
+Add **CreateXmlMessage** to build a named XML payload from a String expression; no source metadata is implicitly
+inherited. Add **SetMessageValue**, select a named target and a typed XML path (including sample-path clicks)
+or exact metadata key, then choose its value expression. Writes require matching types; metadata requires String.
+They update only that named snapshot, not the working payload or other saved copies. Missing/duplicate/nil XML
+targets, null values, unsafe XML and type mismatches fail explicitly. Construction and writes survive disk restart.
+For accumulated XML batches, add **CreateXmlRoot** with a named target and String local-name/namespace expressions,
+then **AppendXmlMessage** with that target and a named source from the selector. Each append deep-copies the
+source's first/root element under the target root in order; namespaces, CDATA and internal comments/PIs survive.
+Leading declarations/comments/PIs/whitespace are rejected, not silently skipped. Both messages must contain one
+payload. XML size, reader-depth and node limits are checked before replacing the target. Other named copies and
+the working payload stay unchanged, and accumulated results survive restart. These operations are generic native
+capabilities; Billing-specific transforms/modules remain in the separate `Mulse.Billing` project.
+
+Durable effects write intent before invocation. Ambiguous failures hold the instance for review rather than
+blindly retrying. Checkpoint UI offers **Reconcile independently verified committed effect**: supply incident
+verification evidence and exact observed output files/metadata (or explicitly verified empty output), then
+confirm. The API checks the held effect identity/pinned definition and persists its result before resuming
+later activities; it does not invoke the held effect again. Unknown outcomes must remain held. There is no
+destructive reset/replay UI and no exactly-once/DTC/rollback claim. Synchronous
+blocks retain whole-step retries. Nested stateful collectors/interpreters and recursive native blocks are rejected.
+Existing ODX checkpoints remain supported and are not migrated/deleted.
+
+The BizTalk import panel defaults to **Generate native control-flow draft** (API opt-in `generateNativeFlow`).
+Safe ordered containers, receives, exact named-message copies, uniquely bound sends and replies become native
+nodes. Supported scalar declarations/assignments, ordered first-match decisions and bounded loops translate to
+native expression trees, not stored source code. Complete constant XPath count/string/boolean reads of declared
+messages translate only for absolute child/final-attribute paths with exact expanded names; ToInt32(count(...))
+is supported. Exact distinguished members now resolve through uniquely owned declared XSDs, including explicit
+relative imports of other declared schema files. Supported built-in String/Int32/Boolean members compile to native
+typed selectors and writes. Complete XmlDocument.LoadXml/copy/member-assignment blocks compile to native nodes;
+Construct-owned message references retain their source identity as structural output declarations. Complete
+empty-prefix CreateElement/AppendChild root construction and deep ImportNode(message.FirstChild, true) appends
+now compile to native XML composition. An exact temporary XmlElement may be eliminated only inside its owning
+service/scope and one complete root-construction block; scope/transaction execution is not inferred. Scalar defaults
+are null String, zero Int32 and false Boolean. Comments do not hide unsupported suffixes or final assignments.
+Arbitrary XPath, unproven schema/context properties, other CLR calls, helpers, scopes, pipelines and unproven
+policy fact wiring remain explicit structured blockers. Imported loop safety bounds are visible
+and editable; reaching a bound fails, never silently truncates the source loop.
+The supplied policy proposal can be attached at its call site without pretending its fact/version bindings are
+proven. Download native JSON with the existing artifact controls. Imported flows remain disabled; this is not
+complete Billing translation or verified Billing business parity.
+
+### Optional Billing helper plugin
+
+`Mulse.Billing` is a separate hot-loadable `net10.0` project referencing only the module SDK, not BizTalk or
+`Service`. Building the solution places it under `Service\plugins\Mulse.Billing`. In **Modules**, load/enable
+that package explicitly; discovery alone does not load it or enable imported flows. Once loaded, its descriptor
+controls are available for both scratch flows and native node authoring:
+
+- **Read CommonBilling field**: choose one of 13 nonsensitive source-schema fields and an output metadata key.
+  The exact Billing root namespace and unqualified section/field names are required. Missing, duplicate,
+  complex, nil/attributed and oversized values fail. Username/password/certificate fields are not exposed.
+- **Expand Billing target filename**: choose literal or exact metadata template, explicit time zone/culture,
+  and an output key. It changes metadata only, not the payload name, destination or body.
+- **Billing filename macros**: the same expansion as a one-text-input function in **Map parsed data**.
+- **Billing XML - remove namespaces**: select this renderer directly or as an **Ordered renderer pipeline**
+  stage. Text, CDATA, comments and processing instructions survive; attribute local-name collisions fail.
+
+Filename macros are case-sensitive `[DATE(format)]`, `[DATETIME(format)]`, `[TIME(format)]`,
+`[UTCDATETIME(format)]`, `[UTCTIME(format)]`, `[DAY(length)]`, `[GUID]`, `[TICKS]`, `[SECONDS]`.
+Templates/output are limited to 4096 characters; date formats accept letters, digits, underscore, dot, comma
+and hyphen. DAY uses uppercase English names (0 or greater than 6 = full name); SECONDS is rounded elapsed
+local wall-clock seconds since **2001-01-01**, not Unix time. Unlike the original helper, time is one execution-start
+snapshot and zone/culture are explicit; invalid known tokens/formats fail rather than returning placeholders.
+Identical GUID tokens within one expansion agree. Use the augment inside a durable native block to retain its
+successful result across waits/restarts; an independently retried mapping is not a deterministic GUID generator.
+
+Synthetic tests verify actual plugin loading/unloading, host mapper invocation, UI controls and persisted native
+field-read → GUID filename → wait/restart → namespace-removal composition. This is not imported Billing parity:
+helper call-site translation, policy/fact wiring, selected partner maps, remaining pipeline components,
+outbound/scoped correlations and transaction semantics remain blocked. No legacy helper assemblies are run.
+
+### Ordered renderer pipelines for scratch flows
+
+Choose **Ordered renderer pipeline** (`render-pipeline`) as a route's renderer, or as a dynamic map/renderer
+choice. In Properties, click **Add renderer stage**, choose installed renderers, edit their settings, and use
+**Move stage earlier/later** to arrange execution. Each stage receives the entire previous output batch.
+One to 32 stages are supported; nested pipelines and dispatch stages are deliberately rejected. These are
+ordinary native flows: no Billing source, import report or handwritten flow JSON is required.
+
+The **Durable ODX program** Properties now include **Outbound sends**: select a named source send, choose its
+loaded delivery module, configure settings/response capture, and use the same stage editor for its outbound
+pipeline. Replies are excluded from that selector. Missing modules, missing sends and malformed definitions
+remain visible rather than silently disappearing. Source program/expressions still use private typed JSON;
+durable graphical control flow and transaction-reconciliation UI remain future work. The synchronous native
+branch/loop editor above is independent of this ODX-specific editor.
+
+Pipeline stage and send settings support stored-reference pickers. JSON string substitutions preserve quotes,
+backslashes and nested stage definitions; stored values are not recursively expanded. All configured renderer
+and delivery dependencies are checked before a flow fetches data. These native pipelines do not implement
+untranslated BizTalk pipeline components or change the imported-flow execution gate.
+
 ### Confirmed early release
 
 For an enabled native flow, checkpoint inspection offers **Release collected batch...**, then **Confirm release**.
@@ -1230,6 +1357,8 @@ other node properties preserves the saved compensation.
 | Source graph, lookup dependencies, stage modules and settings | Toolbox, canvas handles and node Properties. |
 | Parsed/XML field maps and transforms | Mapping Designer; click/drag fields and connections, choose transforms and edit their arguments. |
 | Joins, decisions, metadata, durable batching/state and renderer dispatch | Specialized node Properties editors and descriptor-driven settings. |
+| Ordered renderer pipelines and outbound ODX adapters | Ordered renderer pipeline / Durable ODX program Properties: stage add/remove/reorder, named send selection, module settings and response capture. |
+| Native synchronous sequences, branches and bounded loops | Native control flow Properties: nested node editor, condition builder, module selection/settings and iteration limits. |
 | Flow/step retry and best-effort delivery compensation | Flow overview and node Properties. |
 | Checkpoint inspection and confirmed early batch release | Dashboard > Pending batches / orchestration checkpoints. |
 | Config/secrets, encryption, module catalog and hot reload | Configuration pages; refresh modules in an open Designer afterward. |

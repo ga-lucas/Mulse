@@ -120,16 +120,16 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
 
     private static void EnsureNoPendingBatches(IEnumerable<FlowOrchestrationCheckpoint> checkpoints)
     {
-        if (checkpoints.Any(checkpoint => checkpoint.Batch is not null || checkpoint.Odx is not null))
-            throw new InvalidOperationException("Pending durable batches or ODX continuations prevent deleting flows or replacing the workspace. Complete/recover delivery and source acknowledgements first; pending messages were not deleted.");
+        if (checkpoints.Any(checkpoint => checkpoint.Batch is not null || checkpoint.Odx is not null || checkpoint.Native is not null))
+            throw new InvalidOperationException("Pending durable batches or orchestration continuations prevent deleting flows or replacing the workspace. Complete/recover delivery and source acknowledgements first; pending messages were not deleted.");
     }
 
     private void EnsureBatchConfigEditable(string reference)
     {
-        var heldFlows = _state.Pipelines.Where(flow => _state.OrchestrationCheckpoints.Any(checkpoint => (checkpoint.Batch is not null || checkpoint.Odx is not null)
+        var heldFlows = _state.Pipelines.Where(flow => _state.OrchestrationCheckpoints.Any(checkpoint => (checkpoint.Batch is not null || checkpoint.Odx is not null || checkpoint.Native is not null)
             && checkpoint.FlowId.Equals(flow.Id, StringComparison.OrdinalIgnoreCase)));
         if (new ConfigValueResolver(this).FindReferenceUsages(heldFlows).Any(usage => usage.Reference.Equals(reference, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidOperationException($"Configuration '{reference}' is used by a flow with pending durable batches or ODX continuations. Complete/recover the pending work before changing its configuration.");
+            throw new InvalidOperationException($"Configuration '{reference}' is used by a flow with pending durable batches or orchestration continuations. Complete/recover the pending work before changing its configuration.");
     }
 
     private async Task CommitWorkspaceAsync(RuntimeMulseState updated, CancellationToken cancellationToken)
