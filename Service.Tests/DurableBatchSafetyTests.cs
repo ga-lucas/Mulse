@@ -107,17 +107,20 @@ public sealed class DurableBatchSafetyTests
         Assert.Empty(other.Checkpoints);
     }
 
-    [Fact]
-    public async Task HeldMessagesBlockDeletionReplacementAndReferencedConfigEdits_ButNotUnrelatedConfigOrFlows()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HeldMessagesBlockDeletionReplacementAndReferencedConfigEdits_ButNotUnrelatedConfigOrFlows(bool odx)
     {
         var directory = Path.Combine(Path.GetTempPath(), "mulse-batch-maintenance-" + Guid.NewGuid());
         try
         {
             var store = new RuntimeConfigurationStore(Options.Create(new MulseOptions { RuntimeStatePath = Path.Combine(directory, "state.json") }), new FakeHostEnvironment(), NoOpRuntimeStatePayloadProtector.Instance);
             var pipeline = Pipeline(); pipeline.Deliveries[0].Render.Settings["fileName"] = "{{config:billing.name}}";
+            if (odx) pipeline.Augments[0] = new() { Module = OdxProgramAugmentModule.ModuleId };
             await store.SetConfigValueAsync("billing.name", "invoice.txt", default);
             await store.UpsertFlowAsync(pipeline, default);
-            await store.UpsertOrchestrationCheckpointAsync(new() { FlowId = "batches", CorrelationKey = "A", Batch = new() }, default);
+            await store.UpsertOrchestrationCheckpointAsync(new() { FlowId = "batches", CorrelationKey = "A", Batch = odx ? null : new(), Odx = odx ? new() : null }, default);
             await Assert.ThrowsAsync<InvalidOperationException>(() => store.DeleteFlowAsync("BATCHES", default));
             await Assert.ThrowsAsync<InvalidOperationException>(() => store.DeleteAllFlowsAsync(default));
             await Assert.ThrowsAsync<InvalidOperationException>(() => store.RestoreWorkspaceAsync(new(), replace: true, default));

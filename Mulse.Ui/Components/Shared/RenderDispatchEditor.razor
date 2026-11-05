@@ -3,12 +3,19 @@
 
 <fieldset>
     <legend>Dynamic map / renderer choices</legend>
-    <p>A preceding decision or metadata promotion sets the selection value. Each payload uses exactly one configured choice. Selection values are case-sensitive; unknown values fail.</p>
-    <label>Selection metadata key</label>
-    <ReferenceInput Label="Renderer selection metadata key" Value="@Settings.GetValueOrDefault("metadataKey", "")" ValueChanged="@(value => Settings["metadataKey"] = value)" References="References" />
-    <label>Renderer input grouping</label>
-    <ReferenceInput Label="Renderer input grouping" InputKind="Select" Options="BatchModes" Value="@Settings.GetValueOrDefault("batchMode", "PerPayload")" ValueChanged="@(value => Settings["batchMode"] = value)" References="References" />
-    <p>Default: process each payload separately in order. Grouping sends all current inputs with the same selection to one renderer call, in first-seen group order; it can reorder nonadjacent messages. The renderer decides whether to combine outputs. This does not collect messages across runs or wait for batch boundaries. Use distinct selection values for client groups that must remain separate, even when they use the same renderer.</p>
+    @if (OdxMode)
+    {
+        <p>ODX transform statements select an exact configured source map identity. Named input messages are passed in source argument order. Unknown identities fail; no CLR type is loaded. Choices may be empty when the program has no dynamic transforms.</p>
+    }
+    else
+    {
+        <p>A preceding decision or metadata promotion sets the selection value. Each payload uses exactly one configured choice. Selection values are case-sensitive; unknown values fail.</p>
+        <label>Selection metadata key</label>
+        <ReferenceInput Label="Renderer selection metadata key" Value="@Settings.GetValueOrDefault("metadataKey", "")" ValueChanged="@(value => Settings["metadataKey"] = value)" References="References" />
+        <label>Renderer input grouping</label>
+        <ReferenceInput Label="Renderer input grouping" InputKind="Select" Options="BatchModes" Value="@Settings.GetValueOrDefault("batchMode", "PerPayload")" ValueChanged="@(value => Settings["batchMode"] = value)" References="References" />
+        <p>Default: process each payload separately in order. Grouping sends all current inputs with the same selection to one renderer call, in first-seen group order; it can reorder nonadjacent messages. The renderer decides whether to combine outputs. This does not collect messages across runs or wait for batch boundaries. Use distinct selection values for client groups that must remain separate, even when they use the same renderer.</p>
+    }
     @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
     @if (!_loadFailed)
     {
@@ -59,6 +66,7 @@
     [Parameter, EditorRequired] public Dictionary<string, string> Settings { get; set; } = [];
     [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
     [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    [Parameter] public bool OdxMode { get; set; }
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
     private static readonly IReadOnlyList<ModuleSettingOptionViewModel> BatchModes = [new("PerPayload", "Each payload separately"), new("PerSelection", "Group current batch by selection")];
     private List<RendererChoice> _choices = [];
@@ -86,7 +94,7 @@
         Settings["casesJson"] = _loaded;
         var values = new HashSet<string>(StringComparer.Ordinal);
         _error = _loaded.Length > 262144 ? "Choices JSON exceeds 262144 characters." :
-            _choices.Count == 0 || _choices.Any(choice => string.IsNullOrWhiteSpace(choice.Value) || choice.Value.Length > 2048 || !values.Add(choice.Value)
+            (!OdxMode && _choices.Count == 0) || _choices.Any(choice => string.IsNullOrWhiteSpace(choice.Value) || choice.Value.Length > 2048 || !values.Add(choice.Value)
                 || string.IsNullOrWhiteSpace(choice.Module) || choice.Module.Length > 256 || choice.Module != choice.Module.Trim()
                 || choice.Module.Equals("render-dispatch", StringComparison.OrdinalIgnoreCase)
                 || choice.Settings.Count > 128 || choice.Settings.Any(setting => string.IsNullOrWhiteSpace(setting.Key)))

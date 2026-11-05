@@ -10,8 +10,11 @@ public sealed class OdxProgramExecutor
         ValidateBindings(program, entry, new(bindings.Activities), new(bindings.Conditions), new(bindings.Transactions), cancellationToken);
     }
 
+    internal void ValidateContinuation(OdxProgram program, OdxNode entry, OdxExecutionBindings bindings, CancellationToken cancellationToken)
+        => ValidateBindings(program, entry, new(bindings.Activities), new(bindings.Conditions), new(bindings.Transactions), cancellationToken, true);
+
     private static void ValidateBindings(OdxProgram program, OdxNode entry, Dictionary<int, OdxActivity> activities,
-        Dictionary<int, OdxCondition> conditions, Dictionary<int, OdxTransactionScope> transactions, CancellationToken cancellationToken)
+        Dictionary<int, OdxCondition> conditions, Dictionary<int, OdxTransactionScope> transactions, CancellationToken cancellationToken, bool continuation = false)
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(entry);
@@ -47,6 +50,16 @@ public sealed class OdxProgramExecutor
                         throw new ArgumentException($"ODX scope {node.Id} declares multiple transactions or unsupported transaction children.");
                     if (HasTransaction(node) && (!transactions.TryGetValue(node.Id, out var transaction) || transaction is null)) Missing(node, "transaction boundary");
                     foreach (var child in node.Children.Where(child => child.ShapeType is not ("AtomicTransaction" or "LongRunningTransaction"))) Validate(child);
+                    break;
+                case "Listen" when continuation:
+                    if (node.Children.Count == 0 || node.Children.Any(child => child.ShapeType != "ListenBranch"))
+                        throw new ArgumentException($"ODX listen {node.Id} requires ordered ListenBranch children.");
+                    foreach (var child in node.Children) Validate(child);
+                    break;
+                case "ListenBranch" when continuation:
+                    if (parentType != "Listen" || node.Children.Count == 0 || node.Children[0].ShapeType is not ("Receive" or "Delay"))
+                        throw new ArgumentException($"ODX listen branch {node.Id} requires a first receive/delay trigger.");
+                    foreach (var child in node.Children) Validate(child);
                     break;
                 case "ServiceBody":
                 case "Construct":

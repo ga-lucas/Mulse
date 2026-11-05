@@ -14,9 +14,11 @@ public sealed partial class FlowRuntime
             if ((await flowRetryStateStore.GetAllAsync(cancellationToken).ConfigureAwait(false))
                 .Any(retry => retry.FlowId.Equals(pipeline.Id, StringComparison.OrdinalIgnoreCase))) return null;
             var checkpoints = await orchestrationStateStore.GetAllAsync(pipeline.Id, cancellationToken).ConfigureAwait(false);
-            if (checkpoints.Any(checkpoint => checkpoint.Batch?.Ready == true)) return null;
+            if (checkpoints.Any(checkpoint => checkpoint.Batch?.Ready == true || checkpoint.Odx?.RecoveryPending == true)) return null;
             var due = FindDueBatch(checkpoints);
-            return due is null ? null : await ReleaseBatchCoreAsync(pipeline, due, cancellationToken).ConfigureAwait(false);
+            if (due is not null) return await ReleaseBatchCoreAsync(pipeline, due, cancellationToken).ConfigureAwait(false);
+            var odx = FindDueOdx(checkpoints);
+            return odx is null ? null : await ResumeOdxCoreAsync(pipeline, odx, cancellationToken).ConfigureAwait(false);
         }
         finally { gate.Release(); }
     }

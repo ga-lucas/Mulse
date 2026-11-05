@@ -30,14 +30,18 @@ public static class OdxAutomaticBindings
         var bindings = new OdxExecutionBindings();
         var diagnostics = new List<OdxTranslationDiagnostic>();
         var seen = new HashSet<int>();
-        void Visit(OdxNode node, int depth)
+        void Visit(OdxNode node, int depth, string? parentType = null)
         {
             if (depth > 64 || seen.Count >= 10000 || !seen.Add(node.Id)) throw new ArgumentException("ODX translation requires unique nodes within 10000 elements / 64 levels.");
             var status = "Structural";
             var detail = "Structural control flow; execution validates placement and complete service bindings.";
             switch (node.ShapeType)
             {
-                case "Module": case "ServiceDeclaration": case "ServiceBody": case "Scope": case "Construct": case "Decision": case "Catch":
+                case "ServiceDeclaration":
+                    if (node.Children.Where(child => child.ShapeType == "VariableDeclaration").GroupBy(child => child.Name, StringComparer.Ordinal).Any(group => group.Count() > 1))
+                        throw new ArgumentException("ODX service contains duplicate variable declarations.");
+                    break;
+                case "Module": case "ServiceBody": case "Scope": case "Construct": case "Decision": case "Catch":
                     break;
                 case "DecisionBranch" when string.IsNullOrWhiteSpace(node.Properties.GetValueOrDefault("Expression")):
                     detail = "Final else branch; executor validates its position.";
@@ -48,6 +52,9 @@ public static class OdxAutomaticBindings
                 case "VariableAssignment": case "MessageAssignment":
                     TryCompile(() => bindings.Activities.Add(node.Id, OdxExpressionCompiler.CompileStatements(node.Properties.GetValueOrDefault("Expression") ?? "")));
                     break;
+                case "VariableDeclaration" when parentType == "ServiceDeclaration":
+                    TryCompile(() => bindings.Activities.Add(node.Id, OdxExpressionCompiler.CompileDeclaration(node)));
+                    break;
                 default:
                     status = "RequiresBinding";
                     detail = node.ShapeType is "AtomicTransaction" or "LongRunningTransaction"
@@ -56,7 +63,7 @@ public static class OdxAutomaticBindings
                     break;
             }
             diagnostics.Add(new(node.Id, node.SourceLine, node.ShapeType, status, detail));
-            foreach (var child in node.Children) Visit(child, depth + 1);
+            foreach (var child in node.Children) Visit(child, depth + 1, node.ShapeType);
             void TryCompile(Action compile)
             {
                 try { compile(); status = "Translated"; detail = "Bounded typed expression compiled automatically; no source code or CLR assemblies are executed."; }

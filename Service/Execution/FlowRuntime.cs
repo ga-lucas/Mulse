@@ -54,18 +54,23 @@ public sealed partial class FlowRuntime(
             var pendingSourceWork = (await flowRetryStateStore.GetAllAsync(cancellationToken).ConfigureAwait(false))
                 .FirstOrDefault(state => state.FlowId.Equals(pipeline.Id, StringComparison.OrdinalIgnoreCase)
                     && (state.SourceReceipts.Count > 0 || state.CheckpointCorrelationKey is not null
-                        || pipeline.Augments.Any(step => step.Module.Equals("durable-batch-augment", StringComparison.OrdinalIgnoreCase))));
+                        || pipeline.Augments.Any(step => step.Module.Equals("durable-batch-augment", StringComparison.OrdinalIgnoreCase)
+                            || step.Module.Equals(Mulse.Modules.BuiltIn.Augment.OdxProgramAugmentModule.ModuleId, StringComparison.OrdinalIgnoreCase))));
             if (pendingSourceWork?.SourceCompletion?.NotificationsExhausted == true)
                 throw new InvalidOperationException($"Flow '{pipeline.Id}' has failed source outcome notifications: {pendingSourceWork.LastError}. New runs are blocked to prevent resending data. POST /api/flows/{Uri.EscapeDataString(pipeline.Id)}/source-outcomes/retry after resolving the source issue.");
             if (pendingSourceWork is not null)
                 return new FlowExecutionResult(pipeline.Id, pendingSourceWork.ExecutionStartedAt, timeProvider.GetUtcNow(), 0, [],
                     FlowExecutionOutcome.Retrying, "An earlier execution still has pending source processing or notification. No new data was fetched.", null, pendingSourceWork.NextAttemptAt);
             var checkpoints = await orchestrationStateStore.GetAllAsync(pipeline.Id, cancellationToken).ConfigureAwait(false);
+            if (checkpoints.FirstOrDefault(checkpoint => checkpoint.Odx?.RecoveryPending == true) is { } odxRecovery)
+                throw new InvalidOperationException($"Flow '{pipeline.Id}' has ODX instance '{odxRecovery.InstanceId}' awaiting recovery/completion. No new data was fetched; ambiguous effects cannot be replayed automatically.");
             var frozenBatch = checkpoints.FirstOrDefault(checkpoint => checkpoint.Batch?.Ready == true);
             if (frozenBatch is not null)
                 throw new InvalidOperationException($"Flow '{pipeline.Id}' has released durable batch '{frozenBatch.InstanceId}' awaiting recovery/completion. No new data was fetched. Inspect the checkpoint and delivery outcomes; do not automatically replay a possibly delivered batch.");
             if (FindDueBatch(checkpoints) is { } due)
                 return await ReleaseBatchCoreAsync(pipeline, due, cancellationToken).ConfigureAwait(false);
+            if (FindDueOdx(checkpoints) is { } dueOdx)
+                return await ResumeOdxCoreAsync(pipeline, dueOdx, cancellationToken).ConfigureAwait(false);
             var startedAt = timeProvider.GetUtcNow();
             var context = new FlowExecutionContext(pipeline.Id, Guid.CreateVersion7().ToString(), startedAt)
             {
@@ -287,6 +292,9 @@ public sealed partial class FlowRuntime(
             invoke: async ct =>
             {
                 await using var augmentModule = await moduleCatalog.LeaseOrchestrationAugmentAsync(augment.Module, ct).ConfigureAwait(false);
+                if (batch.Count == 0 && context.IsResumedOrchestration
+                    && augment.Module.Equals(Mulse.Modules.BuiltIn.Augment.OdxProgramAugmentModule.ModuleId, StringComparison.OrdinalIgnoreCase))
+                    return await augmentModule.Module.AugmentAsync(context, batch, augment, ct).ConfigureAwait(false);
                 return await ProcessConditionalStepAsync(
                     batch, augment, applicableBatch => augmentModule.Module.AugmentAsync(context, applicableBatch, augment, ct), ct).ConfigureAwait(false);
             },
@@ -568,7 +576,8 @@ public sealed partial class FlowRuntime(
         {
             output = await invoke(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is not (OperationCanceledException or Mulse.Modules.Orchestration.OdxAmbiguousEffectException or Mulse.Modules.Orchestration.OdxPersistenceException)
+            && !IsOdxStage(pipeline, stageId))
         {
             if (retryPolicy.AllowsAnotherAttempt(attemptNumber))
             {

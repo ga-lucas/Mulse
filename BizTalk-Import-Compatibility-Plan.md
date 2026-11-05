@@ -72,9 +72,9 @@ Target behavior: imported workflows must remain disabled until required configur
 - Explicit developer bindings can execute first-match decisions, bounded loops, sequential bodies and local
   exception catches inside native flows. Missing bindings anywhere in the selected service fail before effects;
   declarations, activities/waits and transaction boundaries require implementation, not automatic pass-through.
-- There is no durable ODX program counter/listen/correlation interpreter or inferred transaction implementation.
-  Existing runtime helpers/pipelines are deliberately not rewritten. This advances developer tooling, not full
-  Billing translation or imported-flow execution approval.
+- The in-process executor does not persist its program counter; the separate native persisted increment below
+  supports a bounded continuation subset, not inferred transactions. Existing runtime helpers/pipelines remain
+  deliberately untranslated. No imported-flow execution approval is implied.
 - An opt-in UI-configurable metadata deadline now pins first-message N:D/H/M policy intervals or updates
   BatchTime on the existing deadline's local date using the source's first-message comparison. Explicit
   timezone, strict parsing, native DST choices and persisted timing state prevent silent clock guesses.
@@ -94,9 +94,33 @@ Target behavior: imported workflows must remain disabled until required configur
   an explicit blocked report. The saved migration inventory remains separate and sanitized.
 - Complete-binding checks share executor validation, honor explicitly supplied adapters and own activity
   metadata correctly. Compilation diagnostics remain the original syntax classification, not an approval.
-- Actual Billing source coverage and deliberately incomplete runtime behavior are recorded in the Billing
-  guide. Durable ODX program/frame continuation, actual map/pipeline execution, request/reply, transaction and
-  recovery semantics, and imported-flow end-to-end equivalence remain open. No execution gate was relaxed.
+- Explicit scalar service initializers are type-checked and run before the service body, without reinitializing
+  persisted instances. The actual Billing files now compile 14 such initializers (main eight, batch services three
+  each); defaults, constructors and scoped declarations are not guessed. Actual source coverage and remaining
+  runtime gaps are recorded in the Billing guide; no imported execution gate is relaxed.
+
+## Persisted native ODX increment
+
+- A single-host persisted interpreter retains nested program position, facts/messages/replies, source receipts,
+  catches and exact correlated receive/listen choices. UTC deadlines are pinned once; idle continuation uses
+  the existing hosted driver without refetching or replaying upstream stages.
+- The installed UI-configurable `odx-program-augment` node binds automatic scalar statements, message copies,
+  allowlisted GetType/transform maps and request-port responses. Maps use leased renderer invocation; explicit
+  renderer-stage pipeline/send adapters remain developer contracts, not translation of original components.
+- Effects use persisted intent; ambiguous effects/writes freeze blind replay. Safe persisted running positions
+  can resume after restart. Downstream retries retain output/replies and do not re-run the ODX map. Pending
+  instances block unsafe edits/deletion. Atomic/long-running transactions remain explicitly unsupported.
+- Source receives now compile exact operations, AND Equals/Exists filters, fully qualified correlation types
+  (including sibling source models) and receive-initialized service correlation sets. Source-derived tuple routing
+  keeps clients independent; rejected activation input creates no empty checkpoint and cannot notify source receipts.
+- Complete map shapes support output promoted-property writes and bounded counted XML construction before a
+  same-message transform. Read-only actual-source checks bind all 37 transform statements (29 main, four per batch
+  service), all five receive filters and both batch services' two-receive correlation sets. These counts establish
+  syntax/binding coverage only, not executable original maps, pipeline behavior or business-output equivalence.
+- Synthetic disk-restart/XSLT/reply/polling/retry tests verify the native subset. Main-service outbound/scoped
+  correlations, DateTime/batch expressions, general schema/context/DOM behavior, actual maps/pipelines, transaction
+  recovery, canonical importer wiring and imported end-to-end equivalence remain open. Helpers stay untranslated.
+  The existing imported-flow execution gate is unchanged.
 
 ## Product surfaces
 

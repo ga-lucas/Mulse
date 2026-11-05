@@ -74,11 +74,12 @@ internal static class FlowModuleDependencies
 
     private static IEnumerable<RenderDispatchCase> DispatchChoices(string flowId, ModuleStepDefinition step, IReadOnlyDictionary<string, string>? configValues)
     {
+        var isOdx = step.Module.Equals(Mulse.Modules.BuiltIn.Augment.OdxProgramAugmentModule.ModuleId, StringComparison.OrdinalIgnoreCase);
         if (!string.Equals(step.Module, RenderDispatchDefinition.ModuleId, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(step.Module, RenderDispatchDefinition.AugmentModuleId, StringComparison.OrdinalIgnoreCase)) yield break;
-        var json = ConfigValueResolver.Substitute(step.Settings.GetValueOrDefault("casesJson", ""), configValues, reference =>
+            && !string.Equals(step.Module, RenderDispatchDefinition.AugmentModuleId, StringComparison.OrdinalIgnoreCase) && !isOdx) yield break;
+        var json = ConfigValueResolver.Substitute(step.Settings.GetValueOrDefault("casesJson", isOdx ? "[]" : ""), configValues, reference =>
             throw new ArgumentException($"Flow '{flowId}' requires configuration '{reference}' to determine its render dispatch dependencies."));
-        foreach (var choice in RenderDispatchDefinition.Read(json)) yield return choice;
+        foreach (var choice in RenderDispatchDefinition.Read(json, allowEmpty: isOdx)) yield return choice;
     }
 
     private static WorkflowFieldMappingDefinition[] ParseMappings(string flowId, string json)

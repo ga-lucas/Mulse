@@ -246,13 +246,11 @@ await new OdxProgramExecutor().ExecuteAsync(
 return frame.Batch;
 ```
 
-This executes only an explicitly implemented in-process subset. The frame/program counter are **not durable**;
-there is no automatic checkpoint/resume of nested loops, pending listens, correlation subscriptions, parallel
-races or transaction recovery. Suspension stops subsequent activities but does not create a resumable ODX
-continuation. Use native durable modules or implement and verify an application-owned continuation. This SDK
-is not wired to imported drafts and does not change their execution gate. Existing helpers/pipelines have
-not been rewritten. `OdxControlFlowTests` exercise these contracts, including a bound program running through
-an actual native flow with parse/render/delivery; `OdxControlFlowApiTests` verify source ownership and download.
+`OdxProgramExecutor` executes an explicitly bound **in-process** subset; its frame/program counter are not
+durable. Suspension alone does not create a resumable continuation. For persisted execution use the separate
+`OdxDurableExecutor` described below. Neither executor approves imported drafts or infers transactions.
+Existing helpers/pipelines have not been rewritten. `OdxControlFlowTests` exercise in-process execution,
+including a native flow with parse/render/delivery; `OdxControlFlowApiTests` verify scoped downloads.
 
 ## Automatic typed ODX expressions and retained stubs
 
@@ -264,19 +262,23 @@ compilation result even after developers add bindings.
 
 The supported expression subset is string/Boolean/Int32/null literals and typed JSON facts, dotted member
 access, checked integer arithmetic, comparisons, same-type equality, short-circuit logic, parentheses,
-ordinary C# string escapes, comments and bounded two-argument `Regex.IsMatch`. Exact fully qualified promoted
+ordinary C# string escapes, comments, bounded two-argument `Regex.IsMatch` and parameterless `ToString()` on
+non-null scalar facts (invariant Int32 formatting, never CLR object invocation). Exact fully qualified promoted
 property reads use `frame.Messages[messageName]` and require exactly one payload and an existing metadata key;
 metadata values remain strings, not inferred schema types. Statements support scalar `=`, `+=`, `++`, `--`
 and semicolon-separated sequences. Unsupported syntax anywhere rejects the whole shape before any statement
 in that shape executes. Limits are 65,536 characters, 8,192 tokens, 64 parsing levels, 256 binary operations
 and a 100 ms timeout per regex match.
 
-Developers must explicitly initialize declared typed facts in `frame.Variables` and provide schema/message
-adapters. Unknown roots, missing promoted properties, invalid object access, type mismatch and overflow fail
-explicitly. A missing member of an existing JSON object is null; strings are never implicitly parsed into
-numbers/booleans. This is a typed fact contract, not arbitrary XML distinguished-field or message-copy support.
-Date/time operations, XML construction, transforms, arbitrary CLR/helper calls and declarations remain explicit
-bindings. The importer does not invent defaults from a declaration's name or silently run CLR constructors.
+Developers must provide schema/message adapters and explicitly initialize facts not covered by supported
+source initializers in `frame.Variables`. Unknown roots, missing promoted properties, invalid object access,
+type mismatch and overflow fail explicitly. A missing member of an existing JSON object is null; strings are
+never implicitly parsed into numbers/booleans. This is not arbitrary XML distinguished-field support.
+Explicit service-level String/Int32/Boolean `InitialValue` expressions are now automatically initialized and
+type-checked before the service body, even if metadata lists the body first. These source initializers take
+precedence over preloaded facts and persist without reinitialization on resume. Duplicate service variables
+are rejected; scoped/shadowed, missing-initializer, constructor-backed and non-scalar declarations remain explicit
+bindings, as do DateTime/XML operations and arbitrary CLR/helper calls. No defaults or CLR constructors are inferred.
 
 ```csharp
 var compilation = OdxAutomaticBindings.Compile(program);
@@ -303,8 +305,80 @@ installer, schema/transport/component implementations and tests; it is not autom
 
 `OdxAutomaticTranslationTests` verifies actual automatic nested branch/loop execution, typed syntax, rejection,
 limits and binding preflight. `OdxGeneratedTranslationTests` exercises real import/export, compiles generated
-C# and verifies retained helpers still fail explicitly. None of these tests establish durable ODX continuation
-or full imported Billing equivalence.
+C# and verifies retained helpers still fail explicitly. These compiler tests do not establish full imported
+Billing equivalence.
+
+## Persisted ODX execution and message adapters
+
+`OdxDurableExecutor` uses `IFlowOrchestrationStateStore` to persist an explicit nested execution stack, typed
+facts, named messages, replies, accepted message IDs, source receipts and listen choices. Use it under the
+host's per-flow execution lock; the store is single-host, not a distributed lock/CAS service. Store keys are
+case-insensitive: SDK callers must encode case-sensitive instance values into distinct keys; the installed native
+node uses SHA-256 digests and limits source instance values to 2,048 characters. Supply a stable binding version:
+changing the source model or bindings blocks pending-instance execution before effects.
+`OdxDurableBindings` combines automatic scalar bindings with explicit receive-subscription and UTC-deadline
+factories. Receives require one payload and exact ordinal port/correlation matches, plus operation and
+Request/Response identities when specified. Listen races persist all deadlines on entry; an already-due timer
+wins over a later message, which remains unconsumed. A resumed scope catch exposes the original message/stack
+and exception type metadata, not the original CLR object.
+
+`OdxReceiveBindings.Bind` compiles service-level receive-initialized correlation declarations using exact source
+OID `StatementRef` targets and fully qualified correlation types. Supply sibling source models for external type
+definitions; their services are never executed. Following receives use persisted promoted-property snapshots,
+not the latest input. Filters support up to 128 AND Equals/Exists predicates; Equals accepts string/Boolean/Int32
+literals, and promoted keys/string values are ordinal. Unsupported predicates, ambiguous types, outbound/scoped
+correlations and activation topology fail explicitly. Supported activation is one first-body activating receive
+followed by explicitly non-activating receives. Deterministic `AcceptedReceives` callbacks may update only the
+frame; they must never perform external effects.
+
+A rejected new activation creates no checkpoint and accepts no receipt. An unmatched arrival at an existing wait
+neither acknowledges nor fails current/retained source receipts and is excluded from generic stage retries.
+It must be routed/reconciled explicitly; this is not a general MessageBox subscription router.
+
+Every external activity persists intent before invocation. An unresolved intent freezes automatic replay;
+reconcile the destination before attempting recovery. Checkpoint failures bypass source catches and host
+stage retries. Only reviewed deterministic frame-local activities belong in `FrameLocalActivities`; arbitrary
+plugins, renderers and helpers are not assumed pure. Safely persisted running positions without a wait are
+scheduled for idle continuation; completed/faulted/ambiguous positions remain held for downstream completion
+or reconciliation. There is no operator reconciliation API yet. Atomic/long-running transactions are rejected:
+a local checkpoint is not a BizTalk/DTC transaction.
+
+`OdxMessageBindings` supplies reviewed adapters for complete GetType/transform statements, named-message
+copies, explicit ordered renderer-stage pipeline equivalents, logical sends and request-port Response sends.
+Dynamic map identities are allowlisted; `Type.GetType` is never executed. Renderers use `IRenderModuleInvoker`
+leases, and multi-input argument order is retained. Complete map shapes may append promoted-property writes to
+the transform output; all values are evaluated before rendering and stale output-fact reads are rejected.
+Billing's XML trailer prefix (`new XmlDocument`, `LoadXml`, message assignment, then a single-input transform of
+that same message) is compiled with bounded XML parsing, DTD/external resolution disabled, and no CLR constructors.
+The XML temporary and transformed output publish only after rendering succeeds. This is not arbitrary DOM support.
+Message replacements invalidate stale typed facts. These adapters do not compile original `.btp` components,
+infer XML distinguished fields or translate helpers.
+
+The installed **Durable ODX program** (`odx-program-augment`) exposes the supported subset in the Designer.
+Configure private `programJson`, initial typed facts, stable source ID/instance metadata, exact incoming port,
+operation/message identity, additional pinned correlation keys, explicit `{nodeId, seconds}` native timers,
+visual dynamic-map choices, output message and optional reply port. `referencedProgramsJson` supplies an array of
+up to 32 private source models for external correlation types. Set `correlationMetadataKey` blank to derive
+instance keys from the exact property tuple of correlation sets initialized by the first receive; otherwise
+its default `group` selects the explicit metadata key. Source-derived tuples preserve case and field boundaries
+in the case-insensitive host store. This mode does not infer send-initialized/scoped correlation routing.
+The node binds scalar expressions, copies, complete maps/trailers, replies, supported source receives and explicit
+scalar service initializers. Other declarations, sends, helpers and transactions still require translation.
+Native timer seconds do not interpret source DateTime expressions. Keep all source-bearing JSON private.
+
+The host polls persisted deadlines without fetching or replaying upstream steps. Source acknowledgements wait
+for downstream completion; delivery/source-notification retries retain their own stages. Pending checkpoints
+prevent unsafe definition/configuration edits and destructive maintenance. Stable message IDs must be unique
+per source event within an instance; reusing an ID for different content violates the receive contract. One
+ODX node is allowed per flow, without other stateful collector nodes or conditional execution. Limits include
+64 stack levels, 10,000 loop iterations/accepted messages/payload snapshots, 100,000 persisted operations,
+12,000,000 payload bytes and 24,000,000 serialized checkpoint characters.
+
+`OdxDurableContinuationTests`, `OdxSourceReceiveTests`, `OdxMessageBindingTests`, `OdxNativeRuntimeTests` and
+`OdxNativeUiTests` verify restart, exact source filters/correlations/operations, independent clients, XML trailers,
+retained replies, ambiguous writes/effects, real XSLT leases, idle polling, downstream retry and visual map settings.
+These are native/synthetic tests, not end-to-end equivalence of the imported Billing project.
+Imported drafts remain disabled and original helper stubs remain deliberately untranslated.
 
 ## Verification checklist
 

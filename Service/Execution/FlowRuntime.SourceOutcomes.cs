@@ -15,7 +15,9 @@ public sealed partial class FlowRuntime
         {
             result = await run().ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is not (FlowRetryScheduledSignal or OperationCanceledException))
+        catch (Exception exception) when (exception is not (FlowRetryScheduledSignal or OperationCanceledException
+            or Mulse.Modules.Orchestration.OdxAmbiguousEffectException or Mulse.Modules.Orchestration.OdxPersistenceException
+            or Mulse.Modules.Orchestration.OdxUnmatchedMessageException))
         {
             if (context.SourceReceipts.Count == 0) throw;
             return await CompleteSourcesAsync(pipeline, context, new FlowSourceCompletion

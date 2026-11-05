@@ -309,7 +309,8 @@ The first message requires a strict `HH:mm` BatchTime and an interval of `NONE` 
 Native parsing deliberately rejects culture-dependent date strings, nonpositive/oversized intervals and
 unknown units instead of reproducing legacy fallback guesses. DST uses the documented native gap/fold rules;
 legacy-host equivalence remains unverified. Inputs are never split into multiple deadline windows within one
-source run. This mode is not automatically wired into imported orchestrations or a durable ODX listen engine.
+source run. This collector mode is not automatically wired into imported orchestrations or the separate native
+ODX interpreter; it does not translate source DateTime expressions.
 
 After collection, add **Wrap XML batch with message count** (`xml-batch-envelope-augment`). It produces one
 XML payload with this default shape, retaining document roots in input order and only identical shared metadata:
@@ -336,6 +337,33 @@ The scalar Mapping Designer still does not support repeated body mappings; use r
 XML wrapping, leased dynamic XSLT selection, exact header/body/trailer text, delivery and deferred acknowledgements.
 These are synthetic native-flow checks, not automatic translation of Billing's separate maps/custom pipelines
 or BizTalk golden-output equivalence. Helpers, response/transaction semantics and imported execution remain gated.
+
+### Durable native ODX programs
+
+Add **Durable ODX program** (`odx-program-augment`) to a native flow for the supported persisted source subset.
+Configure private source-model JSON, initialized typed facts, stable source message IDs, instance/correlation
+metadata, incoming logical port, explicit timer bindings, visual allowlisted map choices, output message and
+optional reply port. Case-distinct instance values remain independent; stored instance keys are digests.
+The interpreter retains nested branches/loops/catches, named messages, replies and correlated listen waits
+across disk restart. Idle deadlines resume without fetching or repeating upstream work. Downstream retries
+reuse saved output/replies instead of repeating maps; acknowledgements wait for downstream completion.
+
+External activities journal intent before invocation. Ambiguous effects/writes are held for reconciliation,
+never blindly replayed. Pending checkpoints block unsafe edits and deletion; disabled flows retain data.
+There is no operator reconciliation/discard API. Source IDs must remain unique per event within an instance.
+Only one ODX node is allowed per flow, without other stateful collector nodes or conditional execution.
+
+Explicit scalar service initializers, service-level receive-initialized correlation sets, exact operations,
+AND Equals/Exists filters, map-output promoted-property writes and counted XML-trailer map prefixes are supported.
+Referenced source models can supply external correlation types. Leave the instance metadata key blank to route by
+the first receive's source correlation tuple. Unmatched new activations create no checkpoint; rejected arrivals
+never acknowledge retained source receipts. Uninitialized/scoped/non-scalar declarations remain blocked.
+This is not automatic Billing import: outbound/scoped correlations, schema facts, general XML/context operations,
+DateTime expressions, original helpers/pipelines and full import wiring remain incomplete. Native timers use
+explicit seconds; pipeline adapters require reviewed native renderer equivalents. Atomic/long-running transactions are rejected,
+not emulated by checkpoints. Imported flows stay disabled. See [Module-Developer-Guide.md](Module-Developer-Guide.md)
+for SDK contracts and limits and [BillingServiceProcess-Migration-Guide.md](BillingServiceProcess-Migration-Guide.md)
+for the remaining compatibility work.
 
 ### Confirmed early release
 

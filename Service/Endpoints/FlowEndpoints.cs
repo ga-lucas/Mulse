@@ -50,7 +50,7 @@ public static class FlowEndpoints
                     .Where(checkpoint => checkpoint.FlowId.Equals(flowId, StringComparison.OrdinalIgnoreCase))
                     .OrderBy(checkpoint => checkpoint.CorrelationKey, StringComparer.OrdinalIgnoreCase)
                     .Select(checkpoint => new FlowCheckpointResponse(checkpoint.InstanceId, checkpoint.CorrelationKey, checkpoint.Bookmark,
-                        checkpoint.UpdatedAt, checkpoint.Payloads.Count, checkpoint.SourceReceipts.Count, checkpoint.Batch?.TargetCount, checkpoint.Batch?.Ready, checkpoint.Batch?.DeadlineUtc)).ToArray());
+                        checkpoint.UpdatedAt, checkpoint.Payloads.Count, checkpoint.SourceReceipts.Count, checkpoint.Batch?.TargetCount, checkpoint.Batch?.Ready, checkpoint.Batch?.DeadlineUtc ?? checkpoint.Odx?.DeadlineUtc)).ToArray());
             })
             .WithName("GetFlowCheckpoints")
             .WithSummary("Inspect pending batch and orchestration checkpoint counts without message bodies or source settings")

@@ -898,6 +898,12 @@
                     @RenderSettingsEditor(catalogModule?.Settings.Where(setting => setting.Key is not ("promotionsJson" or "namespacesJson")).ToArray(), node.Settings)
                     <MetadataPromotionEditor @key="node.Id" Settings="node.Settings" References="_configReferences" />
                 }
+                else if (node.ModuleId == "odx-program-augment")
+                {
+                    <p>Native durable subset only: original helpers, filtered receives and transaction scopes still require translation. Private source JSON is editable below; this does not approve imported execution.</p>
+                    @RenderSettingsEditor(catalogModule?.Settings.Where(setting => setting.Key != "casesJson").ToArray(), node.Settings)
+                    <RenderDispatchEditor @key="node.Id" Settings="node.Settings" Modules="_modules" References="_configReferences" OdxMode="true" />
+                }
                 else if (node.ModuleId is "render-dispatch" or "map-dispatch-augment")
                 {
                     @if (node.ModuleId == "map-dispatch-augment")

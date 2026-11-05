@@ -14,7 +14,8 @@ public static class RenderDispatchDefinition
 {
     public const string ModuleId = "render-dispatch";
     public const string AugmentModuleId = "map-dispatch-augment";
-    public static IReadOnlyList<RenderDispatchCase> Read(string json)
+    public static IReadOnlyList<RenderDispatchCase> Read(string json) => Read(json, allowEmpty: false);
+    public static IReadOnlyList<RenderDispatchCase> Read(string json, bool allowEmpty)
     {
         if (string.IsNullOrWhiteSpace(json) || json.Length > 262144) throw new ArgumentException("Render dispatch requires casesJson of at most 262144 characters.");
         RenderDispatchCase[] cases;
@@ -24,7 +25,7 @@ public static class RenderDispatchDefinition
                 { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow }) ?? throw new ArgumentException("Render dispatch cases must be an array, not null.");
         }
         catch (JsonException ex) { throw new ArgumentException("Invalid render dispatch casesJson.", ex); }
-        if (cases.Length is < 1 or > 128) throw new ArgumentException("Render dispatch requires 1 to 128 cases.");
+        if ((!allowEmpty && cases.Length == 0) || cases.Length > 128) throw new ArgumentException($"Render dispatch requires {(allowEmpty ? 0 : 1)} to 128 cases.");
         var values = new HashSet<string>(StringComparer.Ordinal);
         foreach (var entry in cases)
         {

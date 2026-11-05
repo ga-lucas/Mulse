@@ -84,10 +84,10 @@ The [module developer guide](Module-Developer-Guide.md) describes the public SDK
 seams. Import UI source-model downloads now expose the selected orchestration's full ordered hierarchy,
 properties/expressions and stable source IDs to developers, separately from the names-only saved report.
 The SDK can execute explicitly bound ordered decisions, bounded loops, sequential bodies and local CLR
-exception handlers, with complete binding preflight before effects. Activities/waits and transaction boundaries
-need explicit implementations; there is no persisted ODX program counter or inferred BizTalk transaction manager.
-Synthetic composed-flow tests verify this subset, not the full Billing services. Existing helpers/pipelines
-have not been rewritten, and imported drafts remain blocked.
+exception handlers, with complete binding preflight before effects. The in-process executor requires explicit
+activities/waits; the separate persisted native subset is described below. No BizTalk transaction manager is
+inferred. Synthetic composed-flow tests verify supported native behavior, not the full Billing services.
+Existing helpers/pipelines have not been rewritten, and imported drafts remain blocked.
 
 The SDK reader was also exercised against all three actual source files: 574 elements for the main service,
 192 for double-body batching and 196 for trailer batching. This proves structural source accessibility, not
@@ -101,8 +101,9 @@ are intentional native constraints, not legacy culture/invalid-input fallback em
 subsequent renderer. Synthetic composed tests exercise metadata rules, multiple clients, persisted intervals,
 idle restart release, allowlisted dynamic XSLT maps, exact header/body/trailer counts, delivery and deferred
 source acknowledgement. These establish working native composition, not installation/verification of Billing's
-original individual maps or custom pipelines. Full ODX listen/correlation continuation, replies and transaction
-recovery still require implementation, and original helper conversion remains explicitly deferred.
+original individual maps or custom pipelines. Full translation of Billing's own listen/correlation, replies and
+transaction recovery remains incomplete; the native subset below does not prove that translation. Original
+helper conversion remains explicitly deferred.
 
 ## Automatic expression translation update
 
@@ -111,14 +112,44 @@ non-else decision predicates: 44 in the main service and 14 in each batch servic
 assignments, seven message-assignment-shaped scalar statements and six loops in the main service, two
 variable assignments in double-body batching and one in trailer batching. These are syntax counts, not
 execution equivalence: source message/schema facts must be supplied with their real types, and a scalar
-assignment classification does not implement XML/message-copy semantics.
+assignment classification does not implement XML/message-copy semantics. The subsequent initializer increment
+was also run against all three actual files: eight explicit scalar service initializers in the main service and
+three in each batch service now compile automatically. Missing defaults, XML/type/helper constructors and
+scoped declarations remain blocked rather than guessed.
 
 Candidate developer downloads now include automatically bound C# and per-node translation JSON. Unsupported
 nodes remain explicit blockers; original helpers are unchanged. Independent synthetic tests verify nested
 branches/loops using the automatic bindings, typed operations and rejection, standalone generated-source
 compilation, and fail-before-effects preflight. Imported drafts still use conservative proposals and remain
-disabled. Durable ODX continuation/listen/correlation, actual map/pipeline wiring, replies and transactional
-failure recovery are still missing; this increment does not complete the requested runnable Billing import.
+disabled. The compiler increment alone does not complete the requested runnable Billing import.
+
+## Persisted native runtime update
+
+A separate `OdxDurableExecutor` and installed **Durable ODX program** node now persist nested program position,
+typed variables, named messages, catches, receive/listen races, fixed native timers, replies and held source
+receipts. Idle restart resumes without fetching/upstream replay. Complete GetType/transform statements can
+invoke allowlisted real XSLT renderers through host leases; explicit pipeline-stage and logical-port adapters
+are available to developers. Failed/ambiguous external effects are not blindly retried, and pending definitions
+remain protected against edits. Synthetic host tests cover disk restart, disabled/concurrent/hosted polling,
+real XSLT/replies, deferred acknowledgement and downstream retry without map replay.
+
+The next source-binding increment compiles all five actual receive filters (AND Equals/Exists), exact operation
+identities, and both batch services' two-receive correlation sets. The trailer service resolves its correlation
+type from the sibling source model. Following receives pin the three promoted source properties across restart;
+source-derived tuple routing separates clients without requiring an invented group field. Main-service correlations
+initialized on outbound/scoped statements remain explicit blockers.
+
+All 37 actual transform statement shapes now bind completely: 29 in the main service and four in each batch
+service, including transport-property tails and the two XML trailer-construction prefixes. No original renderer
+was executed by this read-only coverage probe. A bound source statement still needs the actual selected map,
+correct schema facts and verified renderer semantics; these counts do not prove map/business-output equivalence.
+Synthetic tests verify counted XML trailers through real leased XSLT and rejected input without source callbacks.
+
+This is **not yet runnable Billing import**: native seconds do not translate BatchTime/BatchInterval expressions;
+outbound/scoped correlations, general schema/context/DOM behavior, selected Billing maps/pipelines and full importer
+wiring remain open. Original helpers remain deliberately untranslated. Atomic/long-running transactions are
+explicitly rejected, not represented by local checkpoint writes. No source-oracle Billing end-to-end parity is
+claimed and no imported execution gate has changed.
 
 ## Decision
 

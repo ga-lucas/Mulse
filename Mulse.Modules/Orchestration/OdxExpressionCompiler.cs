@@ -27,7 +27,46 @@ public static class OdxExpressionCompiler
         };
     }
 
+    public static OdxActivity CompileDeclaration(OdxNode node)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        var name = node.Name; var type = node.Properties.GetValueOrDefault("Type");
+        if (node.ShapeType != "VariableDeclaration" || node.Children.Count != 0 || name.Length is 0 or > 256
+            || !(char.IsAsciiLetter(name[0]) || name[0] == '_') || name.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '_')
+            || node.Properties.GetValueOrDefault("UseDefaultConstructor", "False") != "False" || node.Properties.GetValueOrDefault("ParamDirection", "In") != "In"
+            || type is not ("System.String" or "System.Int32" or "System.Boolean") || !node.Properties.TryGetValue("InitialValue", out var source))
+            throw new NotSupportedException("Only explicit scalar initializers without constructors, parameters or child metadata are translated; no defaults are inferred.");
+        var parser = new Parser(source); var expression = parser.Expression(); parser.End();
+        return (_, frame, token) =>
+        {
+            token.ThrowIfCancellationRequested(); var value = expression(frame);
+            if (!(type switch { "System.String" => value is null or string, "System.Int32" => value is int, "System.Boolean" => value is bool, _ => false }))
+                throw new InvalidOperationException($"ODX initializer for '{name}' does not match declared type '{type}'.");
+            frame.Variables[name] = ScalarJson(value);
+            return Task.CompletedTask;
+        };
+    }
+
+    internal static Func<OdxExecutionFrame, IReadOnlyDictionary<string, string>> CompileMessageProperties(string source, string messageName)
+    {
+        if (string.IsNullOrWhiteSpace(source)) return _ => new Dictionary<string, string>();
+        var parser = new Parser(source); var properties = parser.MessageProperties(messageName); parser.End();
+        return frame => properties.ToDictionary(property => property.Key, property => property.Value(frame) is { } value
+            ? Format(value) : throw new InvalidOperationException("Promoted property assignment cannot implicitly convert null."), StringComparer.OrdinalIgnoreCase);
+    }
+
+    internal static (string XmlName, string MessageName, string Transform, Func<OdxExecutionFrame, string> Document) CompileXmlTransformPrefix(string source)
+    {
+        var parser = new Parser(source);
+        return parser.XmlTransformPrefix();
+    }
+
     private delegate object? Value(OdxExecutionFrame frame);
+    private static JsonNode? ScalarJson(object? value) => value switch
+    {
+        null => null, string text => JsonValue.Create(text), bool boolean => JsonValue.Create(boolean), int number => JsonValue.Create(number),
+        _ => throw new InvalidOperationException("Unsupported ODX assignment value.")
+    };
     private static bool Boolean(object? value) => value is bool boolean ? boolean : throw new InvalidOperationException("ODX condition requires a Boolean value; no implicit coercion is performed.");
     private static int Integer(object? value) => value is int number ? number : throw new InvalidOperationException("ODX arithmetic requires Int32 operands.");
     private static string Text(object? value) => value as string ?? throw new InvalidOperationException("ODX string operation requires a non-null string.");
@@ -56,7 +95,7 @@ public static class OdxExpressionCompiler
     private static void Write(OdxExecutionFrame frame, string path, object? value)
     {
         var parts = path.Split('.');
-        var json = value switch { null => null, string text => JsonValue.Create(text), bool boolean => JsonValue.Create(boolean), int number => JsonValue.Create(number), _ => throw new InvalidOperationException("Unsupported ODX assignment value.") };
+        var json = ScalarJson(value);
         if (parts.Length == 1)
         {
             if (!frame.Variables.ContainsKey(path)) throw new InvalidOperationException($"ODX assignment targets undeclared variable '{path}'.");
@@ -95,12 +134,14 @@ public static class OdxExpressionCompiler
     {
         private readonly string _source;
         private int _offset;
+        private int _tokenStart;
         private int _tokens;
         private int _depth;
         private int _operations;
         private string _token = "";
         private object? _literal;
         private bool _isString;
+        private string? _forbiddenRoot;
 
         public Parser(string source)
         {
@@ -129,6 +170,35 @@ public static class OdxExpressionCompiler
             }
             if (statements.Count == 0) Unsupported();
             return statements;
+        }
+        public (string XmlName, string MessageName, string Transform, Func<OdxExecutionFrame, string> Document) XmlTransformPrefix()
+        {
+            string Name()
+            {
+                if (_isString || !Identifier(_token) || _token.Contains('.')) Unsupported();
+                var name = _token; Next(); return name;
+            }
+            var xml = Name(); Expect("="); Expect("new"); Expect("System.Xml.XmlDocument"); Expect("("); Expect(")"); Expect(";");
+            Expect(xml + ".LoadXml"); Expect("("); _forbiddenRoot = xml;
+            var document = Expression(); Expect(")"); Expect(";"); _forbiddenRoot = null;
+            var message = Name(); Expect("="); Expect(xml); Expect(";");
+            if (xml == message || _token == "") Unsupported();
+            return (xml, message, _source[_tokenStart..], frame => Text(document(frame)));
+        }
+        public IReadOnlyDictionary<string, Value> MessageProperties(string messageName)
+        {
+            _forbiddenRoot = messageName;
+            var properties = new Dictionary<string, Value>(StringComparer.OrdinalIgnoreCase);
+            while (_token != "")
+            {
+                if (_isString || _token != messageName) Unsupported();
+                Next(); Expect("(");
+                if (_isString || !Identifier(_token) || !_token.Contains('.')) Unsupported();
+                var key = _token; Next(); Expect(")"); Expect("=");
+                var value = Expression(); Expect(";");
+                if (properties.Count >= 128 || !properties.TryAdd(key, value)) throw new NotSupportedException("Promoted property assignments require at most 128 distinct keys.");
+            }
+            return properties;
         }
         public Value Expression(int precedence = 0)
         {
@@ -163,7 +233,7 @@ public static class OdxExpressionCompiler
                 Next(); return _ => value;
             }
             var name = _token;
-            if (!Identifier(name)) Unsupported();
+            if (!Identifier(name) || name.Split('.')[0] == _forbiddenRoot) Unsupported();
             Next();
             if (!Take("(")) return frame => Read(frame, name);
             if (name is "System.Text.RegularExpressions.Regex.IsMatch" or "Regex.IsMatch")
@@ -171,7 +241,12 @@ public static class OdxExpressionCompiler
                 var input = Expression(); Expect(","); var pattern = Expression(); Expect(")");
                 return frame => Regex.IsMatch(Text(input(frame)), Text(pattern(frame)), RegexOptions.None, TimeSpan.FromMilliseconds(100));
             }
-            // A promoted-property reference is the sole supported message invocation, not a CLR call.
+            if (name.EndsWith(".ToString", StringComparison.Ordinal))
+            {
+                Expect(")"); var path = name[..^9];
+                return frame => Read(frame, path) is { } value ? Format(value) : throw new InvalidOperationException("ToString requires a non-null scalar fact.");
+            }
+            // Promoted-property access does not invoke CLR/message methods.
             if (!name.Contains('.') && !_isString && Identifier(_token) && _token.Contains('.'))
             {
                 var property = _token; Next(); Expect(")");
@@ -200,6 +275,7 @@ public static class OdxExpressionCompiler
                 }
                 break;
             }
+            _tokenStart = _offset;
             if (_offset == _source.Length) { _token = ""; return; }
             var start = _offset; var ch = _source[_offset++];
             if (ch == '"')

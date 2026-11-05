@@ -9,16 +9,17 @@ public sealed class BatchDeadlineFlowService(IFlowRuntime runtime, ILogger<Batch
             try
             {
                 foreach (var flow in runtime.GetConfiguredFlows().Where(flow => flow.Enabled && flow.Migration is null
-                    && flow.Augments.Any(step => step.Module.Equals("durable-batch-augment", StringComparison.OrdinalIgnoreCase))))
+                    && flow.Augments.Any(step => step.Module.Equals("durable-batch-augment", StringComparison.OrdinalIgnoreCase)
+                        || step.Module.Equals(Mulse.Modules.BuiltIn.Augment.OdxProgramAugmentModule.ModuleId, StringComparison.OrdinalIgnoreCase))))
                 {
                     stoppingToken.ThrowIfCancellationRequested();
                     try { await runtime.ReleaseDueBatchAsync(flow.Id, stoppingToken).ConfigureAwait(false); }
                     catch (Exception ex) when (ex is not OperationCanceledException)
-                    { logger.LogError(ex, "Due-batch check failed for flow {FlowId}; pending data is retained for review/retry.", flow.Id); }
+                    { logger.LogError(ex, "Persisted deadline check failed for flow {FlowId}; pending data is retained for review/retry.", flow.Id); }
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            { logger.LogError(ex, "Batch deadline poll failed; the next poll will check persisted deadlines again."); }
+            { logger.LogError(ex, "Deadline poll failed; the next poll will check persisted deadlines again."); }
             await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken).ConfigureAwait(false);
         }
     }

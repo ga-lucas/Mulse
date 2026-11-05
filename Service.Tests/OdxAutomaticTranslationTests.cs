@@ -45,6 +45,20 @@ public sealed class OdxAutomaticTranslationTests
     }
 
     [Fact]
+    public async Task ParameterlessScalarToStringIsBoundedTypedAndNeverCallsAClrObject()
+    {
+        var frame = Frame(); frame.Variables["count"] = -12; frame.Variables["flag"] = true; frame.Variables["text"] = "";
+        var node = frame.Program.Roots[0];
+        await OdxExpressionCompiler.CompileStatements("text = count.ToString() + flag.ToString();")(node, frame, default);
+        Assert.Equal("-12True", frame.Variables["text"]!.GetValue<string>());
+        frame.Variables["count"] = new JsonObject();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => OdxExpressionCompiler.CompileStatements("text = count.ToString();")(node, frame, default));
+        frame.Variables["count"] = null;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => OdxExpressionCompiler.CompileStatements("text = count.ToString();")(node, frame, default));
+        Assert.Throws<NotSupportedException>(() => OdxExpressionCompiler.CompileStatements("text = count.ToString(\"D2\");"));
+    }
+
+    [Fact]
     public async Task RegexEvaluationEnforcesItsTimeout()
     {
         var frame = Frame(); frame.Variables["input"] = new string('a', 25000) + "!";

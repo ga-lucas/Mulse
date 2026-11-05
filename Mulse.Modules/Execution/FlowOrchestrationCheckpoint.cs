@@ -19,4 +19,6 @@ public sealed class FlowOrchestrationCheckpoint
     public List<FetchProcessingReceipt> SourceReceipts { get; init; } = [];
 
     public FlowBatchCheckpointState? Batch { get; init; }
+
+    public FlowOdxCheckpointState? Odx { get; init; }
 }
