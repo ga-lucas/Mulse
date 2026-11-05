@@ -24,6 +24,8 @@ public sealed class OdxDurableBindings
     public Dictionary<int, Func<IntegrationPayload, bool>> ReceiveFilters { get; } = [];
     /// <summary>Deterministic frame-local updates performed after a receive and checkpointed with its acceptance.</summary>
     public Dictionary<int, OdxActivity> AcceptedReceives { get; } = [];
+    /// <summary>Deterministic correlation validation and pinning before a send's external-effect intent is saved.</summary>
+    public Dictionary<int, OdxActivity> PreparingSends { get; } = [];
 
     /// <summary>Only deterministic, frame-local activities may opt out of the external-effect intent journal.</summary>
     public HashSet<int> FrameLocalActivities { get; } = [];

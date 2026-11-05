@@ -152,6 +152,25 @@ public sealed class FlowModuleDependencyTests
     }
 
     [Fact]
+    public void OdxSendsTrackDeliveryAndEveryPipelineStageIncludingConfigReferences()
+    {
+        var flow = new PipelineDefinition { Id = "odx", Augments = [new()
+        {
+            Module = "odx-program-augment", Settings = new() { ["sendsJson"] = "{{config:sends}}" }
+        }] };
+        var values = new Dictionary<string, string> { ["sends"] = "[{\"nodeId\":42,\"module\":\"destination\",\"pipeline\":[{\"module\":\"first\",\"settings\":{}},{\"module\":\"last\",\"settings\":{}}]}]" };
+        var references = FlowModuleDependencies.References(flow, values).ToArray();
+        Assert.Contains(("destination", ModuleKind.Deliver), references);
+        Assert.Contains(("first", ModuleKind.Render), references); Assert.Contains(("last", ModuleKind.Render), references);
+        var loaded = FakeModuleCatalog.WithModules(("odx-program-augment", ModuleKind.OrchestrationAugment), ("first", ModuleKind.Render));
+        var missing = FlowModuleDependencies.FindMissing(flow, loaded.GetAll(), values);
+        Assert.Contains("Deliver: destination", missing); Assert.Contains("Render: last", missing);
+        Assert.Contains(FlowModuleDependencies.FindMissing(flow, loaded.GetAll()), error => error.Contains("sends"));
+        values["sends"] = "[null]";
+        Assert.Contains(FlowModuleDependencies.FindMissing(flow, loaded.GetAll(), values), error => error.Contains("ODX send bindings"));
+    }
+
+    [Fact]
     public async Task RunPreflight_RejectsMissingLaterStageBeforeFetchingAnything()
     {
         var fetched = false;

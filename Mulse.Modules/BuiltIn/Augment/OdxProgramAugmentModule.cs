@@ -9,7 +9,7 @@ using Mulse.Modules.Orchestration;
 namespace Mulse.Modules.BuiltIn.Augment;
 
 /// <summary>Runs a configured, fully bound native ODX subset, not an imported-flow approval.</summary>
-public sealed class OdxProgramAugmentModule(IFlowOrchestrationStateStore store, TimeProvider clock, IRenderModuleInvoker renderers) : IOrchestrationAugmentModule
+public sealed class OdxProgramAugmentModule(IFlowOrchestrationStateStore store, TimeProvider clock, IRenderModuleInvoker renderers, IDeliverModuleInvoker? deliveries = null) : IOrchestrationAugmentModule
 {
     public const string ModuleId = "odx-program-augment";
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { MaxDepth = 256, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
@@ -27,6 +27,7 @@ public sealed class OdxProgramAugmentModule(IFlowOrchestrationStateStore store, 
             new("receiveCorrelationKeysJson", "Receive correlation metadata keys", "Additional exact metadata keys pinned from the first input. Source correlation declarations are compiled separately.", false, ModuleSettingInputKind.TextArea, "[]"),
             new("delaysJson", "Explicit native timer bindings", "Array of {nodeId, seconds}; 0-31622400 seconds, pinned once at each entered wait. This is an explicit native timer, not source DateTime interpretation.", false, ModuleSettingInputKind.TextArea, "[]"),
             new("casesJson", "Dynamic map choices", "Allowlisted source map identities, renderer modules and settings. Empty array when no dynamic transforms are used.", false, ModuleSettingInputKind.TextArea, "[]"),
+            new("sendsJson", "Outbound send adapters", "Array of {nodeId, module, settings, pipeline:[{module, settings}]} for exact source Send nodes. Pipeline stages must be verified renderer equivalents, not untranslated BizTalk components. Responses use replyPort instead.", false, ModuleSettingInputKind.TextArea, "[]"),
             new("outputMessage", "Completed output message", "Named message returned to downstream render/delivery. Blank preserves the working batch.", false),
             new("replyPort", "Request/reply port", "Optional logical request port whose Response sends are captured as native replies, not delivered remotely.", false)
         ]);
@@ -95,6 +96,9 @@ public sealed class OdxProgramAugmentModule(IFlowOrchestrationStateStore store, 
         if (string.IsNullOrWhiteSpace(correlation)) throw new ArgumentException("A timer resume requires its saved instance correlation key.");
         var choicesJson = step.Settings.GetValueOrDefault("casesJson", "[]");
         var choices = RenderDispatchDefinition.Read(choicesJson, allowEmpty: true);
+        var sends = OdxSendBindings.Read(step.Settings.GetValueOrDefault("sendsJson", "[]")).ToDictionary(binding => binding.NodeId);
+        if (sends.Keys.Any(id => !nodes.Any(node => node.Id == id && node.ShapeType == "Send" && node.Properties.GetValueOrDefault("OperationMessageName") != "Response")))
+            throw new ArgumentException("Outbound send adapters must reference exact non-Response source Send nodes.");
         var messages = nodes.Where(node => node.ShapeType == "MessageDeclaration").Select(node => node.Name)
             .Concat(nodes.Where(node => node.ShapeType == "Receive").Select(node => node.Properties.GetValueOrDefault("MessageName") ?? "")).ToHashSet(StringComparer.Ordinal);
         foreach (var node in nodes)
@@ -121,10 +125,20 @@ public sealed class OdxProgramAugmentModule(IFlowOrchestrationStateStore store, 
                 var delay = delays.SingleOrDefault(binding => binding.NodeId == node.Id) ?? throw new NotSupportedException($"Delay {node.Id} requires an explicit timer binding.");
                 bindings.Deadlines[node.Id] = (_, _) => clock.GetUtcNow().AddSeconds(delay.Seconds);
             }
-            else if (node.ShapeType == "Send" && step.Settings.TryGetValue("replyPort", out var replyPort) && !string.IsNullOrWhiteSpace(replyPort))
+            else if (node.ShapeType == "Send")
             {
-                bindings.Execution.Activities[node.Id] = OdxMessageBindings.BindReply(node, replyPort);
-                bindings.FrameLocalActivities.Add(node.Id);
+                if (node.Properties.GetValueOrDefault("OperationMessageName") == "Response")
+                {
+                    var replyPort = ModuleSettingReader.GetRequired(step.Settings, "replyPort", ModuleId);
+                    bindings.Execution.Activities[node.Id] = OdxMessageBindings.BindReply(node, replyPort);
+                    bindings.FrameLocalActivities.Add(node.Id);
+                }
+                else
+                {
+                    if (!sends.TryGetValue(node.Id, out var send)) throw new NotSupportedException($"Send {node.Id} requires an exact outbound adapter; no destination is inferred.");
+                    bindings.Execution.Activities[node.Id] = OdxSendBindings.Bind(node, send, renderers,
+                        deliveries ?? throw new NotSupportedException("The host must supply a leased delivery module invoker for outbound ODX sends."));
+                }
             }
             else if (node.ShapeType is "MessageAssignment" or "VariableAssignment")
             {

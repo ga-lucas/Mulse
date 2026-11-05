@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 
 namespace Mulse.Modules.Orchestration;
 
-/// <summary>Compiles exact source receive filters and service-level receive-initialized correlation sets.</summary>
+/// <summary>Compiles exact receive filters and lexically scoped receive/send correlation sets.</summary>
 public static class OdxReceiveBindings
 {
     public static IReadOnlyList<string> Bind(OdxProgram program, OdxNode entry, OdxDurableBindings bindings, IReadOnlyList<OdxProgram>? referencedPrograms = null)
@@ -28,8 +28,10 @@ public static class OdxReceiveBindings
         var declarations = selected.Where(node => node.ShapeType == "CorrelationDeclaration").ToArray();
         foreach (var declaration in declarations)
         {
-            if (declaration.ParentId != entry.Id || declaration.Properties.GetValueOrDefault("ParamDirection", "In") != "In")
-                throw new NotSupportedException($"Correlation {declaration.Id} requires scoped/parameter lifetime translation.");
+            var owner = selected.SingleOrDefault(node => node.Id == declaration.ParentId);
+            if (owner?.ShapeType is not ("ServiceDeclaration" or "Scope") || declaration.Properties.GetValueOrDefault("ParamDirection", "In") != "In")
+                throw new NotSupportedException($"Correlation {declaration.Id} requires a local service/scope lifetime; correlation parameters are not translated.");
+            var lifetime = Flatten([owner]).Select(node => node.Id).ToHashSet();
             var typeName = Required(declaration, "Type");
             var types = typesByName[typeName].ToArray();
             if (types.Length != 1) throw new NotSupportedException($"Correlation type '{typeName}' must resolve to exactly one source definition.");
@@ -44,12 +46,12 @@ public static class OdxReceiveBindings
             {
                 var target = selected.Where(node => node.SourceId == Required(reference, "Ref")).ToArray();
                 var initializes = Required(reference, "Initializes") switch { "True" => true, "False" => false, _ => throw new NotSupportedException("Invalid correlation Initializes value.") };
-                if (target.Length != 1 || target[0].ShapeType != "Receive")
-                    throw new NotSupportedException($"Correlation {declaration.Id} references an unresolved/non-receive statement; outbound correlation is not inferred.");
+                if (target.Length != 1 || target[0].ShapeType is not ("Receive" or "Send") || !lifetime.Contains(target[0].Id))
+                    throw new NotSupportedException($"Correlation {declaration.Id} references an unresolved statement or one outside its lexical receive/send lifetime.");
                 return new CorrelationUse(declaration.Id, target[0].Id, initializes, keys);
             }).ToArray();
             if (uses.Count(use => use.Initializes) != 1 || uses.Select(use => use.NodeId).Distinct().Count() != uses.Length)
-                throw new NotSupportedException($"Correlation {declaration.Id} requires exactly one initializer and distinct receive uses.");
+                throw new NotSupportedException($"Correlation {declaration.Id} requires exactly one initializer and distinct receive/send uses.");
             foreach (var use in uses)
             {
                 if (!references.TryGetValue(use.NodeId, out var existing)) references.Add(use.NodeId, existing = []);
@@ -89,15 +91,20 @@ public static class OdxReceiveBindings
             {
                 token.ThrowIfCancellationRequested();
                 var payload = frame.Messages[message].Payloads.Single();
-                foreach (var use in uses.Where(use => use.Initializes))
-                {
-                    var key = StateKey(use.DeclarationId);
-                    if (!frame.Variables.TryGetValue(key, out var current) || current is not null)
-                        throw new InvalidOperationException($"Correlation {use.DeclarationId} is undeclared or already initialized.");
-                    var snapshot = new JsonObject();
-                    foreach (var property in use.Keys) snapshot[property] = ExactMetadata(payload, property);
-                    frame.Variables[key] = snapshot;
-                }
+                PinAndValidate(uses, frame, payload);
+                return Task.CompletedTask;
+            };
+        }
+        foreach (var send in selected.Where(node => node.ShapeType == "Send" && references.ContainsKey(node.Id)))
+        {
+            var message = Required(send, "MessageName");
+            var uses = references[send.Id];
+            bindings.PreparingSends[send.Id] = (_, frame, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                if (!frame.Messages.TryGetValue(message, out var batch) || batch.Count != 1)
+                    throw new InvalidOperationException($"Correlated send {send.Id} requires exactly one initialized named message.");
+                PinAndValidate(uses, frame, batch.Payloads[0]);
                 return Task.CompletedTask;
             };
         }
@@ -135,6 +142,38 @@ public static class OdxReceiveBindings
             throw new NotSupportedException("Receive RHS supports only string/Boolean/Int32 literals.");
         }).ToArray();
         return payload => predicates.All(predicate => predicate(payload));
+    }
+
+    private static void PinAndValidate(IEnumerable<CorrelationUse> uses, OdxExecutionFrame frame, IntegrationPayload payload)
+    {
+        var snapshots = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var use in uses)
+        {
+            var key = StateKey(use.DeclarationId);
+            if (!frame.Variables.TryGetValue(key, out var current))
+                throw new InvalidOperationException($"Correlation {use.DeclarationId} is outside its initialized scope lifetime.");
+            if (use.Initializes)
+            {
+                if (current is not null) throw new InvalidOperationException($"Correlation {use.DeclarationId} is already initialized.");
+                var snapshot = new JsonObject();
+                foreach (var property in use.Keys) snapshot[property] = ExactMetadata(payload, property);
+                snapshots.Add(key, snapshot);
+            }
+            else
+            {
+                if (current is not JsonObject saved) throw new InvalidOperationException($"Correlation {use.DeclarationId} is followed before initialization.");
+                foreach (var property in use.Keys)
+                    if (saved[property]?.GetValue<string>() != ExactMetadata(payload, property))
+                        throw new InvalidOperationException($"Correlation {use.DeclarationId} does not match promoted property {property}.");
+            }
+        }
+        foreach (var snapshot in snapshots) frame.Variables[snapshot.Key] = snapshot.Value;
+    }
+
+    internal static void ExitScope(OdxNode scope, OdxExecutionFrame frame)
+    {
+        foreach (var declaration in scope.Children.Where(node => node.ShapeType == "CorrelationDeclaration"))
+            frame.Variables.Remove(StateKey(declaration.Id));
     }
 
     private static bool TryBoolean(string value, out bool parsed)

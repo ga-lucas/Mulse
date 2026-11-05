@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Mulse.Modules;
 using Mulse.Modules.Mapping;
+using Mulse.Modules.Orchestration;
 using Mulse.Modules.Workflow;
 
 namespace Service.Flows;
@@ -21,6 +22,16 @@ internal static class FlowModuleDependencies
         {
             yield return (step.Module, ModuleKind.OrchestrationAugment);
             foreach (var choice in DispatchChoices(flow.Id, step, configValues)) yield return (choice.Module, ModuleKind.Render);
+            if (string.Equals(step.Module, Mulse.Modules.BuiltIn.Augment.OdxProgramAugmentModule.ModuleId, StringComparison.OrdinalIgnoreCase))
+            {
+                var sendsJson = ConfigValueResolver.Substitute(step.Settings.GetValueOrDefault("sendsJson", "[]"), configValues, reference =>
+                    throw new ArgumentException($"Flow '{flow.Id}' requires configuration '{reference}' to determine its outbound ODX dependencies."));
+                foreach (var send in OdxSendBindings.Read(sendsJson))
+                {
+                    yield return (send.Module, ModuleKind.Deliver);
+                    foreach (var stage in send.Pipeline) yield return (stage.Module, ModuleKind.Render);
+                }
+            }
             var isJoin = string.Equals(step.Module, "multi-source-join-map-augment", StringComparison.OrdinalIgnoreCase);
             var isParsedMap = string.Equals(step.Module, "parsed-data-map-augment", StringComparison.OrdinalIgnoreCase);
             if ((isJoin || isParsedMap) && step.Settings.TryGetValue("mappingJson", out var json) && !string.IsNullOrWhiteSpace(json))

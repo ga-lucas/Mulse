@@ -52,7 +52,7 @@ public sealed class OdxDurableExecutor(IFlowOrchestrationStateStore store, TimeP
         }
         ValidateDurable(entry);
         new OdxProgramExecutor().ValidateContinuation(program, entry, execution, cancellationToken);
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(program, JsonOptions) + "\n" + bindingVersion)));
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("scoped-correlations-v2\n" + JsonSerializer.Serialize(program, JsonOptions) + "\n" + bindingVersion)));
         var checkpoint = await store.GetAsync(frame.Context.FlowId, correlationKey, cancellationToken).ConfigureAwait(false);
         var persisted = checkpoint is not null;
         OdxDurableState state;
@@ -70,7 +70,7 @@ public sealed class OdxDurableExecutor(IFlowOrchestrationStateStore store, TimeP
                 throw new InvalidOperationException("Checkpoint is not a bounded ODX continuation; no execution was attempted.");
             state = JsonSerializer.Deserialize<OdxDurableState>(json, JsonOptions) ?? throw new InvalidOperationException("Missing ODX continuation.");
             if (state.Version != 1 || state.DefinitionHash != hash || state.EntryId != entry.Id)
-                throw new InvalidOperationException("ODX program or binding version changed while an instance is pending. Restore its pinned definition before resuming.");
+                throw new InvalidOperationException("ODX runtime, program or binding version changed while an instance is pending. Restore its pinned runtime and definition before resuming.");
             if (state.EffectNodeId is { } effect) throw new OdxAmbiguousEffectException($"ODX effect {effect} has an unresolved intent. Reconcile its destination outcome; automatic replay is blocked.");
             if (state.Status == "Faulted") throw new InvalidOperationException("ODX instance is faulted and requires reconciliation: " + state.Failure);
             bool ValidCursor(OdxCursor cursor)
@@ -169,7 +169,12 @@ public sealed class OdxDurableExecutor(IFlowOrchestrationStateStore store, TimeP
             catch (Exception exception) when (exception is not OperationCanceledException)
             { throw new OdxPersistenceException("ODX checkpoint acknowledgement failed; source catch handlers cannot retry an ambiguous persistence boundary.", exception); }
         }
-        void Pop() => state.Stack.RemoveAt(state.Stack.Count - 1);
+        void Pop()
+        {
+            var node = nodes[state.Stack[^1].NodeId];
+            if (node.ShapeType is "ServiceDeclaration" or "Scope") OdxReceiveBindings.ExitScope(node, frame);
+            state.Stack.RemoveAt(state.Stack.Count - 1);
+        }
         void Push(OdxNode node) { if (state.Stack.Count >= 64) throw new OdxExecutionLimitException("ODX continuation exceeds 64 stack frames."); state.Stack.Add(new() { NodeId = node.Id }); }
         async Task Accept(OdxWaitChoice choice)
         {
@@ -244,7 +249,7 @@ public sealed class OdxDurableExecutor(IFlowOrchestrationStateStore store, TimeP
                 if (scope.ShapeType is not ("Scope" or "ServiceDeclaration") || cursor.HandlerId is not null) continue;
                 var handler = scope.Children.FirstOrDefault(child => child.ShapeType == "Catch" && Inherits(exception, child.Properties.GetValueOrDefault("ExceptionType")));
                 if (handler is null) continue;
-                state.Stack.RemoveRange(index + 1, state.Stack.Count - index - 1);
+                while (state.Stack.Count > index + 1) Pop();
                 cursor.HandlerId = handler.Id; cursor.Position = 0;
                 cursor.Fault = new(exception.GetType().FullName ?? exception.GetType().Name, exception.Message, exception.StackTrace);
                 state.Waits.Clear();
@@ -264,8 +269,7 @@ public sealed class OdxDurableExecutor(IFlowOrchestrationStateStore store, TimeP
                 switch (node.ShapeType)
                 {
                     case "ServiceDeclaration": case "Scope":
-                        var children = cursor.HandlerId is { } handler ? nodes[handler].Children
-                            : node.Children.Where(child => child.ShapeType != "Catch").OrderBy(child => node.ShapeType == "ServiceDeclaration" && child.ShapeType == "ServiceBody" ? 1 : 0).ToArray();
+                        var children = cursor.HandlerId is { } handler ? nodes[handler].Children : OdxProgramExecutor.ScopeChildren(node);
                         if (cursor.Position >= children.Count) Pop(); else Push(children[cursor.Position++]);
                         break;
                     case "ServiceBody": case "Construct": case "DecisionBranch": case "ListenBranch":
@@ -293,6 +297,8 @@ public sealed class OdxDurableExecutor(IFlowOrchestrationStateStore store, TimeP
                         if (waitResult is not null) return waitResult;
                         break;
                     default:
+                        if (node.ShapeType == "Send" && bindings.PreparingSends.TryGetValue(node.Id, out var prepare))
+                            await prepare(node, frame, cancellationToken).ConfigureAwait(false);
                         var external = !bindings.FrameLocalActivities.Contains(node.Id);
                         if (external) { state.EffectNodeId = node.Id; await Save().ConfigureAwait(false); }
                         try { await execution.Activities[node.Id](node, frame, cancellationToken).ConfigureAwait(false); }

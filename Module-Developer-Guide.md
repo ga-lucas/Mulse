@@ -315,21 +315,28 @@ facts, named messages, replies, accepted message IDs, source receipts and listen
 host's per-flow execution lock; the store is single-host, not a distributed lock/CAS service. Store keys are
 case-insensitive: SDK callers must encode case-sensitive instance values into distinct keys; the installed native
 node uses SHA-256 digests and limits source instance values to 2,048 characters. Supply a stable binding version:
-changing the source model or bindings blocks pending-instance execution before effects.
+changing the source model, bindings or interpreter semantics blocks pending-instance execution before effects.
+The scoped-correlation runtime pins a new interpreter revision; finish existing instances under their previous pinned
+runtime/definition rather than rewriting cursor hashes or discarding held work.
 `OdxDurableBindings` combines automatic scalar bindings with explicit receive-subscription and UTC-deadline
 factories. Receives require one payload and exact ordinal port/correlation matches, plus operation and
 Request/Response identities when specified. Listen races persist all deadlines on entry; an already-due timer
 wins over a later message, which remains unconsumed. A resumed scope catch exposes the original message/stack
 and exception type metadata, not the original CLR object.
 
-`OdxReceiveBindings.Bind` compiles service-level receive-initialized correlation declarations using exact source
-OID `StatementRef` targets and fully qualified correlation types. Supply sibling source models for external type
-definitions; their services are never executed. Following receives use persisted promoted-property snapshots,
-not the latest input. Filters support up to 128 AND Equals/Exists predicates; Equals accepts string/Boolean/Int32
-literals, and promoted keys/string values are ordinal. Unsupported predicates, ambiguous types, outbound/scoped
-correlations and activation topology fail explicitly. Supported activation is one first-body activating receive
-followed by explicitly non-activating receives. Deterministic `AcceptedReceives` callbacks may update only the
-frame; they must never perform external effects.
+`OdxReceiveBindings.Bind` compiles receive/send-initialized correlation declarations local to services and scopes,
+using exact source OID `StatementRef` targets and fully qualified correlation types. Supply sibling source models
+for external type definitions; their services are never executed. Each set requires exactly one initializer and
+lexically contained receive/send uses; correlation parameters are rejected. Scoped declarations initialize before
+scope statements on each entry; their snapshots persist across waits and are removed on exit or exception unwind.
+Following receives/sends use pinned promoted-property snapshots, not the latest input. Every correlated send requires
+one named payload. Missing, mismatched, case-changed, uninitialized or reinitialized properties fail before transport
+or its effect intent. Multiple sets are validated before any snapshot changes publish. Filters support up to 128
+AND Equals/Exists predicates; Equals accepts string/Boolean/Int32 literals, and promoted keys/string values are ordinal.
+Unsupported predicates, ambiguous types and activation topology fail explicitly. Supported activation is one first-body
+activating receive followed by explicitly non-activating receives. Deterministic `AcceptedReceives` and `PreparingSends`
+callbacks may update only the frame; they must never perform external effects. These hooks belong to the durable
+executor; the in-process executor's activity collection alone does not run them.
 
 A rejected new activation creates no checkpoint and accepts no receipt. An unmatched arrival at an existing wait
 neither acknowledges nor fails current/retained source receipts and is excluded from generic stage retries.
@@ -362,8 +369,21 @@ up to 32 private source models for external correlation types. Set `correlationM
 instance keys from the exact property tuple of correlation sets initialized by the first receive; otherwise
 its default `group` selects the explicit metadata key. Source-derived tuples preserve case and field boundaries
 in the case-insensitive host store. This mode does not infer send-initialized/scoped correlation routing.
-The node binds scalar expressions, copies, complete maps/trailers, replies, supported source receives and explicit
-scalar service initializers. Other declarations, sends, helpers and transactions still require translation.
+The node binds scalar expressions, copies, complete maps/trailers, replies, supported source correlations/receives and
+explicit scalar service initializers. `sendsJson` supplies up to 128 adapters for exact non-Response source Send IDs:
+
+```json
+[{"nodeId":42,"module":"document-repository-store","settings":{"path":"{{config:billing-output}}"},"pipeline":[{"module":"xslt-render","settings":{"xsltPath":"{{config:billing-xslt}}"}}]}]
+```
+
+Use the source-model's actual node IDs, verified module IDs/settings and reviewed pipeline equivalents; this example is
+not a Billing configuration. Pipeline entries run in order (at most 32) on the outbound batch without replacing the
+source named message used by later sends/replies. `IDeliverModuleInvoker` leases delivery modules; setting
+`expectsResponse=true` requires `IRequestResponseDeliverModule`, returning responses for native capture rather than
+silently dropping them. This is not a named ODX response-receive router. Both renderer and delivery dependencies are
+tracked for availability and package unloading, including config-backed plans. Stages/sends run under the existing
+external-effect journal; an ambiguous failure freezes replay, not an automatic resend. Setting-level retry/compensation
+inside this adapter is not provided. Other declarations, helpers and transactions still require translation.
 Native timer seconds do not interpret source DateTime expressions. Keep all source-bearing JSON private.
 
 The host polls persisted deadlines without fetching or replaying upstream steps. Source acknowledgements wait
@@ -374,8 +394,8 @@ ODX node is allowed per flow, without other stateful collector nodes or conditio
 64 stack levels, 10,000 loop iterations/accepted messages/payload snapshots, 100,000 persisted operations,
 12,000,000 payload bytes and 24,000,000 serialized checkpoint characters.
 
-`OdxDurableContinuationTests`, `OdxSourceReceiveTests`, `OdxMessageBindingTests`, `OdxNativeRuntimeTests` and
-`OdxNativeUiTests` verify restart, exact source filters/correlations/operations, independent clients, XML trailers,
+`OdxDurableContinuationTests`, `OdxSourceReceiveTests`, `OdxMessageBindingTests`, `OdxOutboundRuntimeTests`,
+`OdxNativeRuntimeTests` and `OdxNativeUiTests` verify restart, exact source filters/correlations/operations, independent clients, XML trailers,
 retained replies, ambiguous writes/effects, real XSLT leases, idle polling, downstream retry and visual map settings.
 These are native/synthetic tests, not end-to-end equivalence of the imported Billing project.
 Imported drafts remain disabled and original helper stubs remain deliberately untranslated.

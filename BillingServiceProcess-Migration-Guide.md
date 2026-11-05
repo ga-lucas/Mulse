@@ -136,8 +136,21 @@ real XSLT/replies, deferred acknowledgement and downstream retry without map rep
 The next source-binding increment compiles all five actual receive filters (AND Equals/Exists), exact operation
 identities, and both batch services' two-receive correlation sets. The trailer service resolves its correlation
 type from the sibling source model. Following receives pin the three promoted source properties across restart;
-source-derived tuple routing separates clients without requiring an invented group field. Main-service correlations
-initialized on outbound/scoped statements remain explicit blockers.
+source-derived tuple routing separates clients without requiring an invented group field.
+
+The next increment compiles all 14 main-service correlation declarations, including its outbound initializers and
+nine scope-local sets; they resolve to ten distinct send-preparation sites. A local read-only probe compiled all
+three actual source models together and retained both batch receive correlations without executing source statements,
+helpers, maps or endpoints. Synthetic disk-restart tests verify send-to-following-receive pinning, scope re-entry,
+lexical lifetime rejection and fail-before-transport validation. This is correlation binding coverage, not MessageBox
+routing or full orchestration execution. Parameter correlations and automatic outbound instance routing remain unsupported.
+
+Native `sendsJson` adapters now wire exact source Send IDs through ordered leased renderer equivalents to a leased
+delivery module, alongside separate request-port replies. Dependency checks include every configured pipeline stage
+and destination before fetching. Real-XSLT synthetic tests cover outbound transformation, correlated resume, preserving
+the original reply message and holding ambiguous sends without replay. This does not translate original `.btp`
+components: the inspected XML/flat-file email pipelines still require SetProperty; HL7 pipelines require HL7TypeCaster,
+HL7 assembly and MIME behavior. Those helper implementations remain deliberately untouched, not replaced with pass-throughs.
 
 All 37 actual transform statement shapes now bind completely: 29 in the main service and four in each batch
 service, including transport-property tails and the two XML trailer-construction prefixes. No original renderer
@@ -146,7 +159,7 @@ correct schema facts and verified renderer semantics; these counts do not prove 
 Synthetic tests verify counted XML trailers through real leased XSLT and rejected input without source callbacks.
 
 This is **not yet runnable Billing import**: native seconds do not translate BatchTime/BatchInterval expressions;
-outbound/scoped correlations, general schema/context/DOM behavior, selected Billing maps/pipelines and full importer
+MessageBox/outbound routing, general schema/context/DOM behavior, selected Billing maps/pipelines and full importer
 wiring remain open. Original helpers remain deliberately untranslated. Atomic/long-running transactions are
 explicitly rejected, not represented by local checkpoint writes. No source-oracle Billing end-to-end parity is
 claimed and no imported execution gate has changed.

@@ -190,6 +190,161 @@ public sealed class OdxSourceReceiveTests
         Assert.Equal(4, checkpoints.Checkpoints.Select(checkpoint => checkpoint.CorrelationKey).Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
+    private static XElement SendCorrelation(string name, string initializer, string? following = null) => N("CorrelationDeclaration", name,
+        P("Type", "Example.Process.BatchType"), P("ParamDirection", "In"),
+        N("StatementRef", name + "-init", P("Ref", initializer), P("Initializes", "True")),
+        following is null ? Array.Empty<object>() : [N("StatementRef", name + "-next", P("Ref", following), P("Initializes", "False"))]);
+    private static IEnumerable<OdxNode> Nodes(IEnumerable<OdxNode> roots) => roots.SelectMany(node => new[] { node }.Concat(Nodes(node.Children)));
+
+    [Fact]
+    public async Task OutboundInitializedScopeResumesOnDiskAndReinitializesOnTheNextLoopEntry()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "mulse-scoped-correlations-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var program = Read(N("Module", "Example.Process", CorrelationType(), N("ServiceDeclaration", "Service",
+                N("ServiceBody", "Body", N("Receive", "input", P("PortName", "input"), P("MessageName", "request")),
+                    N("While", "loop", P("Expression", "count < 2"), N("Scope", "scope",
+                        N("Send", "outbound", P("PortName", "out"), P("MessageName", "request")),
+                        SendCorrelation("batch", "outbound", "reply"),
+                        N("Receive", "reply", P("PortName", "input"), P("MessageName", "reply")),
+                        N("VariableAssignment", "increment", P("Expression", "count++;")),
+                        N("MessageAssignment", "change-group")))))));
+            FlowOrchestrationStateStore Store() => new(new RuntimeConfigurationStore(Options.Create(new MulseOptions { RuntimeStatePath = Path.Combine(directory, "state.json") }),
+                new FakeHostEnvironment(), NoOpRuntimeStatePayloadProtector.Instance));
+            var sent = new List<string>();
+            OdxDurableBindings Bind()
+            {
+                var bindings = new OdxDurableBindings(); OdxReceiveBindings.Bind(program, Service(program), bindings);
+                var automatic = OdxAutomaticBindings.Compile(program);
+                foreach (var pair in automatic.Bindings.Activities) { bindings.Execution.Activities[pair.Key] = pair.Value; bindings.FrameLocalActivities.Add(pair.Key); }
+                foreach (var pair in automatic.Bindings.Conditions) bindings.Execution.Conditions[pair.Key] = pair.Value;
+                var send = Nodes(program.Roots).Single(node => node.Name == "outbound");
+                bindings.Execution.Activities[send.Id] = OdxMessageBindings.BindSend(send, new Dictionary<string, OdxPortSender>
+                {
+                    ["out"] = (_, batch, _) => { sent.Add(batch.Payloads[0].Metadata["Example.Group"]); return Task.FromResult(IntegrationBatch.Empty); }
+                });
+                var change = Nodes(program.Roots).Single(node => node.Name == "change-group");
+                bindings.Execution.Activities[change.Id] = (_, frame, _) => { frame.Messages["request"] = Input("request-B", "B").Batch; return Task.CompletedTask; };
+                bindings.FrameLocalActivities.Add(change.Id);
+                return bindings;
+            }
+            Task<OdxDurableResult> Run(OdxIncomingMessage input, OdxExecutionFrame frame) => new OdxDurableExecutor(Store(), TimeProvider.System)
+                .ExecuteAsync(program, Service(program), Bind(), frame, "instance", "scoped-v1", input, default);
+            var first = Frame(program); first.Variables["count"] = 0;
+            Assert.Equal(OdxDurableOutcome.Waiting, (await Run(Input("initial"), first)).Outcome);
+            Assert.Equal(new[] { "A" }, sent);
+            Assert.Equal(OdxDurableOutcome.Unmatched, (await Run(Input("wrong", "B"), Frame(program))).Outcome);
+            Assert.Equal(OdxDurableOutcome.Waiting, (await Run(Input("reply-A"), Frame(program))).Outcome);
+            Assert.Equal(new[] { "A", "B" }, sent);
+            var final = Frame(program);
+            Assert.Equal(OdxDurableOutcome.Completed, (await Run(Input("reply-B", "B"), final)).Outcome);
+            Assert.Equal(2, final.Variables["count"]!.GetValue<int>());
+            Assert.DoesNotContain(final.Variables.Keys, key => key.StartsWith("$odx.sourceCorrelation.", StringComparison.Ordinal));
+            Assert.Equal(new[] { "initial", "reply-A", "reply-B" }, final.Context.SourceReceipts.Select(receipt => receipt.Id));
+            Assert.Equal(2, sent.Count);
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("case")]
+    [InlineData("uninitialized")]
+    [InlineData("mismatch")]
+    [InlineData("multiple")]
+    public async Task InvalidOutboundCorrelationFailsBeforeTransportOrEffectIntent(string invalid)
+    {
+        var program = Read(N("Module", "Example.Process", CorrelationType(), N("ServiceDeclaration", "Service",
+            SendCorrelation("batch", "outbound", invalid == "uninitialized" ? "before" : "after"),
+            N("ServiceBody", "Body", N("Receive", "input", P("PortName", "input"), P("MessageName", "request")),
+                N("Send", "before", P("PortName", "out"), P("MessageName", "request")),
+                N("Send", "outbound", P("PortName", "out"), P("MessageName", "request")),
+                N("Send", "after", P("PortName", "out"), P("MessageName", "request"))))));
+        var bindings = new OdxDurableBindings(); OdxReceiveBindings.Bind(program, Service(program), bindings);
+        var calls = 0;
+        foreach (var send in Nodes(program.Roots).Where(node => node.ShapeType == "Send"))
+            bindings.Execution.Activities[send.Id] = (_, frame, _) =>
+            {
+                calls++;
+                if (invalid == "mismatch") frame.Messages["request"] = Input("other", "B").Batch;
+                return Task.CompletedTask;
+            };
+        var message = Input("initial"); var payload = message.Batch.Payloads[0];
+        var metadata = new Dictionary<string, string>(payload.Metadata, StringComparer.Ordinal);
+        if (invalid == "missing") metadata.Remove("Example.Group");
+        if (invalid == "case") { metadata.Remove("Example.Group"); metadata["example.group"] = "A"; }
+        // Invalid metadata is introduced by a deterministic construct before any correlated send.
+        var before = Nodes(program.Roots).Single(node => node.Name == "before");
+        if (invalid != "uninitialized")
+        {
+            bindings.Execution.Activities[before.Id] = (_, frame, _) =>
+            {
+                frame.Messages["request"] = invalid == "multiple" ? new([payload, payload]) : new([payload with { Metadata = metadata }]);
+                return Task.CompletedTask;
+            };
+            bindings.FrameLocalActivities.Add(before.Id);
+        }
+        var store = new InMemoryFlowOrchestrationStateStore();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new OdxDurableExecutor(store, TimeProvider.System)
+            .ExecuteAsync(program, Service(program), bindings, Frame(program), "instance", "invalid-v1", message, default));
+        Assert.Equal(invalid == "mismatch" ? 1 : 0, calls);
+        var state = System.Text.Json.Nodes.JsonNode.Parse(Assert.Single(store.Checkpoints).StateValues["odx.continuation.v1"])!;
+        Assert.Null(state["effectNodeId"]); Assert.Equal("Faulted", state["status"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task PreviousInterpreterCursorOrderingCannotResumeUnderTheNewCorrelationLifetimeSemantics()
+    {
+        var program = Program(); var bindings = new OdxDurableBindings(); OdxReceiveBindings.Bind(program, Service(program), bindings);
+        var store = new InMemoryFlowOrchestrationStateStore();
+        Task<OdxDurableResult> Run(OdxIncomingMessage input) => new OdxDurableExecutor(store, TimeProvider.System)
+            .ExecuteAsync(program, Service(program), bindings, Frame(program), "instance", "v1", input, default);
+        Assert.Equal(OdxDurableOutcome.Waiting, (await Run(Input("initial"))).Outcome);
+        var checkpoint = Assert.Single(store.Checkpoints); var json = System.Text.Json.Nodes.JsonNode.Parse(checkpoint.StateValues["odx.continuation.v1"])!;
+        var legacyHash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(program, JsonSerializerOptions.Web) + "\nv1"));
+        json["definitionHash"] = Convert.ToHexString(legacyHash); checkpoint.StateValues["odx.continuation.v1"] = json.ToJsonString();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Run(Input("following")));
+        Assert.Contains("pinned runtime", error.Message); Assert.Single(checkpoint.SourceReceipts);
+    }
+
+    [Fact]
+    public async Task ExceptionUnwindRemovesInnerScopeCorrelationBeforeTheOuterCatch()
+    {
+        var program = Read(N("Module", "Example.Process", CorrelationType(), N("ServiceDeclaration", "Service",
+            N("ServiceBody", "Body", N("Receive", "input", P("PortName", "input"), P("MessageName", "request")),
+                N("Scope", "scope", SendCorrelation("batch", "outbound"), N("Send", "outbound", P("PortName", "out"), P("MessageName", "request")),
+                    N("VariableAssignment", "fault"))),
+            N("Catch", "catch", P("ExceptionType", "System.InvalidOperationException"), N("VariableAssignment", "inspect")))));
+        var bindings = new OdxDurableBindings(); OdxReceiveBindings.Bind(program, Service(program), bindings);
+        var inspected = false;
+        foreach (var node in Nodes(program.Roots).Where(node => node.Name is "outbound" or "fault" or "inspect"))
+        {
+            bindings.Execution.Activities[node.Id] = (_, frame, _) =>
+            {
+                if (node.Name == "fault") throw new InvalidOperationException("Synthetic deterministic failure");
+                if (node.Name == "inspect")
+                {
+                    Assert.DoesNotContain(frame.Variables.Keys, key => key.StartsWith("$odx.sourceCorrelation.", StringComparison.Ordinal));
+                    inspected = true;
+                }
+                return Task.CompletedTask;
+            };
+            if (node.Name != "outbound") bindings.FrameLocalActivities.Add(node.Id);
+        }
+        var result = await new OdxDurableExecutor(new InMemoryFlowOrchestrationStateStore(), TimeProvider.System)
+            .ExecuteAsync(program, Service(program), bindings, Frame(program), "instance", "unwind-v1", Input("initial"), default);
+        Assert.Equal(OdxDurableOutcome.Completed, result.Outcome); Assert.True(inspected);
+    }
+
+    [Fact]
+    public void ScopedCorrelationCannotReferenceAStatementOutsideItsLifetime()
+    {
+        var program = Read(N("Module", "Example.Process", CorrelationType(), N("ServiceDeclaration", "Service", N("ServiceBody", "Body",
+            N("Scope", "scope", SendCorrelation("batch", "outside")), N("Send", "outside", P("PortName", "out"), P("MessageName", "request"))))));
+        Assert.Throws<NotSupportedException>(() => OdxReceiveBindings.Bind(program, Service(program), new()));
+    }
+
     private sealed class NoRender : IRenderModuleInvoker
     {
         public Task<IntegrationBatch> RenderAsync(string moduleId, FlowExecutionContext context, IntegrationBatch batch, IReadOnlyDictionary<string, string> settings, CancellationToken token)

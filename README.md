@@ -357,15 +357,20 @@ never blindly replayed. Pending checkpoints block unsafe edits and deletion; dis
 There is no operator reconciliation/discard API. Source IDs must remain unique per event within an instance.
 Only one ODX node is allowed per flow, without other stateful collector nodes or conditional execution.
 
-Explicit scalar service initializers, service-level receive-initialized correlation sets, exact operations,
+Explicit scalar service initializers, receive/send-initialized service and scope correlation sets, exact operations,
 AND Equals/Exists filters, map-output promoted-property writes and counted XML-trailer map prefixes are supported.
 Referenced source models can supply external correlation types. Leave the instance metadata key blank to route by
-the first receive's source correlation tuple. Unmatched new activations create no checkpoint; rejected arrivals
-never acknowledge retained source receipts. Uninitialized/scoped/non-scalar declarations remain blocked.
-This is not automatic Billing import: outbound/scoped correlations, schema facts, general XML/context operations,
-DateTime expressions, original helpers/pipelines and full import wiring remain incomplete. Native timers use
-explicit seconds; pipeline adapters require reviewed native renderer equivalents. Atomic/long-running transactions are rejected,
-not emulated by checkpoints. Imported flows stay disabled. See [Module-Developer-Guide.md](Module-Developer-Guide.md)
+source tuples only when all sets initialize on the first receive; other models need an explicit instance key.
+Scoped sets reset on re-entry and are removed on exit/unwind. Sends validate correlation before any external intent.
+Unmatched new activations create no checkpoint; rejected arrivals never acknowledge retained source receipts.
+Uninitialized/scoped scalar/non-scalar declarations and correlation parameters remain blocked.
+Configure **Outbound send adapters** (`sendsJson`) for exact source Send IDs, ordered renderer-stage equivalents and
+leased delivery modules. Request-port Response sends remain separate native replies. All pipeline/delivery dependencies
+must be loaded before fetching. Older interpreter checkpoints require their pinned runtime; no cursor migration is guessed.
+This is not automatic Billing import: schema facts, general XML/context operations, DateTime expressions, original
+helpers/pipelines and full import wiring remain incomplete. Native timers use explicit seconds; the adapters do not
+translate `.btp` components. Atomic/long-running transactions are rejected, not emulated by checkpoints.
+Imported flows stay disabled. See [Module-Developer-Guide.md](Module-Developer-Guide.md)
 for SDK contracts and limits and [BillingServiceProcess-Migration-Guide.md](BillingServiceProcess-Migration-Guide.md)
 for the remaining compatibility work.
 

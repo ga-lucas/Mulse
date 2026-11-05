@@ -126,10 +126,7 @@ public sealed class OdxProgramExecutor
             var previous = frame.CurrentException;
             try
             {
-                var body = scope.Children.Where(child => child.ShapeType is not ("Catch" or "AtomicTransaction" or "LongRunningTransaction"));
-                if (scope.ShapeType == "ServiceDeclaration")
-                    body = body.Where(child => child.ShapeType != "ServiceBody").Concat(body.Where(child => child.ShapeType == "ServiceBody"));
-                await Sequence(body, token).ConfigureAwait(false);
+                await Sequence(ScopeChildren(scope), token).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is not (OperationCanceledException or OdxExecutionLimitException) && !Suspended())
             {
@@ -185,6 +182,10 @@ public sealed class OdxProgramExecutor
         }
         await Execute(entry, cancellationToken).ConfigureAwait(false);
     }
+
+    internal static IReadOnlyList<OdxNode> ScopeChildren(OdxNode node) => node.Children
+        .Where(child => child.ShapeType is not ("Catch" or "AtomicTransaction" or "LongRunningTransaction"))
+        .OrderBy(child => node.ShapeType == "ServiceDeclaration" ? child.ShapeType == "ServiceBody" ? 1 : 0 : child.ShapeType == "CorrelationDeclaration" ? 0 : 1).ToArray();
 
     private static bool HasExpression(OdxNode node) => !string.IsNullOrWhiteSpace(node.Properties.GetValueOrDefault("Expression"));
     private static bool HasTransaction(OdxNode node) => node.Children.Any(child => child.ShapeType is "AtomicTransaction" or "LongRunningTransaction");
