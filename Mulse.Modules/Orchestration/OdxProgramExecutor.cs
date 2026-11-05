@@ -4,15 +4,19 @@ namespace Mulse.Modules.Orchestration;
 
 public sealed class OdxProgramExecutor
 {
-    public async Task ExecuteAsync(OdxProgram program, OdxNode entry, OdxExecutionBindings bindings, OdxExecutionFrame frame,
-        CancellationToken cancellationToken)
+    public void Validate(OdxProgram program, OdxNode entry, OdxExecutionBindings bindings, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(bindings);
+        ValidateBindings(program, entry, new(bindings.Activities), new(bindings.Conditions), new(bindings.Transactions), cancellationToken);
+    }
+
+    private static void ValidateBindings(OdxProgram program, OdxNode entry, Dictionary<int, OdxActivity> activities,
+        Dictionary<int, OdxCondition> conditions, Dictionary<int, OdxTransactionScope> transactions, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(entry);
-        ArgumentNullException.ThrowIfNull(bindings);
-        ArgumentNullException.ThrowIfNull(frame);
         cancellationToken.ThrowIfCancellationRequested();
-        if (program.Version != 1 || !ReferenceEquals(program, frame.Program)) throw new ArgumentException("Execution requires the frame's version-1 ODX program.");
+        if (program.Version != 1) throw new ArgumentException("Execution requires a version-1 ODX program.");
         var nodes = new Dictionary<int, OdxNode>();
         void Collect(OdxNode node, int? parent, int depth)
         {
@@ -23,9 +27,6 @@ public sealed class OdxProgramExecutor
         foreach (var root in program.Roots) Collect(root, null, 1);
         if (!nodes.TryGetValue(entry.Id, out var saved) || !ReferenceEquals(saved, entry)) throw new ArgumentException("Entry must belong to this ODX program.");
         if (entry.ShapeType != "ServiceDeclaration") throw new ArgumentException("Execute a complete ServiceDeclaration; executing a subtree could bypass transaction/declaration semantics.");
-        var activities = new Dictionary<int, OdxActivity>(bindings.Activities);
-        var conditions = new Dictionary<int, OdxCondition>(bindings.Conditions);
-        var transactions = new Dictionary<int, OdxTransactionScope>(bindings.Transactions);
         void Validate(OdxNode node)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -79,6 +80,18 @@ public sealed class OdxProgramExecutor
             }
         }
         Validate(entry);
+    }
+
+    public async Task ExecuteAsync(OdxProgram program, OdxNode entry, OdxExecutionBindings bindings, OdxExecutionFrame frame,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        ArgumentNullException.ThrowIfNull(bindings);
+        if (!ReferenceEquals(program, frame.Program)) throw new ArgumentException("Execution requires the frame's ODX program.");
+        var activities = new Dictionary<int, OdxActivity>(bindings.Activities);
+        var conditions = new Dictionary<int, OdxCondition>(bindings.Conditions);
+        var transactions = new Dictionary<int, OdxTransactionScope>(bindings.Transactions);
+        ValidateBindings(program, entry, activities, conditions, transactions, cancellationToken);
         var steps = 0;
         void Tick()
         {

@@ -186,8 +186,9 @@ orchestration equivalence. Generated C# scaffolds are available from the import 
 
 - Orchestration scaffolds identify untranslated complex decisions/control-flow categories.
 - Pipeline scaffolds contain stage/component inventory and property **names**, not deployment property values.
-- Scaffolds compile against SDK public contracts and deliberately throw `NotSupportedException`. They are not
-  silently passing data through and are not wired/approved by registration.
+- Untranslated stubs compile against SDK public contracts and deliberately throw `NotSupportedException`.
+  Automatically bound ODX source additionally executes the bounded subset below, but unresolved bindings still
+  block it before effects. Neither artifact is silently wired/approved by registration.
 - Downloading a source stub is not a complete plugin project. Add it to a package, supply an installer, implement
   the appropriate native interface(s), build and test. A receive/send pipeline often needs different parse,
   augment and render modules rather than one augment preserving an opaque component call.
@@ -199,19 +200,20 @@ from source identity to registered renderer/settings. For ODX branches/loops/lis
 branch priority, message variables, correlation, durable continuation and exception/transaction semantics; a
 flat list of modules does not capture those semantics.
 
-Automatic translation is a stretch goal: accept only constructs whose semantics are represented and tested,
-retain source locations/unsupported diagnostics, and generate failing developer stubs otherwise. No source
-expression is executed simply because import recognized it. The imported-flow execution gate remains closed
-until complete translation/verification exists; editing the report or providing secrets cannot approve it.
+Complete automatic translation remains a stretch goal beyond the bounded compiler below: accept only
+constructs whose semantics are represented and tested, retain source locations/unsupported diagnostics,
+and generate failing developer stubs otherwise. No source expression is executed simply because import
+recognized it. The imported-flow execution gate remains closed until complete translation/verification exists;
+editing the report or providing secrets cannot approve it.
 
 ## Structured ODX SDK and explicit bindings
 
 `Mulse.Modules.Orchestration` exposes a version-1 source model and a bounded structural executor:
 
-- `OdxProgramReader.Read(sourceText)` / `ReadFileAsync(path, cancellationToken)` retain ordered children,
-  parent IDs, source lines, OIDs, parent-link names and all direct designer properties, including expressions.
-  XML external entities/DTDs are prohibited. Input is limited to 8,000,000 characters, 10,000 elements and
-  64 nesting levels. `OdxProgram` / `OdxNode` can round-trip through JSON.
+- `OdxProgramReader.Read(sourceText)` / `ReadFile(path)` / `ReadFileAsync(path, cancellationToken)` retain
+  ordered children, parent IDs, source lines, OIDs, parent-link names and all direct designer properties,
+  including expressions. XML external entities/DTDs are prohibited. Input is limited to 8,000,000 characters,
+  10,000 elements and 64 nesting levels. `OdxProgram` / `OdxNode` can round-trip through JSON.
 - The import UI's **Download developer control-flow model (.json)** exports the selected orchestration via
   `POST /api/biztalk-import/control-flow/download`, using the same request as the scaffold downloads. This
   is an explicit private-source export: unlike the saved names-only report, it contains literal property
@@ -225,10 +227,11 @@ until complete translation/verification exists; editing the report or providing 
   stored after that body in source XML. All required bindings, including untaken branches, are checked before
   any bound activity. Declarations, receives, sends, listen/delay, assignments, rules, helper calls and metadata children are
   **not silently skipped**: the corresponding activity binding owns their full semantics.
-- Conditions are developer-written code; the executor never evaluates source C# strings. Transaction markers
-  require an explicit enclosing-scope transaction delegate. Its body includes local catch handling, so the
-  adapter must establish and verify appropriate rollback/commit behavior; no BizTalk/SQL/distributed
-  transaction semantics are inferred. Exceptions from the transaction adapter itself escape that scope.
+- Conditions can use the automatic typed compiler below or explicit developer bindings; arbitrary source C#
+  is never executed. Transaction markers require an explicit enclosing-scope transaction delegate. Its body
+  includes local catch handling, so the adapter must establish and verify appropriate rollback/commit behavior;
+  no BizTalk/SQL/distributed transaction semantics are inferred. Exceptions from the transaction adapter itself
+  escape that scope.
 - Catch matching uses CLR exception inheritance/full names without loading a type from source. Fault-message
   catches are unsupported. Cancellation and execution-limit exceptions bypass source catches. Loops stop
   after 10,000 iterations; one execution has at most 100,000 control-flow operations. Activity code must
@@ -250,6 +253,58 @@ continuation. Use native durable modules or implement and verify an application-
 is not wired to imported drafts and does not change their execution gate. Existing helpers/pipelines have
 not been rewritten. `OdxControlFlowTests` exercise these contracts, including a bound program running through
 an actual native flow with parse/render/delivery; `OdxControlFlowApiTests` verify source ownership and download.
+
+## Automatic typed ODX expressions and retained stubs
+
+`OdxAutomaticBindings.Compile(program)` automatically binds supported decision/loop expressions and scalar
+assignment shapes to the structural executor. `Diagnostics` records each original node ID/source line as
+`Translated`, `Structural` or `RequiresBinding`. These are syntax/structural classifications, not proof that
+schema facts, all input types or external behavior have been supplied. Diagnostics retain the original
+compilation result even after developers add bindings.
+
+The supported expression subset is string/Boolean/Int32/null literals and typed JSON facts, dotted member
+access, checked integer arithmetic, comparisons, same-type equality, short-circuit logic, parentheses,
+ordinary C# string escapes, comments and bounded two-argument `Regex.IsMatch`. Exact fully qualified promoted
+property reads use `frame.Messages[messageName]` and require exactly one payload and an existing metadata key;
+metadata values remain strings, not inferred schema types. Statements support scalar `=`, `+=`, `++`, `--`
+and semicolon-separated sequences. Unsupported syntax anywhere rejects the whole shape before any statement
+in that shape executes. Limits are 65,536 characters, 8,192 tokens, 64 parsing levels, 256 binary operations
+and a 100 ms timeout per regex match.
+
+Developers must explicitly initialize declared typed facts in `frame.Variables` and provide schema/message
+adapters. Unknown roots, missing promoted properties, invalid object access, type mismatch and overflow fail
+explicitly. A missing member of an existing JSON object is null; strings are never implicitly parsed into
+numbers/booleans. This is a typed fact contract, not arbitrary XML distinguished-field or message-copy support.
+Date/time operations, XML construction, transforms, arbitrary CLR/helper calls and declarations remain explicit
+bindings. The importer does not invent defaults from a declaration's name or silently run CLR constructors.
+
+```csharp
+var compilation = OdxAutomaticBindings.Compile(program);
+// Supply reviewed activity/schema bindings and transaction adapters here, keyed by source node ID.
+compilation.EnsureComplete(serviceDeclaration, cancellationToken);
+var frame = new OdxExecutionFrame(program, serviceContext, inputBatch, step);
+await new OdxProgramExecutor().ExecuteAsync(
+    program, serviceDeclaration, compilation.Bindings, frame, cancellationToken);
+```
+
+`EnsureComplete` uses the executor's side-effect-free `Validate` against the current bindings; explicitly
+binding an activity owns its child metadata, and a transaction marker requires a delegate on its containing
+scope. It checks all branches before effects, including untaken branches. No-argument `EnsureComplete()` is
+available for models containing exactly one service. Explicit bindings can deliberately retain failing helper
+stubs; installing such a binding does not prove its implementation or permit imported execution.
+
+Each supported single-service source now exports `TranslatedOdx_*.cs` and `.translation.json` alongside the
+existing starter artifacts. Generated C# embeds the private source model, runs the automatic compiler and
+requires complete bindings before creating/executing a frame. It compiles against the public SDK without
+host global usings. Translation reports omit literal expressions; malformed or multi-service sources produce
+an explicit blocked report instead of an empty successful result. Neither artifact is persisted into the
+sanitized migration inventory. Keep source-bearing downloads private. Generated code still needs a package,
+installer, schema/transport/component implementations and tests; it is not automatically installed in drafts.
+
+`OdxAutomaticTranslationTests` verifies actual automatic nested branch/loop execution, typed syntax, rejection,
+limits and binding preflight. `OdxGeneratedTranslationTests` exercises real import/export, compiles generated
+C# and verifies retained helpers still fail explicitly. None of these tests establish durable ODX continuation
+or full imported Billing equivalence.
 
 ## Verification checklist
 

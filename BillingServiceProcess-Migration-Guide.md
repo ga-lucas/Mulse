@@ -104,6 +104,22 @@ source acknowledgement. These establish working native composition, not installa
 original individual maps or custom pipelines. Full ODX listen/correlation continuation, replies and transaction
 recovery still require implementation, and original helper conversion remains explicitly deferred.
 
+## Automatic expression translation update
+
+The bounded typed compiler was run locally against the three actual ODX source trees. It accepts all 72
+non-else decision predicates: 44 in the main service and 14 in each batch service. It also accepts 29 variable
+assignments, seven message-assignment-shaped scalar statements and six loops in the main service, two
+variable assignments in double-body batching and one in trailer batching. These are syntax counts, not
+execution equivalence: source message/schema facts must be supplied with their real types, and a scalar
+assignment classification does not implement XML/message-copy semantics.
+
+Candidate developer downloads now include automatically bound C# and per-node translation JSON. Unsupported
+nodes remain explicit blockers; original helpers are unchanged. Independent synthetic tests verify nested
+branches/loops using the automatic bindings, typed operations and rejection, standalone generated-source
+compilation, and fail-before-effects preflight. Imported drafts still use conservative proposals and remain
+disabled. Durable ODX continuation/listen/correlation, actual map/pipeline wiring, replies and transactional
+failure recovery are still missing; this increment does not complete the requested runnable Billing import.
+
 ## Decision
 
 - **Importable as a disabled analysis/draft:** Yes. The current importer accepts an `.odx` path when exactly one sibling `.btproj` explicitly includes that file. Parent-reported completed verification (not rerun in this documentation task): 314 related tests pass, the full solution build succeeds, and actual Billing analysis assertions pass. The local analysis reported 19 BizTalk projects, 17 custom projects, 20 candidates, all three Billing orchestration candidates, and 574 designer elements for `BillingServiceProcess.odx`.

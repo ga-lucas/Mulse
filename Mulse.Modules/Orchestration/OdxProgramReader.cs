@@ -10,6 +10,20 @@ public static partial class OdxProgramReader
     [GeneratedRegex(@"</(?:[A-Za-z_][\w.-]*:)?MetaModel\s*>", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex EndTag();
 
+    public static OdxProgram ReadFile(string path)
+    {
+        using var file = new StreamReader(path, detectEncodingFromByteOrderMarks: true);
+        var source = new System.Text.StringBuilder();
+        var buffer = new char[8192];
+        int read;
+        while ((read = file.ReadBlock(buffer, 0, buffer.Length)) > 0)
+        {
+            if (source.Length + read > 8_000_000) throw new ArgumentException("ODX exceeds the 8,000,000-character limit.");
+            source.Append(buffer, 0, read);
+        }
+        return Read(source.ToString());
+    }
+
     public static async Task<OdxProgram> ReadFileAsync(string path, CancellationToken cancellationToken)
     {
         using var file = new StreamReader(path, detectEncodingFromByteOrderMarks: true);

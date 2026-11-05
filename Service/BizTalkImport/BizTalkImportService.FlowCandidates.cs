@@ -351,7 +351,7 @@ public sealed partial class BizTalkImportService
     }
 
     /// <summary>
-    /// Collects starter C# modules for untranslated orchestrations/pipelines and starter map stylesheets.
+    /// Collects orchestration/pipeline C#, ODX translation reports and starter map stylesheets.
     /// All reuse <see cref="BizTalkScaffoldedModuleResponse"/> and the existing download endpoints.
     /// </summary>
     private static IReadOnlyList<BizTalkScaffoldedModuleResponse> CollectScaffoldedModules(BizTalkProjectResponse project)
@@ -365,6 +365,10 @@ public sealed partial class BizTalkImportService
                 analysis.ScaffoldedModuleSourceCode!))
             .ToList();
 
+        modules.AddRange(project.Artifacts
+            .Where(static artifact => string.Equals(artifact.Kind, "Orchestration", StringComparison.OrdinalIgnoreCase))
+            .Where(artifact => project.OrchestrationDecisionAnalyses.Any(analysis => string.Equals(analysis.OrchestrationName, Path.GetFileNameWithoutExtension(artifact.FullPath), StringComparison.OrdinalIgnoreCase)))
+            .SelectMany(static artifact => BizTalkOdxTranslationScaffolder.Create(artifact.FullPath)));
         modules.AddRange(project.MapAnalyses
             .Where(static analysis => analysis.GeneratedXsltSourceCode is not null)
             .Select(static analysis => new BizTalkScaffoldedModuleResponse(

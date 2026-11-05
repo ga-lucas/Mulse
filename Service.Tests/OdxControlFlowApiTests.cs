@@ -70,6 +70,21 @@ public sealed class OdxControlFlowApiTests
                     var shape = Assert.Single(inventory.Shapes, shape => shape.Id == loop.Id);
                     Assert.Equal(shape.SourceLine, loop.SourceLine); Assert.Equal(shape.ParentId, loop.ParentId);
                     Assert.DoesNotContain("Expression", shape.References.Keys);
+                    Assert.DoesNotContain("private-expression-", JsonSerializer.Serialize(candidate.DraftFlow.Migration));
+                    var translated = Assert.Single(candidate.ScaffoldedModules, artifact => artifact.ModuleId.StartsWith("odx-translated-", StringComparison.Ordinal) && artifact.FileName.EndsWith(".cs", StringComparison.Ordinal));
+                    Assert.Contains("private-expression-" + name, translated.SourceCode);
+                    Assert.DoesNotContain("private-expression-" + (name == "First" ? "Second" : "First"), translated.SourceCode);
+                    var sourceFile = await client.DownloadBizTalkScaffoldedModuleAsync(translated.ModuleId, new(project, candidate.SuggestedFlowId), default);
+                    Assert.Equal(translated.FileName, sourceFile.FileName);
+                    Assert.Equal(translated.SourceCode, System.Text.Encoding.UTF8.GetString(sourceFile.Content));
+                    var zipFile = await client.DownloadBizTalkScaffoldedModulesAsync(new(project, candidate.SuggestedFlowId), default);
+                    using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(zipFile.Content));
+                    Assert.Equal(candidate.ScaffoldedModules.Count, zip.Entries.Count);
+                    Assert.Contains(zip.Entries, entry => entry.FullName == translated.FileName);
+                    var report = Assert.Single(zip.Entries, entry => entry.FullName.EndsWith(".translation.json", StringComparison.Ordinal));
+                    using var reportStream = report.Open();
+                    using var reportJson = await JsonDocument.ParseAsync(reportStream);
+                    Assert.NotEmpty(reportJson.RootElement.GetProperty("diagnostics").EnumerateArray());
                 }
                 await Assert.ThrowsAsync<InvalidOperationException>(() => client.DownloadBizTalkControlFlowAsync(new(project, "not-a-candidate"), default));
             }

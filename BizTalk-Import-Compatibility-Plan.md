@@ -83,6 +83,21 @@ Target behavior: imported workflows must remain disabled until required configur
   leased dynamic XSLT selection, exact header/body/trailer output and source acknowledgements. This does not
   install the original separate header/body/trailer maps or implement their custom pipeline/transaction behavior.
 
+## Automatic typed ODX translation increment
+
+- A bounded interpreter now automatically compiles typed scalar assignments and decision/loop conditions;
+  ordered nested execution no longer requires hand-written delegates for that supported subset. It does not
+  execute arbitrary C#/CLR calls. Types, schema adapters, declarations, maps, transports and transactions are
+  not inferred from syntax. Unsupported source shapes remain explicit, source-addressable blockers.
+- Existing candidate downloads include automatically bound C# with embedded private source and per-node JSON
+  translation reports. Generated source compiles against the public SDK. Invalid/surplus-service input emits
+  an explicit blocked report. The saved migration inventory remains separate and sanitized.
+- Complete-binding checks share executor validation, honor explicitly supplied adapters and own activity
+  metadata correctly. Compilation diagnostics remain the original syntax classification, not an approval.
+- Actual Billing source coverage and deliberately incomplete runtime behavior are recorded in the Billing
+  guide. Durable ODX program/frame continuation, actual map/pipeline execution, request/reply, transaction and
+  recovery semantics, and imported-flow end-to-end equivalence remain open. No execution gate was relaxed.
+
 ## Product surfaces
 
 ### Flow Designer
