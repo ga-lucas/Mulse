@@ -86,12 +86,32 @@ public sealed class NativeMapImportTests
     }
 
     [Theory]
-    [InlineData("Order/Optional")]
     [InlineData("Order/Item")]
     [InlineData("Order")]
     [InlineData("Missing/Id")]
     public void UnsupportedSourceCardinalityOrStructure_RejectsWholeProposal(string source)
         => Assert.Throws<ArgumentException>(() => BizTalkNativeMapConverter.Convert(Map(source), [SourceXsd], [TargetXsd]));
+
+    [Fact]
+    public void OptionalSourceToRequiredTarget_OmitsLikeBizTalkAndWarns()
+    {
+        var conversion = BizTalkNativeMapConverter.Convert(Map("Order/Optional"), [SourceXsd], [TargetXsd]);
+        Assert.Contains(conversion.Warnings, warning => warning.Contains("optional source", StringComparison.Ordinal));
+        var engine = new XmlMappingEngine(conversion.MappingJson);
+        Assert.Null(XDocument.Parse(engine.Transform("<Order xmlns='urn:source' code='x'><Id>1</Id></Order>")).Root!.Element("Number"));
+    }
+
+    [Fact]
+    public void RequiredSourceMissingAtRuntime_EmitsEmptyTargetLikeBizTalk_AndMapIsNotXsdValidated()
+    {
+        var conversion = BizTalkNativeMapConverter.Convert(Map(), [SourceXsd], [TargetXsd]);
+        var map = JsonSerializer.Deserialize<XmlMappingDefinition>(conversion.MappingJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.False(map.ValidateSource);
+        Assert.False(map.ValidateTarget);
+        var engine = new XmlMappingEngine(conversion.MappingJson);
+        var output = XDocument.Parse(engine.Transform("<Order xmlns='urn:source' code='x'/>"));
+        Assert.Equal("", output.Root!.Element("Number")!.Value);
+    }
 
     [Theory]
     [InlineData("<Functoids><Functoid Functoid-FID='260'/></Functoids>")]

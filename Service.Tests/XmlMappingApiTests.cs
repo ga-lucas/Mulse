@@ -58,7 +58,7 @@ public sealed class XmlMappingApiTests
             Assert.NotEmpty(proposal.Warnings);
             var conversionError = await Assert.ThrowsAsync<InvalidOperationException>(() => client.ImportNativeXmlMappingAsync(
                 new(NativeMapImportTests.Map("Order/Item"), [NativeMapImportTests.SourceXsd], [NativeMapImportTests.TargetXsd]), default));
-            Assert.Contains("non-repeating scalar", conversionError.Message);
+            Assert.Contains("non-repeating target", conversionError.Message);
             var schemaError = await Assert.ThrowsAsync<InvalidOperationException>(() => client.AnalyzeXmlMappingSchemasAsync(new(["<!DOCTYPE x SYSTEM 'file:///not-read'><x/>"]), default));
             Assert.Contains("DTD", schemaError.Message);
             var invalid = await Assert.ThrowsAsync<InvalidOperationException>(() => client.PreviewXmlMappingAsync(new(XmlMappingTests.Json(), "<wrong />"), default));

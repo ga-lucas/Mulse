@@ -192,6 +192,36 @@ public sealed class XmlMappingUiTests
     }
 
     [Fact]
+    public async Task EditorRepeats_AreRenderedAndEditableAndStayVersionTwo()
+    {
+        using var http = new HttpClient(new SavingHandler()) { BaseAddress = new Uri("http://localhost/") };
+        await using var services = new ServiceCollection().AddLogging().AddSingleton<IMulseApiClient>(new MulseApiClient(http))
+            .AddSingleton<Microsoft.JSInterop.IJSRuntime>(new NoJs()).BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        var json = System.Text.Json.JsonSerializer.Serialize(new Mulse.Modules.Mapping.XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Out",
+            Fields = [new() { SourcePath = "/In/Item/V", TargetPath = "Line/V" }],
+            Repeats = [new() { SourcePath = "/In/Item", TargetPath = "Line" }]
+        }, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        var html = await renderer.Dispatcher.InvokeAsync(async () => (await renderer.RenderComponentAsync<XmlMappingEditor>(
+            ParameterView.FromDictionary(new Dictionary<string, object?> { [nameof(XmlMappingEditor.Value)] = json }))).ToHtmlString());
+        Assert.Contains("Repeating records (1)", html);
+        Assert.Contains("XML repeat source path", html);
+        Assert.Contains("Add repeating record", html);
+
+        var editor = new XmlMappingEditor();
+        Property(editor, "ApiClient").SetValue(editor, new MulseApiClient(http));
+        Property(editor, "Value").SetValue(editor, json);
+        Invoke(editor, "OnParametersSet");
+        await (Task)Invoke(editor, "AddRepeatAsync")!;
+        var map = Assert.IsType<XmlMappingViewModel>(Field(editor, "_map").GetValue(editor));
+        Assert.Equal(2, map.Repeats.Count);
+        Assert.Contains("\"repeats\":[", editor.Value);
+        Assert.Contains("\"version\":2", editor.Value);
+    }
+
+    [Fact]
     public async Task EditorPreview_DisplaysOutputClearsItAfterEditsAndSurfacesFailure()
     {
         var handler = new SavingHandler();

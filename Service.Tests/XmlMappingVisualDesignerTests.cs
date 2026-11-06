@@ -204,15 +204,15 @@ public sealed class XmlMappingVisualDesignerTests
         Assert.Contains("conflict", (string)GetField(editor, "_error")!);
         var model = (XmlMappingViewModel)GetField(editor, "_map")!;
         model.SourceRoot = null;
-        model.Fields.AddRange(Enumerable.Range(0, 128).Select(index => new XmlFieldMappingViewModel { TargetPath = "Value" + index, Constant = "value" }));
+        model.Fields.AddRange(Enumerable.Range(0, 512).Select(index => new XmlFieldMappingViewModel { TargetPath = "Value" + index, Constant = "value" }));
         await (Task)Invoke(editor, "WriteAsync")!;
         original = editor.Value;
         await (Task)Invoke(editor, "AddSchemaFieldAsync", pair)!;
         Assert.Equal(original, editor.Value);
-        Assert.Contains("128", (string)GetField(editor, "_error")!);
+        Assert.Contains("512", (string)GetField(editor, "_error")!);
         await (Task)Invoke(editor, "AddFieldAsync")!;
         Assert.Equal(original, editor.Value);
-        Assert.Equal(128, model.Fields.Count);
+        Assert.Equal(512, model.Fields.Count);
         Set(editor, "Value", JsonSerializer.Serialize(new XmlMappingViewModel { Namespaces = Enumerable.Range(0, 32).ToDictionary(index => "p" + index, index => "urn:test:" + index) }, Options));
         Invoke(editor, "OnParametersSet");
         original = editor.Value;

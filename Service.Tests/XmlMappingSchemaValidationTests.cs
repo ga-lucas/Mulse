@@ -15,10 +15,10 @@ public sealed class XmlMappingSchemaValidationTests
         Assert.Equal(2, map.Version);
         Assert.Equal(NativeMapImportTests.SourceXsd, Assert.Single(map.SourceSchemas));
         Assert.Equal(NativeMapImportTests.TargetXsd, Assert.Single(map.TargetSchemas));
-        var engine = new XmlMappingEngine(conversion.MappingJson);
+        var engine = new XmlMappingEngine(XmlMappingTests.Json(map with { ValidateSource = true, ValidateTarget = true }));
         Assert.Contains("Source XSD validation failed", Assert.Throws<ArgumentException>(() => engine.Transform("<Order xmlns='urn:source'><Id>1</Id></Order>")).Message);
         Assert.Contains("Source XSD validation failed", Assert.Throws<ArgumentException>(() => engine.Transform("<Order xmlns='urn:wrong' code='x'><Id>1</Id></Order>")).Message);
-        var numeric = map with { TargetSchemas = [NativeMapImportTests.TargetXsd.Replace("name=\"Number\" type=\"xs:string\"", "name=\"Number\" type=\"xs:int\"", StringComparison.Ordinal)] };
+        var numeric = map with { ValidateTarget = true, TargetSchemas = [NativeMapImportTests.TargetXsd.Replace("name=\"Number\" type=\"xs:string\"", "name=\"Number\" type=\"xs:int\"", StringComparison.Ordinal)] };
         Assert.Contains("Target XSD validation failed", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(numeric)).Transform("<Order xmlns='urn:source' code='x'><Id>not a number</Id></Order>")).Message);
     }
 
@@ -75,11 +75,13 @@ public sealed class XmlMappingSchemaValidationTests
         => Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(XmlMappingTests.Map with { Version = 2, SourceRoot = root })));
 
     [Fact]
-    public void NillableTarget_IsNotClaimedAsCompleteScalarTranslation()
+    public void NillableScalarTarget_ConvertsAndNilSourceFailsClosedAtRuntime()
     {
         var target = NativeMapImportTests.TargetXsd.Replace("name=\"Number\"", "name=\"Number\" nillable=\"true\"", StringComparison.Ordinal);
-        Assert.Contains("Nillable", Assert.Throws<ArgumentException>(() => Service.Mapping.BizTalkNativeMapConverter.Convert(
-            NativeMapImportTests.Map(), [NativeMapImportTests.SourceXsd], [target])).Message);
+        var conversion = Service.Mapping.BizTalkNativeMapConverter.Convert(NativeMapImportTests.Map(), [NativeMapImportTests.SourceXsd], [target]);
+        var engine = new XmlMappingEngine(conversion.MappingJson);
+        Assert.Contains("xsi:nil", Assert.Throws<ArgumentException>(() => engine.Transform(
+            "<Order xmlns='urn:source' xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' code='x'><Id xsi:nil='true'/></Order>")).Message);
     }
 
     [Theory]

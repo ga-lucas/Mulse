@@ -20,7 +20,7 @@ public static class BizTalkNativeMapConverter
     private static readonly HashSet<string> MetadataAttributes = new(StringComparer.Ordinal)
     {
         "Name", "Version", "BizTalkServerMapperTool_Version", "XRange", "YRange", "OmitXmlDeclaration", "TreatElementsAsRecords",
-        "OptimizeValueMapping", "GenerateDefaultFixedNodes", "PreserveSequenceOrder", "IgnoreNamespacesForLinks", "method", "CopyPIs", "xmlVersion"
+        "OptimizeValueMapping", "GenerateDefaultFixedNodes", "PreserveSequenceOrder", "IgnoreNamespacesForLinks", "method", "CopyPIs", "xmlVersion", "UseXSLTransform"
     };
 
     public static NativeMapConversion Convert(string mapXml, IReadOnlyList<string> sourceSchemas, IReadOnlyList<string> targetSchemas,
@@ -45,7 +45,7 @@ public static class BizTalkNativeMapConverter
                 "TestValues" or "ConstantValues" => (new[] { "TreeValues" }, Array.Empty<string>()),
                 "Page" => (new[] { "Pages" }, new[] { "Name" }),
                 "Links" or "Functoids" => (new[] { "Page" }, Array.Empty<string>()),
-                "Link" => (new[] { "Links" }, new[] { "LinkFrom", "LinkTo", "Label" }),
+                "Link" => (new[] { "Links" }, new[] { "LinkID", "LinkFrom", "LinkTo", "Label" }),
                 "Value" => (new[] { "TestValues", "ConstantValues" }, new[] { "Query", "value" }),
                 _ => (new[] { "ScriptTypePrecedence" }, new[] { "Enabled" })
             };
@@ -61,29 +61,70 @@ public static class BizTalkNativeMapConverter
         CheckSetting("xmlVersion", "1.0");
         CheckSetting("TreatElementsAsRecords", "No");
         CheckSetting("OmitXmlDeclaration", "Yes");
+        CheckSetting("UseXSLTransform", "Undefined", "No");
+        CheckSetting("PreserveSequenceOrder", "No");
         var source = XmlSchemaInspector.Analyze(sourceSchemas, cancellationToken);
         var target = XmlSchemaInspector.Analyze(targetSchemas, cancellationToken);
         var sourceRoot = SelectRoot(source, "SrcTree");
         var targetRoot = SelectRoot(target, "TrgTree");
-        var unsupportedTarget = targetRoot.Fields.FirstOrDefault(field => field.UnsupportedReason is not null || field.Repeating || field.HasDefaultOrFixed
-            || (!field.Scalar && (!field.Required || !targetRoot.Fields.Any(child => child.Scalar && child.Path.StartsWith(field.Path + "/", StringComparison.Ordinal)))));
+        var unsupportedTarget = targetRoot.Fields.FirstOrDefault(field => field.UnsupportedReason is not null || field.HasDefaultOrFixed);
         if (unsupportedTarget is not null)
-            throw new ArgumentException($"Target '{unsupportedTarget.Path}' requires explicit translation: {unsupportedTarget.UnsupportedReason ?? "optional/empty records, repetitions, or default/fixed values are not supported"}. No partial native map was produced.");
+            throw new ArgumentException($"Target '{unsupportedTarget.Path}' requires explicit translation: {unsupportedTarget.UnsupportedReason ?? "default/fixed values are not supported"}. No partial native map was produced.");
         var namespaces = source.Namespaces.ToDictionary(entry => "s" + entry.Key, entry => entry.Value, StringComparer.Ordinal);
         foreach (var entry in target.Namespaces) namespaces.Add("t" + entry.Key, entry.Value);
-        var assignments = new List<(XmlSchemaField Target, XmlFieldMappingDefinition Mapping)>();
+        var links = new List<(XmlSchemaField From, XmlSchemaField To)>();
         foreach (var link in root.Descendants("Link"))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (link.Parent?.Name != "Links") throw new ArgumentException("A map Link is outside a Links collection.");
             var from = Find(sourceRoot, (string?)link.Attribute("LinkFrom"));
             var to = Find(targetRoot, (string?)link.Attribute("LinkTo"));
-            if (!from.Scalar || from.Repeating || from.HasDefaultOrFixed || from.UnsupportedReason is not null || (!from.Required && to.Required))
-                throw new ArgumentException($"Source '{from.Path}' must be a non-repeating scalar without defaults; optional sources need optional targets. No partial native map was produced.");
+            if (from.Scalar != to.Scalar)
+                throw new ArgumentException($"Link '{from.Path}' -> '{to.Path}' connects a record to a scalar field. No partial native map was produced.");
+            if (from.UnsupportedReason is not null || from.HasDefaultOrFixed)
+                throw new ArgumentException($"Source '{from.Path}' is unsupported: {from.UnsupportedReason ?? "schema default/fixed values are not supported"}. No partial native map was produced.");
+            links.Add((from, to));
+        }
+        var repeatLinks = new List<(XmlSchemaField From, XmlSchemaField To)>();
+        foreach (var (from, to) in links)
+        {
+            if (!from.Scalar && from.Path == sourceRoot.Path && to.Path == targetRoot.Path) continue;
+            if (from.Path == sourceRoot.Path || to.Path == targetRoot.Path)
+                throw new ArgumentException($"Link '{from.Path}' -> '{to.Path}' connects a root to a non-root. No partial native map was produced.");
+            if (from.SelfRepeating && !to.SelfRepeating)
+                throw new ArgumentException($"Repeating source '{from.Path}' is linked to non-repeating target '{to.Path}'; BizTalk would create several elements where the schema allows one. No partial native map was produced.");
+            if (from.Scalar && !from.SelfRepeating) continue;
+            if (repeatLinks.Any(existing => existing.To == to))
+                throw new ArgumentException($"Target '{to.Path}' has more than one record link.");
+            repeatLinks.Add((from, to));
+        }
+        (XmlSchemaField From, XmlSchemaField To)? EnclosingRepeat(XmlSchemaField targetField)
+            => repeatLinks.Where(repeat => targetField.Path == repeat.To.Path || targetField.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal))
+                .OrderByDescending(repeat => repeat.To.Path.Length).Select(repeat => ((XmlSchemaField, XmlSchemaField)?)repeat).FirstOrDefault();
+        void RequireRepeatCoverage(XmlSchemaField from, XmlSchemaField to)
+        {
+            foreach (var repeating in sourceRoot.Fields.Where(field => field.SelfRepeating && field.Path != from.Path
+                         && from.Path.StartsWith(field.Path + "/", StringComparison.Ordinal)))
+                if (!repeatLinks.Any(repeat => repeat.From == repeating && to.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal)))
+                    throw new ArgumentException($"'{from.Path}' sits below repeating '{repeating.Path}', which has no record link enclosing target '{to.Path}'. No partial native map was produced.");
+        }
+        foreach (var (from, to) in repeatLinks) RequireRepeatCoverage(from, to);
+        var assignments = new List<(XmlSchemaField Target, XmlFieldMappingDefinition Mapping)>();
+        var optionalToRequired = new List<string>();
+        foreach (var (from, to) in links.Where(link => link.From.Scalar))
+        {
+            RequireRepeatCoverage(from, to);
+            var enclosing = EnclosingRepeat(to);
+            var sourceScope = enclosing is { } scoped && from.Path.StartsWith(scoped.From.Path + "/", StringComparison.Ordinal) ? scoped.From.Path : sourceRoot.Path;
+            if (enclosing is { } self && from.SelfRepeating && self.From == from) sourceScope = from.Path;
+            var sourceRequired = RequiredWithin(sourceRoot, sourceScope, from);
+            if (!sourceRequired && RequiredWithin(targetRoot, enclosing?.To.Path ?? targetRoot.Path, to))
+                optionalToRequired.Add($"{from.Path} -> {to.Path}");
             assignments.Add((to, new()
             {
                 SourcePath = Prefix(from.Path, "s"), TargetPath = TargetPath(to),
-                MissingValueBehavior = from.Required ? MissingXmlValueBehavior.Error : MissingXmlValueBehavior.Omit
+                MissingValueBehavior = sourceRequired ? MissingXmlValueBehavior.Default : MissingXmlValueBehavior.Omit,
+                DefaultValue = sourceRequired ? string.Empty : null
             }));
         }
         foreach (var value in root.Descendants("ConstantValues").Elements())
@@ -95,25 +136,52 @@ public static class BizTalkNativeMapConverter
         }
         if (root.Descendants("Value").Any(value => value.Parent?.Name != "ConstantValues" && value.Parent?.Name != "TestValues"))
             throw new ArgumentException("A Value is outside the supported ConstantValues/TestValues collections.");
-        if (targetRoot.Fields.Any(field => field.Required && field.Scalar && field.Path != targetRoot.Path && !assignments.Any(assignment => assignment.Target == field)))
-            throw new ArgumentException("The map leaves required target scalar fields unmapped. No partial native map was produced.");
+        var produced = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var path in assignments.Select(assignment => assignment.Target.Path).Concat(repeatLinks.Select(repeat => repeat.To.Path)))
+            for (var current = path; current.Length > targetRoot.Path.Length; current = current[..current.LastIndexOf('/')]) produced.Add(current);
+        foreach (var field in targetRoot.Fields.Where(field => field.Path != targetRoot.Path))
+        {
+            var isProduced = produced.Contains(field.Path);
+            if (!isProduced && field.RequiredInParent)
+                throw new ArgumentException($"Required target '{field.Path}' is not produced by any link or constant; the native engine cannot emit empty required records. No partial native map was produced.");
+            if (isProduced && !field.Scalar && !field.RequiredInParent && !repeatLinks.Any(repeat => repeat.To == field))
+                throw new ArgumentException($"Optional record '{field.Path}' would be created without a record link; BizTalk emits it only when a source exists. No partial native map was produced.");
+        }
+        foreach (var (_, to) in repeatLinks)
+            if (!assignments.Any(assignment => assignment.Target.Path.StartsWith(to.Path + "/", StringComparison.Ordinal) || assignment.Target == to))
+                throw new ArgumentException($"Record link to '{to.Path}' has no mapped fields below it; empty linked records are not supported. No partial native map was produced.");
+        int Order(XmlSchemaField field) => targetRoot.Fields.TakeWhile(candidate => candidate != field).Count();
         var definition = new XmlMappingDefinition
         {
             Version = 2,
             SourceRoot = Prefix(sourceRoot.Path[1..], "s"),
             TargetRoot = Prefix(targetRoot.Path[1..], "t"), Namespaces = namespaces,
             SourceSchemas = sourceSchemas.ToArray(), TargetSchemas = targetSchemas.ToArray(),
-            Fields = assignments.OrderBy(assignment => targetRoot.Fields.TakeWhile(field => field != assignment.Target).Count()).Select(assignment => assignment.Mapping).ToArray()
+            ValidateSource = false, ValidateTarget = false,
+            Fields = assignments.OrderBy(assignment => Order(assignment.Target)).Select(assignment => assignment.Mapping).ToArray(),
+            Repeats = repeatLinks.OrderBy(repeat => Order(repeat.To)).Select(repeat => new XmlRepeatMappingDefinition
+            {
+                SourcePath = Prefix(repeat.From.Path, "s"), TargetPath = Prefix(repeat.To.Path[(targetRoot.Path.Length + 1)..], "t")
+            }).ToArray()
         };
         var json = JsonSerializer.Serialize(definition, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var engine = new XmlMappingEngine(json);
-        return new(json, engine.Xslt,
-        ["Review proposal only: scalar values and constants were converted using the supplied schemas. No deployed policy association, BizTalk-equivalent output, or execution approval is established. Preview synthetic inputs and compare trusted expected outputs before using the map."]);
-
-        void CheckSetting(string name, string expected)
+        var warnings = new List<string>
         {
-            if (root.Attribute(name) is { } attribute && !string.Equals(attribute.Value, expected, StringComparison.OrdinalIgnoreCase))
-                throw new ArgumentException($"Map setting '{name}={attribute.Value}' is not supported by native scalar import.");
+            "Review proposal only: scalar values, constants and record/repeat links were converted using the supplied schemas. No deployed policy association, BizTalk-equivalent output, or execution approval is established. Preview synthetic inputs and compare trusted expected outputs before using the map."
+        };
+        if (optionalToRequired.Count > 0)
+            warnings.Add($"{optionalToRequired.Count} link(s) feed a required target from an optional source (for example {string.Join("; ", optionalToRequired.Take(3))}). Like BizTalk, the target element is omitted when the source is absent, so the output can then violate the target schema.");
+        return new(json, engine.Xslt, warnings);
+
+        bool RequiredWithin(XmlSchemaRoot tree, string scope, XmlSchemaField field)
+            => tree.Fields.Where(candidate => candidate.Path.StartsWith(scope + "/", StringComparison.Ordinal)
+                && (candidate.Path == field.Path || field.Path.StartsWith(candidate.Path + "/", StringComparison.Ordinal)))
+                .All(candidate => candidate.RequiredInParent);
+        void CheckSetting(string name, params string[] expected)
+        {
+            if (root.Attribute(name) is { } attribute && !expected.Contains(attribute.Value, StringComparer.OrdinalIgnoreCase))
+                throw new ArgumentException($"Map setting '{name}={attribute.Value}' is not supported by native map import.");
         }
         XmlSchemaRoot SelectRoot(XmlSchemaTree tree, string name)
         {

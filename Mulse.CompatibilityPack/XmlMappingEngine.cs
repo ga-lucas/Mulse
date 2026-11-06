@@ -18,8 +18,8 @@ public sealed class XmlMappingEngine
 
     public XmlMappingEngine(string mappingJson)
     {
-        if (string.IsNullOrWhiteSpace(mappingJson) || mappingJson.Length > 262_144)
-            throw new ArgumentException("XML mapping JSON is required and must not exceed 256 KiB characters.");
+        if (string.IsNullOrWhiteSpace(mappingJson) || mappingJson.Length > 1_048_576)
+            throw new ArgumentException("XML mapping JSON is required and must not exceed 1 MiB characters.");
         XmlMappingDefinition map;
         try
         {
@@ -34,6 +34,8 @@ public sealed class XmlMappingEngine
             throw new ArgumentException("Source-root assertions and persisted XSD validation require version 2 and non-null schema collections.");
         if (map.SourceSchemas.Count > 0) _sourceSchemas = XmlMappingSchemas.Compile(map.SourceSchemas);
         if (map.TargetSchemas.Count > 0) _targetSchemas = XmlMappingSchemas.Compile(map.TargetSchemas);
+        if (!map.ValidateSource) _sourceSchemas = null;
+        if (!map.ValidateTarget) _targetSchemas = null;
         Xslt = Generate(map);
         using var reader = XmlReader.Create(new StringReader(Xslt), ReaderSettings());
         _transform.Load(reader, XsltSettings.Default, stylesheetResolver: null);
@@ -70,8 +72,8 @@ public sealed class XmlMappingEngine
     {
         if (map.Version is not (1 or 2))
             throw new ArgumentException($"XML mapping version {map.Version} is not supported.");
-        if (map.Namespaces is null || map.Namespaces.Count > 32 || map.Fields is null || map.Fields.Count is < 1 or > 128)
-            throw new ArgumentException("XML mappings require 1 to 128 fields and at most 32 namespace prefixes.");
+        if (map.Namespaces is null || map.Namespaces.Count > 32 || map.Fields is null || map.Fields.Count is < 1 or > 512)
+            throw new ArgumentException("XML mappings require 1 to 512 fields and at most 32 namespace prefixes.");
         var stylesheet = new XElement(Xsl + "stylesheet", new XAttribute("version", "1.0"), new XAttribute(XNamespace.Xmlns + "xsl", Xsl));
         foreach (var (prefix, uri) in map.Namespaces)
         {
@@ -80,6 +82,26 @@ public sealed class XmlMappingEngine
                 || !Uri.TryCreate(uri, UriKind.Absolute, out _) || uri == Xsl.NamespaceName || uri == XNamespace.Xml.NamespaceName || uri == XNamespace.Xmlns.NamespaceName)
                 throw new ArgumentException($"Invalid or reserved XML namespace prefix/URI '{prefix}'. Use explicit, non-reserved prefixes and absolute URIs.");
             stylesheet.Add(new XAttribute(XNamespace.Xmlns + prefix, uri));
+        }
+        if (map.Repeats is null || map.Repeats.Count > 256 || (map.Version == 1 && map.Repeats.Count > 0))
+            throw new ArgumentException("Repeating records require version 2 and at most 256 repeats.");
+        var repeatTargets = new List<(XmlRepeatMappingDefinition Repeat, IReadOnlyList<(XName Name, bool IsAttribute)> Segments)>();
+        foreach (var repeat in map.Repeats)
+        {
+            if (repeat is null) throw new ArgumentException("XML mapping repeats cannot be null.");
+            var targetSegments = ParsePath(repeat.TargetPath, absolute: false, map);
+            var sourceSegments = ParsePath(repeat.SourcePath, absolute: true, map);
+            if (targetSegments[^1].IsAttribute || sourceSegments[^1].IsAttribute)
+                throw new ArgumentException($"Repeat '{repeat.SourcePath}' -> '{repeat.TargetPath}' must select elements, not attributes.");
+            if (repeatTargets.Any(existing => existing.Repeat.TargetPath == repeat.TargetPath))
+                throw new ArgumentException($"Target '{repeat.TargetPath}' has more than one repeat.");
+            repeatTargets.Add((repeat, targetSegments));
+        }
+        foreach (var (repeat, segments) in repeatTargets)
+        {
+            var parent = EnclosingRepeat(repeatTargets, segments, proper: true);
+            if (parent is not null && !repeat.SourcePath.StartsWith(parent.SourcePath + "/", StringComparison.Ordinal))
+                throw new ArgumentException($"Nested repeat '{repeat.TargetPath}' must iterate a source below its enclosing repeat '{parent.TargetPath}'.");
         }
         var target = new TargetNode(ResolveName(map.TargetRoot, map));
         var template = new XElement(Xsl + "template", new XAttribute("match", "/"));
@@ -108,11 +130,12 @@ public sealed class XmlMappingEngine
             if (field.Constant is null)
             {
                 ParsePath(field.SourcePath, absolute: true, map);
-                var cardinality = field.MissingValueBehavior == MissingXmlValueBehavior.Error ? "!= 1" : "> 1";
-                template.Add(new XElement(Xsl + "if", new XAttribute("test", $"count({field.SourcePath}) {cardinality} or {field.SourcePath}/*"),
-                    new XElement(Xsl + "message", new XAttribute("terminate", "yes"), field.MissingValueBehavior == MissingXmlValueBehavior.Error
-                        ? $"Source '{field.SourcePath}' must select exactly one scalar element or attribute. Missing, repeating, or complex values are not supported."
-                        : $"Source '{field.SourcePath}' must select at most one scalar element or attribute. Repeating or complex values are not supported.")));
+                var enclosing = new HashSet<XmlRepeatMappingDefinition>(repeatTargets
+                    .Where(item => item.Segments.Count <= segments.Count && item.Segments.Zip(segments).All(pair => pair.First == pair.Second))
+                    .Select(item => item.Repeat));
+                foreach (var repeat in map.Repeats)
+                    if ((field.SourcePath == repeat.SourcePath || field.SourcePath.StartsWith(repeat.SourcePath + "/", StringComparison.Ordinal)) && !enclosing.Contains(repeat))
+                        throw new ArgumentException($"Mapping '{field.TargetPath}' reads '{field.SourcePath}' inside repeat '{repeat.SourcePath}' but is not below the repeat's target '{repeat.TargetPath}'.");
             }
             var current = target;
             foreach (var segment in segments)
@@ -131,23 +154,70 @@ public sealed class XmlMappingEngine
                 throw new ArgumentException($"Target '{field.TargetPath}' is duplicated or overlaps another target.");
             current.Assignment = field;
         }
-        template.Add(Emit(target));
+        foreach (var (repeat, segments) in repeatTargets)
+        {
+            var node = target;
+            foreach (var segment in segments)
+                node = node.Children.FirstOrDefault(child => child.Name == segment.Name && child.IsAttribute == segment.IsAttribute)
+                    ?? throw new ArgumentException($"Repeat target '{repeat.TargetPath}' has no mapped fields below it. Empty repeated records are not supported.");
+            node.Repeat = repeat;
+        }
+        var rootChecks = new List<XElement>();
+        var body = Emit(target, [], rootChecks);
+        template.Add(rootChecks);
+        template.Add(body);
         stylesheet.Add(new XElement(Xsl + "output", new XAttribute("method", "xml"), new XAttribute("omit-xml-declaration", "yes"), new XAttribute("indent", "yes")), template);
         return stylesheet.ToString();
     }
 
-    private static XElement Emit(TargetNode node)
+    private static XmlRepeatMappingDefinition? EnclosingRepeat(
+        IReadOnlyList<(XmlRepeatMappingDefinition Repeat, IReadOnlyList<(XName Name, bool IsAttribute)> Segments)> repeats,
+        IReadOnlyList<(XName Name, bool IsAttribute)> segments, bool proper)
+        => repeats
+            .Where(item => item.Segments.Count < segments.Count || (!proper && item.Segments.Count == segments.Count))
+            .Where(item => item.Segments.Zip(segments).All(pair => pair.First == pair.Second))
+            .OrderByDescending(item => item.Segments.Count)
+            .Select(item => item.Repeat)
+            .FirstOrDefault();
+
+    private static string SourceExpression(string path, IReadOnlyList<string> scopes)
     {
+        for (var index = scopes.Count - 1; index >= 0; index--)
+        {
+            var prefix = index == scopes.Count - 1 ? string.Empty : $"$r{index + 1}";
+            if (path == scopes[index]) return prefix.Length == 0 ? "." : prefix;
+            if (path.StartsWith(scopes[index] + "/", StringComparison.Ordinal))
+                return prefix.Length == 0 ? path[(scopes[index].Length + 1)..] : prefix + "/" + path[(scopes[index].Length + 1)..];
+        }
+        return path;
+    }
+
+    private const string NilTest = "[@*[local-name()='nil' and namespace-uri()='http://www.w3.org/2001/XMLSchema-instance' and (.='true' or .='1')]]";
+
+    private static XElement Emit(TargetNode node, IReadOnlyList<string> scopes, List<XElement> checks)
+    {
+        var inner = node.Repeat is null ? scopes : [.. scopes, node.Repeat.SourcePath];
+        var scopeChecks = node.Repeat is null ? checks : [];
         var element = new XElement(Xsl + (node.IsAttribute ? "attribute" : "element"),
             new XAttribute("name", node.Name.LocalName), new XAttribute("namespace", node.Name.NamespaceName));
+        string? source = null;
         if (node.Assignment is { } field)
         {
+            if (field.Constant is null)
+            {
+                source = SourceExpression(field.SourcePath, inner);
+                var cardinality = field.MissingValueBehavior == MissingXmlValueBehavior.Error ? "!= 1" : "> 1";
+                scopeChecks.Add(new XElement(Xsl + "if", new XAttribute("test", $"count({source}) {cardinality} or {source}/* or {(source == "." ? "self::node()" : source)}{NilTest}"),
+                    new XElement(Xsl + "message", new XAttribute("terminate", "yes"), field.MissingValueBehavior == MissingXmlValueBehavior.Error
+                        ? $"Source '{field.SourcePath}' must select exactly one scalar element or attribute that is not xsi:nil. Missing, repeating, complex, or nil values are not supported."
+                        : $"Source '{field.SourcePath}' must select at most one scalar element or attribute that is not xsi:nil. Repeating, complex, or nil values are not supported.")));
+            }
             var value = field.Constant is null
-                ? new XElement(Xsl + "value-of", new XAttribute("select", field.SourcePath))
+                ? new XElement(Xsl + "value-of", new XAttribute("select", source!))
                 : new XElement(Xsl + "text", field.Constant);
             var initial = field.MissingValueBehavior == MissingXmlValueBehavior.Default
                 ? new XElement(Xsl + "choose",
-                    new XElement(Xsl + "when", new XAttribute("test", $"count({field.SourcePath}) = 0"), new XElement(Xsl + "text", field.DefaultValue)),
+                    new XElement(Xsl + "when", new XAttribute("test", $"count({source}) = 0"), new XElement(Xsl + "text", field.DefaultValue)),
                     new XElement(Xsl + "otherwise", value))
                 : value;
             if (field.Operations.Count == 0) element.Add(initial);
@@ -175,10 +245,18 @@ public sealed class XmlMappingEngine
             }
         }
         foreach (var child in node.Children.OrderByDescending(static child => child.IsAttribute))
-            element.Add(Emit(child));
-        return node.Assignment is { MissingValueBehavior: MissingXmlValueBehavior.Omit } optional
-            ? new XElement(Xsl + "if", new XAttribute("test", $"count({optional.SourcePath}) = 1"), element)
+            element.Add(Emit(child, inner, scopeChecks));
+        XElement result = node.Assignment is { MissingValueBehavior: MissingXmlValueBehavior.Omit }
+            ? new XElement(Xsl + "if", new XAttribute("test", $"count({source}) = 1"), element)
             : element;
+        if (node.Repeat is null) return result;
+        var loop = new XElement(Xsl + "for-each", new XAttribute("select", SourceExpression(node.Repeat.SourcePath, scopes)));
+        loop.Add(new XElement(Xsl + "variable", new XAttribute("name", $"r{inner.Count}"), new XAttribute("select", ".")));
+        loop.Add(new XElement(Xsl + "if", new XAttribute("test", $"self::node(){NilTest}"),
+            new XElement(Xsl + "message", new XAttribute("terminate", "yes"), $"Source record '{node.Repeat.SourcePath}' is xsi:nil, which is not supported.")));
+        loop.Add(scopeChecks);
+        loop.Add(result);
+        return loop;
     }
 
     private static IReadOnlyList<(XName Name, bool IsAttribute)> ParsePath(string path, bool absolute, XmlMappingDefinition map)
@@ -221,6 +299,7 @@ public sealed class XmlMappingEngine
         public bool IsAttribute { get; } = isAttribute;
         public List<TargetNode> Children { get; } = [];
         public XmlFieldMappingDefinition? Assignment { get; set; }
+        public XmlRepeatMappingDefinition? Repeat { get; set; }
     }
 
     private sealed class BoundedWriter(CancellationToken cancellationToken) : StringWriter(CultureInfo.InvariantCulture)

@@ -119,7 +119,7 @@ public sealed class XmlMappingTests
     {
         Assert.Throws<ArgumentException>(() => new XmlMappingEngine(new string(' ', 262_145)));
         Assert.Throws<ArgumentException>(() => new XmlMappingEngine(Json()).Transform(new string('x', 1_000_001)));
-        Assert.Throws<ArgumentException>(() => new XmlMappingEngine(Json(Map with { Fields = Enumerable.Repeat(Map.Fields[0], 129).ToArray() })));
+        Assert.Throws<ArgumentException>(() => new XmlMappingEngine(Json(Map with { Fields = Enumerable.Repeat(Map.Fields[0], 513).ToArray() })));
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         Assert.Throws<OperationCanceledException>(() => new XmlMappingEngine(Json()).Transform(Sample, cancelled.Token));

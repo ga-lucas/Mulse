@@ -7,8 +7,17 @@ public sealed class XmlMappingViewModel
     public string TargetRoot { get; set; } = "Output";
     public Dictionary<string, string> Namespaces { get; set; } = new(StringComparer.Ordinal);
     public List<XmlFieldMappingViewModel> Fields { get; set; } = [];
+    public List<XmlRepeatMappingViewModel> Repeats { get; set; } = [];
     public List<string> SourceSchemas { get; set; } = [];
     public List<string> TargetSchemas { get; set; } = [];
+    public bool ValidateSource { get; set; } = true;
+    public bool ValidateTarget { get; set; } = true;
+}
+
+public sealed class XmlRepeatMappingViewModel
+{
+    public string SourcePath { get; set; } = string.Empty;
+    public string TargetPath { get; set; } = string.Empty;
 }
 
 public sealed class XmlFieldMappingViewModel
@@ -34,7 +43,7 @@ public sealed record XmlMappingImportRequestViewModel(string MapXml, IReadOnlyLi
 public sealed record NativeMapConversionViewModel(string MappingJson, string Xslt, IReadOnlyList<string> Warnings);
 public sealed record XmlSchemaTreeViewModel(IReadOnlyDictionary<string, string> Namespaces, IReadOnlyList<XmlSchemaRootViewModel> Roots);
 public sealed record XmlSchemaRootViewModel(string Name, string Path, IReadOnlyList<XmlSchemaFieldViewModel> Fields);
-public sealed record XmlSchemaFieldViewModel(string Path, string LocalPath, bool Scalar, bool Required, bool Repeating, bool HasDefaultOrFixed, string? UnsupportedReason);
+public sealed record XmlSchemaFieldViewModel(string Path, string LocalPath, bool Scalar, bool Required, bool Repeating, bool HasDefaultOrFixed, string? UnsupportedReason, bool SelfRepeating = false, bool Nillable = false);
 public sealed record XmlSchemaSelectionViewModel(XmlSchemaRootViewModel Root, XmlSchemaFieldViewModel Field, IReadOnlyDictionary<string, string> Namespaces);
 public sealed record XmlSchemaFieldPairViewModel(XmlSchemaSelectionViewModel Source, XmlSchemaSelectionViewModel Target);
 public sealed record XmlMappingSchemasViewModel(IReadOnlyList<string> SourceSchemas, IReadOnlyList<string> TargetSchemas);

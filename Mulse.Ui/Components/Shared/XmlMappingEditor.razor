@@ -5,7 +5,7 @@
 @inject IMulseApiClient ApiClient
 
 <section aria-label="XML mapping editor">
-    <HelpTooltip Label="XML mapping">Saved with this render node when you save the flow. Scalar XML fields, constants, missing-source conditions/defaults, ordered string operations and optional persisted XSD validation; no scripts or repeating records. Unprefixed names mean no namespace.</HelpTooltip>
+    <HelpTooltip Label="XML mapping">Saved with this render node when you save the flow. Scalar XML fields, constants, missing-source conditions/defaults, ordered string operations, repeating records (for-each scopes) and optional persisted XSD validation; no scripts. Unprefixed names mean no namespace.</HelpTooltip>
     <XmlMappingSourceTools Applied="SetRawAsync" FieldAdded="AddSchemaFieldAsync" SchemasApplied="SetSchemasAsync" TreesChanged="trees => { _sourceTree = trees.Source; _targetTree = trees.Target; }" />
     @if (_error is not null)
     {
@@ -25,6 +25,9 @@
         {
             <button class="secondary-button" @onclick="async () => { map.SourceSchemas.Clear(); map.TargetSchemas.Clear(); await WriteAsync(); }">Remove runtime validation schemas from this mapping</button>
         }
+        <label class="field-label"><input type="checkbox" aria-label="Validate source against XSD" checked="@map.ValidateSource" @onchange="async e => { map.ValidateSource = e.Value is true; await WriteAsync(); }" /> Validate source messages against the source schemas at run time</label>
+        <label class="field-label"><input type="checkbox" aria-label="Validate output against XSD" checked="@map.ValidateTarget" @onchange="async e => { map.ValidateTarget = e.Value is true; await WriteAsync(); }" /> Validate mapped output against the target schemas at run time</label>
+        <p class="field-help">BizTalk maps do not XSD-validate messages, so imported maps start with both checks off. Turn them on to fail closed on schema-invalid data.</p>
         <label class="field-label">Required source root (optional QName, version 2)</label>
         <input class="mapping-input" aria-label="XML source root" value="@map.SourceRoot" @onchange="async e => { var text = e.Value?.ToString(); map.SourceRoot = string.IsNullOrWhiteSpace(text) ? null : text; map.Version = 2; await WriteAsync(); }" />
         <label class="field-label">Target root (QName)</label>
@@ -103,6 +106,22 @@
         }
         </details>
         <button class="secondary-button" @onclick="AddFieldAsync">Add XML field mapping</button>
+        <details open="@(map.Repeats.Count > 0)">
+        <summary>Repeating records (@map.Repeats.Count)</summary>
+        <HelpTooltip Label="Repeating records">Each repeat runs once per source record (for-each) and creates one target record for it. Fields whose source is below a repeat's source must have a target below that repeat's target; a nested repeat's source must be below its enclosing repeat's source. Both paths are named paths like field paths: source absolute, target relative to the target root. Records marked xsi:nil fail explicitly.</HelpTooltip>
+        @foreach (var repeat in map.Repeats)
+        {
+            <fieldset @key="repeat">
+                <legend>Repeat</legend>
+                <label class="field-label">Source record path</label>
+                <input class="mapping-input" aria-label="XML repeat source path" value="@repeat.SourcePath" @onchange="async e => { repeat.SourcePath = e.Value?.ToString() ?? string.Empty; _map!.Version = 2; await WriteAsync(); }" />
+                <label class="field-label">Target record path</label>
+                <input class="mapping-input" aria-label="XML repeat target path" value="@repeat.TargetPath" @onchange="async e => { repeat.TargetPath = e.Value?.ToString() ?? string.Empty; _map!.Version = 2; await WriteAsync(); }" />
+                <button class="secondary-button" @onclick="async () => { map.Repeats.Remove(repeat); await WriteAsync(); }">Remove repeat</button>
+            </fieldset>
+        }
+        <button class="secondary-button" disabled="@(map.Repeats.Count >= 256)" @onclick="AddRepeatAsync">Add repeating record</button>
+        </details>
     }
     <details>
         <summary>Mapping definition JSON</summary>
@@ -169,7 +188,7 @@
                     || (_map.Version == 1 && field.Operations.Count > 0)
                     || field.Operations.Any(operation => operation is null || !OperationKinds.Contains(operation.Kind, StringComparer.Ordinal)
                         || (operation.Kind is "Prefix" or "Suffix" ? operation.Argument is null || operation.Argument.Length > 4096 : operation.Argument is not null)))
-                || _map.SourceSchemas is null || _map.TargetSchemas is null)
+                || _map.SourceSchemas is null || _map.TargetSchemas is null || _map.Repeats is null)
             {
                 _map = null;
                 _error = "Mapping editor requires version 1 or 2 with valid namespace, field and operation collections. Correct the JSON; the original definition is preserved.";
@@ -235,10 +254,18 @@
 
     private async Task AddFieldAsync()
     {
-        if (_map!.Fields.Count >= 128) { _error = "Each mapping supports at most 128 fields."; return; }
+        if (_map!.Fields.Count >= 512) { _error = "Each mapping supports at most 512 fields."; return; }
         var field = new XmlFieldMappingViewModel();
         _map.Fields.Add(field);
         SelectField(field);
+        await WriteAsync();
+    }
+
+    private async Task AddRepeatAsync()
+    {
+        if (_map!.Repeats.Count >= 256) { _error = "Each mapping supports at most 256 repeats."; return; }
+        _map.Version = 2;
+        _map.Repeats.Add(new XmlRepeatMappingViewModel());
         await WriteAsync();
     }
 
@@ -318,7 +345,7 @@
             return;
         }
         var map = _map ?? new XmlMappingViewModel();
-        if (map.Fields.Count >= 128) { _error = "Each mapping supports at most 128 fields."; return; }
+        if (map.Fields.Count >= 512) { _error = "Each mapping supports at most 512 fields."; return; }
         var namespaces = new Dictionary<string, string>(map.Namespaces, StringComparer.Ordinal);
         var conflict = false;
         string Translate(string path, IReadOnlyDictionary<string, string> schemaNamespaces, string side)
