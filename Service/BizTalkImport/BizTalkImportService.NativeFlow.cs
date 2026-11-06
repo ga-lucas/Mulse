@@ -23,6 +23,16 @@ public sealed partial class BizTalkImportService
     private static readonly System.Text.RegularExpressions.Regex NsoftwareTransportPattern = new(@"^nsoftware\.S?FTP( \d{4})?$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     private static bool ContainsTransformCall(IEnumerable<NativeFlowNode> nodes)
         => nodes.Any(node => node.Kind == NativeFlowNodeKind.InvokeTransform || ContainsTransformCall(node.Children) || ContainsTransformCall(node.Otherwise));
+    private static bool ContainsNode(IEnumerable<NativeFlowNode> nodes, Func<NativeFlowNode, bool> predicate)
+        => nodes.Any(node => predicate(node) || ContainsNode(node.Children, predicate) || ContainsNode(node.Otherwise, predicate));
+    private static bool IsHl7Multipart(OdxNode type)
+    {
+        var parts = type.Children.Where(child => child.ShapeType == "PartDeclaration").ToArray();
+        return parts.Length == 3 && type.Children.Count == 3
+            && parts.Zip([("MSHSegment", "System.Xml.XmlDocument", "False"), ("BodySegments", "System.Xml.XmlDocument", "True"), ("ZSegments", "System.String", "False")])
+                .All(pair => pair.First.Name == pair.Second.Item1 && pair.First.Properties.GetValueOrDefault("ClassName") == pair.Second.Item2
+                    && pair.First.Properties.GetValueOrDefault("IsBodyPart") == pair.Second.Item3);
+    }
 
     private static BizTalkFlowCandidateResponse AttachNativeFlow(BizTalkFlowCandidateResponse candidate,
         IReadOnlyList<BindingFileAnalysis> bindings, IReadOnlyList<BizTalkRulePolicyResponse> policies, BizTalkSchemaSourceCatalog schemas,
@@ -102,9 +112,13 @@ public sealed partial class BizTalkImportService
             var transformMessages = messageDeclarations.Where(node => declarationCounts[node.Name] == 1 && NativeExpression.ValidName(node.Name))
                 .Select(node => node.Name).ToHashSet(StringComparer.Ordinal);
             var transformCatalog = NativeSourceMessageCatalog.Read(messageDeclarations.Where(node => transformMessages.Contains(node.Name)), schemas);
+            var multipartTypes = FlattenNativeSource(source.Roots).Where(shape => shape.ShapeType == "MultipartMessageType" && IsHl7Multipart(shape))
+                .Select(shape => (parents.GetValueOrDefault(shape.Id)?.Name is { Length: > 0 } module ? module + "." : "") + shape.Name).ToHashSet(StringComparer.Ordinal);
+            var multipartNames = messageDeclarations.Where(node => declarationCounts[node.Name] == 1 && NativeExpression.ValidName(node.Name)
+                && multipartTypes.Contains(node.Properties.GetValueOrDefault("Type", ""))).Select(node => node.Name).ToHashSet(StringComparer.Ordinal);
             NativeSourceExpressionReader Assignments(OdxNode node, bool transformsOnly = false) => new(node.Properties.GetValueOrDefault("Expression", ""), scalarTypes,
                 transformsOnly ? transformMessages : messages, transformsOnly ? transformCatalog : messageCatalog, documents, ElementSymbols(node), contextCatalog, configuration,
-                transformTypes, mapChoices, KnownUdfs, dynamicPorts);
+                transformTypes, mapChoices, KnownUdfs, dynamicPorts, multipartNames);
             var erasableTransformTypes = new HashSet<string>(StringComparer.Ordinal);
             if (mapChoices is not null && Mulse.Modules.Mapping.RenderDispatchDefinition.Read(mapChoices, allowEmpty: true).Count > 0)
             {
@@ -404,6 +418,10 @@ public sealed partial class BizTalkImportService
                             translated.Children = Assignments(node, transformsOnly: hasTransform).ReadAssignments(translated.Id).ToList();
                             if (ContainsTransformCall(translated.Children))
                                 Warn("Source helper FilenameMaker.MakeFilename is imported as the pure 'filename-template-transform' UDF (Compatibility Pack) with assumed settings timeZone=UTC and culture=Invariant. The BizTalk host's time zone and culture are unknown: review both in the node editor. The transform is not journaled, runs again after a crash before the next checkpoint, and its code version is not pinned.");
+                            if (ContainsNode(translated.Children, child => child.Target is { } target && NativeSourceContextCatalog.IsPlatformKey(target.MetadataKey)))
+                                Warn("Adapter and HL7 assembler properties written with message-context syntax (BTAHL7Schemas.*, FTP.*, FILE.*, SMTP.*, MIME.FileName, nsoftware.BizTalk.FTP.* and SFTP.*) are stored as importer-defined metadata keys '{" + NativeSourceContextCatalog.PlatformKeyNamespace + "<namespace>}<name>' typed from the assigned value. No native delivery module reads them: BizTalk adapters and the HL7 assembler applied them at send time (host, credentials, remote file/path, TLS mode, subject, delimiters, encoding). Configure the equivalent Deliver and render settings in the editor. Credential values assigned from message fields are copied into message metadata (and checkpoints) like the message itself; literal credentials are blocked.");
+                            if (ContainsNode(translated.Children, child => child.Kind == NativeFlowNodeKind.CreateXmlRoot && child.Expression?.Literal?.Value == NativeSourceExpressionReader.MultipartRootName))
+                                Warn("HL7vXGeneric multipart messages are imported as one native XML message: an '" + NativeSourceExpressionReader.MultipartRootName + "' root holding the MSHSegment document root followed by the BodySegments document root. The empty ZSegments part is dropped, and part-level context (for example MIME.FileName on BodySegments) is not translated. The hl7-xml-render module flattens this shape; BTAHL7 assembler behavior is not claimed. A whole-message multipart copy also copies the source message's metadata, whereas BizTalk starts the copy with a new context.");
                             if (translated.Children.Any(child => child.SelectionExpression is not null))
                                 warnings.Add($"Transform '{node.Name}' uses explicitly configured exact native renderer replacements with ordered named arguments; no CLR map is loaded and source parity is not implied. Full flow activation remains disabled.");
                             return translated;

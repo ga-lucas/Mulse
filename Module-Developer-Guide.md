@@ -151,8 +151,9 @@ namespace ownership, one explicit property schema, unique source and expanded-na
 with an explicit property GUID, and built-in xs:string/xs:int/xs:boolean types. Property schemas are securely
 compiled without include/import/redefine resolution. Unsupported fields block only their own identities; missing
 or ambiguous schema ownership blocks its CLR namespace. The catalog accepts at most 4096 declarations and fails
-closed on overflow. Only uniquely declared, unshadowed service messages are eligible; multipart and built-in
-platform properties are not guessed. The runtime fact uses exact `{namespace}property` metadata, never a body
+unshadowed service messages are eligible; undeclared properties are
+not guessed. Only an exact allowlist of adapter/assembler platform symbols is accepted, write-only, as typed
+`{urn:mulse:biztalk-platform-property:<namespace>}<name>` metadata that no module reads.
 fallback. Whole unsupported statement suffixes remain blockers. Input promotion/context adapters, subscriptions
 and correlation wiring are separate contracts and are not implemented by these scalar reads/writes.
 `ApplyXmlRules` is a durable leaf with an explicit named message and active `policyJson`, edited through the

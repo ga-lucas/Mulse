@@ -16,6 +16,34 @@ internal sealed class NativeSourceContextCatalog
     private readonly IReadOnlySet<string> _messages;
     private string? _catalogFailure;
 
+    /// <summary>Importer-defined metadata key prefix for adapter/assembler properties that no project schema declares; the key is not a BizTalk property identity.</summary>
+    internal const string PlatformKeyNamespace = "urn:mulse:biztalk-platform-property:";
+    // Exact symbols only (observed in the supplied Billing/Requisition sources); a namespace is never trusted as a whole.
+    private static readonly IReadOnlySet<string> PlatformProperties = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "BTAHL7Schemas.ToBeBatched", "BTAHL7Schemas.MSH5_1", "BTAHL7Schemas.MSH3_1", "BTAHL7Schemas.MSH2", "BTAHL7Schemas.MSH1", "BTAHL7Schemas.MessageClass",
+        "BTAHL7Schemas.MessageEncoding", "BTAHL7Schemas.ParseError", "BTAHL7Schemas.ZPartPresent", "BTAHL7Schemas.SegmentDelimiter2Char",
+        "FTP.UserName", "FTP.Password", "FTP.PassiveMode", "FTP.FtpsConnectionMode", "FTP.UseSsl", "FTP.UseDataProtection",
+        "FILE.Username", "FILE.Password", "MIME.FileName",
+        "SMTP.Subject", "SMTP.From", "SMTP.SMTPHost", "SMTP.SMTPAuthenticate", "SMTP.EmailBodyText", "SMTP.EmailBodyTextCharset",
+        "nsoftware.BizTalk.FTP.User", "nsoftware.BizTalk.FTP.Password", "nsoftware.BizTalk.FTP.FTPServer", "nsoftware.BizTalk.FTP.RemoteFile",
+        "nsoftware.BizTalk.FTP.RemotePath", "nsoftware.BizTalk.FTP.FTPPort", "nsoftware.BizTalk.FTP.SSLCertSubject", "nsoftware.BizTalk.FTP.SSLAcceptServerCertAcceptAny",
+        "nsoftware.BizTalk.SFTP.SSHHost", "nsoftware.BizTalk.SFTP.SSHPort", "nsoftware.BizTalk.SFTP.RemoteFile", "nsoftware.BizTalk.SFTP.RemotePath",
+        "nsoftware.BizTalk.SFTP.SSHCertSubject", "nsoftware.BizTalk.SFTP.SSHUser", "nsoftware.BizTalk.SFTP.SSHPassword", "nsoftware.BizTalk.SFTP.Append",
+        "nsoftware.BizTalk.SFTP.Overwrite", "nsoftware.BizTalk.SFTP.SSHAcceptServerHostKeyAcceptAny"
+    };
+    private static readonly IReadOnlySet<string> PlatformSecrets = new HashSet<string>(StringComparer.Ordinal)
+    { "FTP.Password", "FILE.Password", "nsoftware.BizTalk.FTP.Password", "nsoftware.BizTalk.SFTP.SSHPassword" };
+
+    public static bool IsPlatformProperty(string symbol) => PlatformProperties.Contains(symbol);
+    public static bool IsPlatformSecret(string symbol) => PlatformSecrets.Contains(symbol);
+    public static bool IsPlatformKey(string key) => key.StartsWith("{" + PlatformKeyNamespace, StringComparison.Ordinal);
+    private static string PlatformKey(string symbol)
+    {
+        var separator = symbol.LastIndexOf('.');
+        return XName.Get(symbol[(separator + 1)..], PlatformKeyNamespace + symbol[..separator]).ToString();
+    }
+
     private NativeSourceContextCatalog(IReadOnlySet<string> messages) => _messages = messages;
 
     public static NativeSourceContextCatalog Read(BizTalkSchemaSourceCatalog schemas, IReadOnlySet<string> messages)
@@ -96,6 +124,7 @@ internal sealed class NativeSourceContextCatalog
     {
         if (_catalogFailure is not null) throw new NotSupportedException(_catalogFailure);
         if (!_messages.Contains(message)) throw new NotSupportedException("Context access requires an unshadowed, uniquely declared service-level message; scope-local/undeclared message identities are not inferred.");
+        if (IsPlatformProperty(symbol) && !_properties.ContainsKey(symbol)) return new() { Kind = NativeMessageFactKind.Metadata, MetadataKey = PlatformKey(symbol), MessageName = message };
         var separator = symbol.LastIndexOf('.');
         var clrNamespace = separator < 0 ? "" : symbol[..separator];
         if (_uncertainNamespaces.Contains(clrNamespace))

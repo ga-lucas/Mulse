@@ -10,7 +10,7 @@ internal sealed record NativeSourceUdf(string Module, IReadOnlyDictionary<string
 
 internal sealed class NativeSourceExpressionReader
 {
-    private static readonly Regex Token = new("""\G\s*(?:(?<comment>//[^\r\n]*|/\*[\s\S]*?\*/)|(?<string>"(?:[^"\\\r\n]|\\["\\nrt])*")|(?<number>[0-9]+)|(?<name>[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*)|(?<symbol>==|!=|<=|>=|&&|\|\||\+\+|--|\+=|[-+*/%<>()!;,={}]))""", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    private static readonly Regex Token = new("""\G\s*(?:(?<comment>//[^\r\n]*|/\*[\s\S]*?\*/)|(?<verbatim>@"(?:[^"]|"")*")|(?<string>"(?:[^"\\\r\n]|\\["\\nrt])*")|(?<number>[0-9]+)|(?<name>[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*)|(?<symbol>==|!=|<=|>=|&&|\|\||\+\+|--|\+=|[-+*/%<>()!;,={}]))""", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     private readonly string _source;
     private readonly IReadOnlyDictionary<string, NativeScalarType> _variables;
     private readonly IReadOnlySet<string> _messages;
@@ -23,11 +23,13 @@ internal sealed class NativeSourceExpressionReader
     private readonly string? _mapChoices;
     private readonly IReadOnlyDictionary<string, NativeSourceUdf> _udfs;
     private readonly IReadOnlySet<string> _dynamicPorts;
+    private readonly IReadOnlySet<string> _multiparts;
     private string _token = "", _kind = "";
     private int _offset, _depth, _values, _statements;
 
     public NativeSourceExpressionReader(string source, IReadOnlyDictionary<string, NativeScalarType> variables, IReadOnlySet<string>? messages = null, NativeSourceMessageCatalog? messageCatalog = null, IReadOnlySet<string>? documents = null, IReadOnlySet<string>? elements = null, NativeSourceContextCatalog? contextCatalog = null, NativeSourceConfigurationCatalog? configuration = null,
-        IReadOnlySet<string>? transformTypes = null, string? mapChoices = null, IReadOnlyDictionary<string, NativeSourceUdf>? udfs = null, IReadOnlySet<string>? dynamicPorts = null)
+        IReadOnlySet<string>? transformTypes = null, string? mapChoices = null, IReadOnlyDictionary<string, NativeSourceUdf>? udfs = null, IReadOnlySet<string>? dynamicPorts = null,
+        IReadOnlySet<string>? multiparts = null)
     {
         if (string.IsNullOrWhiteSpace(source) || source.Length > 4096) throw new NotSupportedException("Native scalar source requires 1-4096 characters.");
         _source = source; _variables = variables; _messages = messages ?? new HashSet<string>(StringComparer.Ordinal); _messageCatalog = messageCatalog;
@@ -36,19 +38,83 @@ internal sealed class NativeSourceExpressionReader
         _contextCatalog = contextCatalog; _configuration = configuration;
         _transformTypes = transformTypes ?? new HashSet<string>(StringComparer.Ordinal); _mapChoices = mapChoices;
         _udfs = udfs ?? new Dictionary<string, NativeSourceUdf>(StringComparer.Ordinal);
-        _dynamicPorts = dynamicPorts ?? new HashSet<string>(StringComparer.Ordinal); Next();
+        _dynamicPorts = dynamicPorts ?? new HashSet<string>(StringComparer.Ordinal);
+        _multiparts = multiparts ?? new HashSet<string>(StringComparer.Ordinal); Next();
     }
     /// <summary>Hidden String variable that holds one runtime property of a dynamic send port, so the value keeps assignment-time semantics.</summary>
     internal static string DynamicPortVariable(string port, string property) => port + "_" + property;
     // Dotted keys (e.g. "ex.Message") can only be importer-registered read-only exception aliases; the native variable uses underscores.
     private static string NativeVariableName(string token) => token.Replace('.', '_');
-    private NativeMessageFact ReadContext(string message)
+    private NativeMessageFact ReadContext(string message, out string symbol)
     {
         Expect("(");
         if (_kind != "name" || _contextCatalog is null) throw new NotSupportedException("Message context access requires an exact declared property-schema identity.");
-        var fact = _contextCatalog.Resolve(message, _token);
+        symbol = _token;
+        var fact = _contextCatalog.Resolve(message, symbol);
         Next(); Expect(")"); return fact;
     }
+    /// <summary>Platform (adapter/assembler) properties are write-only metadata whose scalar kind is the statically proven type of the assigned expression.</summary>
+    private NativeMessageFact TypePlatformWrite(NativeMessageFact fact, string symbol, NativeExpression value)
+    {
+        if (NativeSourceContextCatalog.IsPlatformSecret(symbol) && value.Kind == NativeExpressionKind.Literal && value.Literal!.Value.Length > 0)
+            throw new NotSupportedException("Platform credential property '" + symbol + "' is assigned a literal; secrets are never embedded in imported flow definitions. Assign it from a message field or configure the delivery secret explicitly.");
+        var kind = TypeOf(value) switch
+        {
+            NativeScalarType.String => NativeMessageFactKind.Metadata, NativeScalarType.Int32 => NativeMessageFactKind.MetadataInt32, NativeScalarType.Boolean => NativeMessageFactKind.MetadataBoolean,
+            _ => throw new NotSupportedException("Platform property '" + symbol + "' requires a statically proven String, Int32 or Boolean value; null and implicit coercion are not inferred.")
+        };
+        return new() { Kind = kind, MetadataKey = fact.MetadataKey, MessageName = fact.MessageName };
+    }
+    private void ExpectEmptyDocumentConstructor()
+    {
+        Expect("="); ExpectName("new"); ExpectName("System.Xml.XmlDocument"); Expect("("); Expect(")"); Expect(";");
+    }
+    private (string Message, bool Part) ReadPartSource(string target, string part)
+    {
+        if (_kind != "name") throw new NotSupportedException("Multipart part assignment requires a declared XmlDocument message or the same part of another multipart message.");
+        var token = _token; var dot = token.LastIndexOf('.');
+        if (dot > 0 && token[(dot + 1)..] == part && _multiparts.Contains(token[..dot]) && token[..dot] != target) { Next(); return (token[..dot], true); }
+        if (_documents.Contains(token) && !_multiparts.Contains(token)) { Next(); return (token, false); }
+        throw new NotSupportedException("Multipart part '" + target + "." + part + "' is assigned from '" + token + "', which is neither a declared XmlDocument message nor the same part of another multipart message.");
+    }
+    /// <summary>Strict five-statement HL7vXGeneric construction: two empty-document initializers, then MSH/Body/Z part assignments.</summary>
+    private List<NativeFlowNode> ReadMultipartConstruction(string multipart, string first, string id)
+    {
+        if (first != multipart + ".MSHSegment") throw new NotSupportedException("A multipart message must be constructed by the exact MSHSegment/BodySegments/ZSegments statement sequence; '" + first + "' starts another form.");
+        _statements += 4; if (_statements > 64) throw new NotSupportedException("Source block exceeds 64 statements.");
+        ExpectEmptyDocumentConstructor(); ExpectName(multipart + ".BodySegments"); ExpectEmptyDocumentConstructor();
+        ExpectName(multipart + ".MSHSegment"); Expect("="); var header = ReadPartSource(multipart, "MSHSegment"); Expect(";");
+        ExpectName(multipart + ".BodySegments"); Expect("="); var body = ReadPartSource(multipart, "BodySegments"); Expect(";");
+        ExpectName(multipart + ".ZSegments"); Expect("=");
+        bool emptyZ = false; string? zSource = null;
+        if (_kind == "string")
+        {
+            if (JsonSerializer.Deserialize<string>(_token) != "") throw new NotSupportedException("A non-empty ZSegments part has no native representation; only the empty Z part is translated.");
+            emptyZ = true; Next();
+        }
+        else if (_kind == "name" && _token.EndsWith(".ZSegments", StringComparison.Ordinal) && _multiparts.Contains(_token[..^10]) && _token[..^10] != multipart) { zSource = _token[..^10]; Next(); }
+        else throw new NotSupportedException("ZSegments requires the empty string or the Z part of another multipart message.");
+        Expect(";");
+        if (!header.Part && !body.Part && emptyZ)
+        {
+            return
+            [
+                new() { Id = id + "-root", Name = multipart + " wrapper", Kind = NativeFlowNodeKind.CreateXmlRoot, MessageName = multipart,
+                    Expression = new() { Literal = NativeScalar.From(MultipartRootName) }, NamespaceExpression = new() { Literal = NativeScalar.From("") } },
+                new() { Id = id + "-header", Name = multipart + " MSHSegment", Kind = NativeFlowNodeKind.AppendXmlMessage, MessageName = multipart, SourceMessage = header.Message },
+                new() { Id = id + "-body", Name = multipart + " BodySegments", Kind = NativeFlowNodeKind.AppendXmlMessage, MessageName = multipart, SourceMessage = body.Message }
+            ];
+        }
+        if (header.Part && body.Part && zSource is not null && header.Message == body.Message && body.Message == zSource)
+            return
+            [
+                new() { Id = id + "-read", Kind = NativeFlowNodeKind.UseMessage, MessageName = zSource },
+                new() { Id = id + "-save", Kind = NativeFlowNodeKind.SaveMessage, MessageName = multipart }
+            ];
+        throw new NotSupportedException("Multipart parts must all come from plain XmlDocument messages (with an empty Z part) or all three parts from one other multipart message; mixed sources are not translated.");
+    }
+    /// <summary>Name of the synthetic root element that wraps the MSH and body documents of a native multipart message.</summary>
+    internal const string MultipartRootName = "HL7Multipart";
     private void Next()
     {
         while (true)
@@ -60,6 +126,12 @@ internal sealed class NativeSourceExpressionReader
             if (!match.Success) throw new NotSupportedException("Source scalar expression contains unsupported syntax; schema members and CLR calls require explicit adapters.");
             _offset += match.Length;
             if (match.Groups["comment"].Success) continue;
+            if (match.Groups["verbatim"].Success)
+            {
+                var text = match.Groups["verbatim"].Value;
+                _kind = "string"; _token = JsonSerializer.Serialize(text[2..^1].Replace("\"\"", "\"", StringComparison.Ordinal));
+                return;
+            }
             _kind = new[] { "string", "number", "name", "symbol" }.Single(name => match.Groups[name].Success);
             _token = match.Groups[_kind].Value;
             return;
@@ -104,6 +176,13 @@ internal sealed class NativeSourceExpressionReader
             var name = _token;
             if (_kind != "name") throw new NotSupportedException("Source statement requires a declared scalar/message or exact schema member.");
             Next();
+            var partDot = name.LastIndexOf('.');
+            if (partDot > 0 && _multiparts.Contains(name[..partDot]))
+            {
+                if (_token == "(") throw new NotSupportedException("Part-level context '" + name + "(...)' is not translated; native messages carry message-level metadata only.");
+                if (pendingEmptyDocument is not null) throw new NotSupportedException("A multipart construction cannot interrupt an incomplete XML document construction.");
+                nodes.AddRange(ReadMultipartConstruction(name[..partDot], name, id + "-multipart-" + nodes.Count)); continue;
+            }
             if (name == "if")
             {
                 if (pendingEmptyDocument is not null) throw new NotSupportedException("A conditional cannot interrupt an incomplete XML document construction.");
@@ -198,8 +277,9 @@ internal sealed class NativeSourceExpressionReader
                 if (_token == "(")
                 {
                     if (pendingEmptyDocument is not null) throw new NotSupportedException("Context assignment cannot reuse a previous snapshot of the empty document being replaced.");
-                    var context = ReadContext(name);
+                    var context = ReadContext(name, out var contextSymbol);
                     Expect("="); var expression = Read(); Expect(";"); NativeExpression.Validate(expression);
+                    if (NativeSourceContextCatalog.IsPlatformKey(context.MetadataKey)) context = TypePlatformWrite(context, contextSymbol, expression);
                     nodes.Add(new() { Id = id + "-context-" + nodes.Count, Kind = NativeFlowNodeKind.SetMessageValue, Target = context, Expression = expression });
                     continue;
                 }
@@ -325,7 +405,10 @@ internal sealed class NativeSourceExpressionReader
             else if (_kind == "name" && _messages.Contains(_token))
             {
                 var message = _token; Next();
-                left = new() { Kind = NativeExpressionKind.MessageValue, Fact = ReadContext(message) };
+                var contextFact = ReadContext(message, out var contextSymbol);
+                if (NativeSourceContextCatalog.IsPlatformKey(contextFact.MetadataKey))
+                    throw new NotSupportedException("Platform property '" + contextSymbol + "' is write-only in native import; its value is not readable context evidence.");
+                left = new() { Kind = NativeExpressionKind.MessageValue, Fact = contextFact };
             }
             else if (_kind == "name" && _token.Contains('.') && _messageCatalog is not null)
             { left = new() { Kind = NativeExpressionKind.MessageValue, Fact = _messageCatalog.Resolve(_token) }; Next(); }

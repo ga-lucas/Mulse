@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,623 service tests passed and the solution built.
+Latest verification: 1,635 service tests passed and the solution built.
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -23,7 +23,7 @@ Report-bearing imports remain disabled and fail closed until verified translatio
 Typed or multiple catches, fault-message catches and assignments to `ex.*` remain Blocked. A `CorrelationDeclaration` that is only initialized by Sends and never followed becomes named "(not enforced)" evidence (see the correlation increment); followed or unproven sets stay visible blockers.
 - **Editor fix:** the native flow editor validated expressions against a stale hard-coded kind list and would have refused flows using the string functions; it now shares the expression editor's kind/arity list. A truncated `AppendChild` consumption in the XML-root reader was also restored.
 - **Measured Billing effect (re-measured with a stand-in config helper; indicative only):** unresolved nodes BillingServiceProcess 136 -> 126, BatchDoubleBody 54 -> 46, BatchWithTrailer 60 -> 48. The original `GlobalInterfaceAppSettings` source was not found on disk, so helper-derived values differ from a real run. Flows stay disabled; no BizTalk equivalence is claimed.
-- **Next measured gaps (Billing):** dynamic transforms needing map choices (28; the map type names come from rule-engine output at run time, appear in no supplied artifact and must be entered as **Native map choices** in the import panel), message-ownership evidence (13), followed correlation sets with `StatementRef`/DNFPredicate/Receive filters/`Listen` (batch flows), transmit-pipeline wrappers around translated Sends (the translated delivery is kept as a child; the pipeline component order must still be configured by hand), 9 Sends without a unique physical binding, adapter-property message assignments (`FTP.*`, `SMTP.*`, `nsoftware.*`), DateTime values and `Subtract(DateTime.Now)` delays, dynamic SFTP/other transports without a native adapter, and Distinguished scalars beyond string/int/boolean.
+- **Next measured gaps (Billing):** dynamic transforms needing map choices (28; the map type names come from rule-engine output at run time, appear in no supplied artifact and must be entered as **Native map choices** in the import panel), `//Setting[@Name='X']/@Value` descendant/predicate XPath reads (10; they block every `Create HL7 Message` assignment and need a bounded descendant + attribute-equals fact in the model, executor and UI), part-level `MIME.FileName` (1), followed correlation sets with `StatementRef`/DNFPredicate/Receive filters/`Listen` (batch flows), transmit-pipeline wrappers around translated Sends (the translated delivery is kept as a child; the pipeline component order must still be configured by hand), 9 Sends without a unique physical binding, delivery modules reading the recorded adapter-property metadata (recorded only, not wired), DateTime values and `Subtract(DateTime.Now)` delays, dynamic SFTP/other transports without a native adapter, and Distinguished scalars beyond string/int/boolean.
 - **Verification:** 1,550 service tests passed and the solution built.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
@@ -65,6 +65,15 @@ Review rule: a module with no hard-coded customer schema is generic. No aliases 
 - **Assumption (warned at import):** BizTalk's requirement that the sent message carries the set's promoted properties is not enforced, and no later Receive is subscribed. Review any consumer that relied on these sets.
 - **Measured effect (indicative):** BillingServiceProcess unresolved nodes 116 -> 88 (all 14 sets and 14 references; its sets are all Send-initialized and never followed). The two batch flows are unchanged at 43: their set is initialized by one Receive and followed by another inside a `Listen`, so it stays blocked.
 - **Verification:** 6 new importer tests; 1,623 service tests passed.
+
+### Increment: platform context properties and HL7 multipart construction
+
+- **Platform properties:** an exact allowlist of adapter/assembler symbols (`BTAHL7Schemas.*`, `FTP.*`, `FILE.Username|Password`, `MIME.FileName`, `SMTP.*`, `nsoftware.BizTalk.FTP|SFTP.*`) may be **written** with `msg(Symbol) = value`. Each write becomes a typed `SetMessageValue` (String, Int32, Boolean) on the importer-defined key `{urn:mulse:biztalk-platform-property:<clrNamespace>}<name>`. Reads, null values, unknown types, other namespaces (`EDI.*`, `HTTP.*`, `WCF.*`) and non-empty literals written to password properties stay blocked; secrets must come from a message field.
+- **Assumption (warned at import):** the properties are recorded as message metadata only. No delivery module reads them, so the delivery settings must still be configured in the UI. Wiring was deliberately not added because a missing metadata key would fail the send.
+- **HL7vXGeneric multipart:** the exact internal type (MSHSegment XmlDocument, body BodySegments XmlDocument, ZSegments String) is imported as one native XML message: an `HL7Multipart` root, then the header root, then the body root. A strict five-statement prelude is required. A whole-message copy from another multipart becomes `UseMessage` + `SaveMessage`, which also copies metadata (BizTalk starts a new context). Non-empty `ZSegments`, mixed sources and part-level context (`msg.BodySegments(MIME.FileName)`) stay blocked. `hl7-xml-render` flattens this shape; BTAHL7 assembler behavior is not claimed.
+- **Tokenizer:** verbatim strings (`@"^~\&"`) are now read.
+- **Measured effect (indicative):** all 13 ownership blockers in BillingServiceProcess are cleared (88 -> 81 unresolved nodes) but 10 now fail on the descendant/predicate XPath reads above, so the `Create HL7 Message` blocks remain Blocked. The batch flows are unchanged. Flows stay disabled; no BizTalk equivalence is claimed.
+- **Verification:** 12 new importer tests; 1,635 service tests passed.
 
 ### Placement and UDF recommendations (record; mostly not yet built)
 

@@ -466,8 +466,10 @@ service/scope and one complete root-construction block; scope/transaction execut
 are null String, zero Int32 and false Boolean. Comments do not hide unsupported suffixes or final assignments.
 Exact message(property) reads/writes now compile from uniquely declared property schemas with explicit built-in
 String/Int32/Boolean types and proven generated namespaces, using native `{namespace}property` metadata keys.
-Undeclared/built-in/multipart properties, shadowed messages, ambiguous identities and unsupported types remain
-blocked. Input promotion is a separate explicit adapter contract; the compiler never substitutes a similarly named
+Undeclared properties, shadowed messages, ambiguous identities and unsupported types remain
+blocked. The exact allowlisted adapter/HL7 assembler symbols (`BTAHL7Schemas.*`, `FTP.*`, `SMTP.*`, `MIME.FileName`, ...)
+can be written only, as importer-defined metadata no delivery module reads, and the exact HL7vXGeneric multipart
+becomes one native `HL7Multipart` XML message; see the compatibility plan.
 XML field or creates MessageBox subscriptions. No source interpreter runs.
 Arbitrary XPath, unproven schema/context properties, other CLR calls, helpers, scopes, pipelines and unproven
 policy fact wiring remain explicit structured blockers. Imported loop safety bounds are visible
