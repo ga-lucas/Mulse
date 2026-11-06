@@ -83,7 +83,7 @@
                 if (nodes.Count > 0 && depth > 32) throw new JsonException("Definition exceeds 32 levels.");
                 foreach (var node in nodes)
                 {
-                    if (node is null || node.Id is null || !ids.Add(node.Id) || ids.Count > 1000 || node.Name is null || node.Module is null
+                    if (node is null || node.Id is null || !ids.Add(node.Id) || ids.Count > 2000 || node.Name is null || node.Module is null
                         || node.Settings is null || node.Conditions is null || node.Children is null || node.Otherwise is null || node.BlockReason is null
                         || node.Kind is not ("Sequence" or "If" or "ForEach" or "While" or "Augment" or "Render" or "Blocked" or "Wait" or "Receive" or "SaveMessage" or "UseMessage" or "Reply" or "Deliver" or "DeclareVariable" or "SetVariable" or "CreateXmlMessage" or "SetMessageValue" or "CreateXmlRoot" or "AppendXmlMessage" or "ApplyXmlRules" or "Terminate" or "Try" or "InvokeTransform")
                         || node.MessageName is null || node.Channel is null || node.CorrelationKeys is null || node.CorrelationKeys.Any(key => key is null)
@@ -161,7 +161,7 @@
             }
         }
         var nodes = All(_model.Nodes).ToArray();
-        _error = Value.Length > 1_000_000 || nodes.Length > 1000 ? "Definition exceeds its size/node limits; reduce it before execution." :
+        _error = Value.Length > 1_000_000 || nodes.Length > 2000 ? "Definition exceeds its size/node limits; reduce it before execution." :
             nodes.Any(node => node.Kind == "Blocked") ? "This definition contains unresolved nodes. All blockers must be implemented before execution, including unselected branches." :
             nodes.Any(node => string.IsNullOrWhiteSpace(node.Id) || node.Id.Length > 128 || node.Settings.Count > 128
                 || (node.Kind is "If" or "While") && node.Expression is null && (node.Conditions.Count is < 1 or > 32)

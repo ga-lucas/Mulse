@@ -90,8 +90,8 @@ public sealed class NativeControlFlowTests
     }
 
     [Theory]
-    [InlineData(1000, false)]
-    [InlineData(1001, true)]
+    [InlineData(2000, false)]
+    [InlineData(2001, true)]
     public void ExactNodeCountLimitsAreEnforced(int count, bool rejected)
     {
         var json = Serialize(new() { Nodes = Enumerable.Range(0, count).Select(_ => new NativeFlowNode()).ToList() });

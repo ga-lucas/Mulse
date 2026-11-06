@@ -512,6 +512,9 @@ controls are available for both scratch flows and native node authoring:
   template, explicit time zone/culture, and an output key. It changes metadata only, not the payload name, destination or body.
 - **Filename template macros** (`filename-template-transform`, built-in): the same expansion as a one-text-input function in
   **Map parsed data** and the native `InvokeTransform` node.
+- **Address part** (`address-part-transform`, built-in): splits a URL (`scheme://host[:port]/dir/file`), a file path or a mail
+  address into Host/Port/Directory/FileName/MailAddress for the native `InvokeTransform` node; invalid input fails. Together with
+  Deliver **Dynamic settings** (computed per-run module settings) it implements BizTalk dynamic send ports natively.
 - **XML - remove namespaces** (`xml-remove-namespaces-render`, built-in): select this renderer directly or as an
   **Ordered renderer pipeline** stage. Text, CDATA, comments and processing instructions survive; attribute local-name collisions fail.
 - **Set context property** (`set-context-property-augment`, built-in) and **Promote HL7 message type**

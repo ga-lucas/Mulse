@@ -40,7 +40,7 @@ an SDK lease boundary; plugins receive the same execution context, batch and con
 
 `Read` validates the entire definition before any module call; explicit Blocked nodes fail even in unused branches.
 Use `allowBlocked: true` only to inspect well-formed drafts, never to execute them. IDs are native stable strings,
-not source statement IDs. Limits are 1000 nodes, 32 levels, 1-10000 loop iterations and 100000 executed nodes.
+not source statement IDs. Limits are 2000 nodes, 32 levels, 1-10000 loop iterations and 100000 executed nodes.
 Conditions reuse native decision semantics and require one payload; ForEach collects zero/one/many outputs in
 original input order. Synchronous mode retains whole-step flow retries. Optional `Durable` definitions persist
 native cursors, named batches, waits/receives and effect intents using `FlowOrchestrationCheckpoint.Native`.
@@ -210,6 +210,12 @@ a declared String result variable and 1-8 argument expressions (String/Int32/Boo
 65,536 characters). The call is not journaled and re-runs after a crash before the next checkpoint, so keep
 transforms deterministic. A missing module fails closed. Transform code versions are not pinned yet; see the
 version-pinning plan in `BizTalk-Import-Compatibility-Plan.md`.
+
+A native `Deliver` node can also carry **Dynamic settings** (`SettingExpressions`, 1-32 keys that must not repeat a static
+setting, compared case-insensitively). Each expression is evaluated when the node runs and overlaid on the static settings
+(String as is, Int32 as invariant text, Boolean as `true`/`false`, other types fail). The built-in `address-part-transform`
+UDF (`format` Url/Path/Mail, `part` Host/Port/Directory/FileName/MailAddress, optional `defaultPort`) parses addresses for them.
+The isolated test runner records the effective settings and redacts secret-like keys.
 
 The field adapter explicitly models the supplied schema's names and returns text metadata; it is not full XSD
 validation, a source property bag, implicit credential promotion or a policy fact adapter. The namespace renderer

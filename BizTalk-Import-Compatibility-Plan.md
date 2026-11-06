@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,570 service tests passed and the solution built.
+Latest verification: 1,617 service tests passed and the solution built.
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -23,7 +23,7 @@ Report-bearing imports remain disabled and fail closed until verified translatio
 - **Scope/Catch import:** a `Scope` becomes a native `Sequence`, or a `Try` when it has exactly one untyped `System.Exception` catch (`ex.Message`/`ex.StackTrace` map to the exception variables, read-only). Scope-local scalar declarations are supported. `LongRunningTransaction`, `AtomicTransaction` and `TransactionAttribute` stay as named "(not enforced)" evidence nodes plus a warning: no atomicity, compensation, retry or timeout is implemented. Typed or multiple catches, fault-message catches and assignments to `ex.*` remain Blocked. `CorrelationDeclaration`/`StatementRef` stay visible blockers because they carry correlation semantics.
 - **Editor fix:** the native flow editor validated expressions against a stale hard-coded kind list and would have refused flows using the string functions; it now shares the expression editor's kind/arity list. A truncated `AppendChild` consumption in the XML-root reader was also restored.
 - **Measured Billing effect (re-measured with a stand-in config helper; indicative only):** unresolved nodes BillingServiceProcess 136 -> 126, BatchDoubleBody 54 -> 46, BatchWithTrailer 60 -> 48. The original `GlobalInterfaceAppSettings` source was not found on disk, so helper-derived values differ from a real run. Flows stay disabled; no BizTalk equivalence is claimed.
-- **Next measured gaps (Billing):** dynamic transforms needing map choices (28), native protocol adapters for bound Sends (15 + 9 without unique binding), structural children/cascades (StatementRef 14, DecisionBranch), `CorrelationDeclaration` (14) and DNFPredicate/Receive filters, `Listen`/`ListenBranch`, `FilenameMaker.MakeFilename`, dynamic port `Address`/`TransportType` assignments, DateTime values and `Subtract(DateTime.Now)` delays, and Distinguished scalars beyond string/int/boolean.
+- **Next measured gaps (Billing):** dynamic transforms needing map choices (28), `CorrelationDeclaration` (14) and `StatementRef` (14) / DNFPredicate / Receive filters, message-ownership evidence (13), transmit-pipeline wrappers around translated Sends (the translated delivery is kept as a child; the pipeline component order must still be configured by hand), 9 Sends without a unique physical binding, `Listen`/`ListenBranch`, adapter-property message assignments (`FTP.*`, `SMTP.*`, `nsoftware.*`), DateTime values and `Subtract(DateTime.Now)` delays, dynamic SFTP/other transports without a native adapter, and Distinguished scalars beyond string/int/boolean.
 - **Verification:** 1,550 service tests passed and the solution built.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
@@ -48,6 +48,16 @@ Review rule: a module with no hard-coded customer schema is generic. No aliases 
 
 - Importer IDs, warnings and report hints were updated. `[GUID]` is random per call and `InvokeTransform` is not journaled: checkpoint the result before a Deliver that must be replay-stable (future option: derive the GUID from instance and node IDs).
 - **Verification:** 1,570 service tests passed and the solution built.
+
+### Increment: dynamic send ports
+
+- **Core (UI-editable):** a `Deliver` node can carry `SettingExpressions` (1-32 keys, no overlap with static `Settings`, case-insensitive). Each expression is evaluated at run time and overlaid on the static settings (String as is, Int32 as invariant text, Boolean as `true`/`false`; anything else fails and a `Try` can catch it). The node editor has a "Dynamic settings" list; the isolated test runner records the effective settings and redacts secret-like keys (`password`, `secret`, `token`, `key`, `credential`, `passphrase`) as `***`. The native node limit was raised from 1000 to 2000 (runtime, editor, docs) because dynamic dispatch expands each send.
+- **New UDF `address-part-transform` (Compatibility Pack):** pure String function. `format` Url (`scheme://host[:port]/dir/file`; user-info rejected; `defaultPort` optional), Path (split on the last `\` or `/`) or Mail (optional `mailto:` removed); `part` Host/Port/Directory/FileName/MailAddress. Invalid input throws (fail closed).
+- **Importer:** a `PortDeclaration` whose `PhysicalBindingAttribute` has `IsDynamic=True` (unique name, bound to a send port with `IsStatic="false"`) accepts `port(Microsoft.XLANGs.BaseTypes.Address|TransportType) = <String expression>;`. Values go to hidden String variables `<port>_Address` / `<port>_TransportType` (declared at the top of the flow, visible and editable), so assignment-time semantics are kept; `MakeFilename(...)` uses the `InvokeTransform` bridge. The Send becomes an exact, case-sensitive `If` chain on the transport type for FILE, FTP, HTTP and SMTP (limited to the binding's `DynamicSendHanders` when listed), each branch parsing the address with `address-part-transform` and delivering through the native module with computed settings. Any other, unassigned or differently cased value reaches an explicit `Terminate`; a port that allows only unsupported transports (for example SFTP, AzureBlobStorage) stays Blocked, and unsupported allowed transports are warned about. Two-way dynamic ports and unknown port properties stay Blocked.
+- **Reviewed defaults (assumptions, warned at import):** FTP `encryptionMode=Auto`, passive, no overwrite, credentials as Secret requirements; FILE `namingMode=Fixed`, no overwrite; SMTP host/from as configuration requirements, `port=25`, a generated subject; a computed FTP remote file name is still template-expanded by `ftp-deliver`. Adapter-property assignments on the outbound message (`FTP.*`, `SMTP.*`) are **not** translated and remain visible blockers.
+- **Static `nsoftware.FTP|SFTP [yyyy]` transports** (exact name match) now import as native `ftp-deliver`/`sftp-deliver` nodes with the existing static mapping and warnings.
+- **Measured Billing effect (indicative; stand-in config helper):** unresolved nodes BillingServiceProcess 124 -> 116 (1,011 nodes now), BatchDoubleBody 46 -> 43, BatchWithTrailer 47 -> 43. The remaining Send blockers are transmit-pipeline wrappers and ports without a unique binding. Flows stay disabled; no BizTalk equivalence is claimed.
+- **Verification:** 47 new tests (core 4, runner 1, UI 1, UDF 27, importer and end-to-end execution 14); 1,617 service tests passed and the solution built.
 
 ### Placement and UDF recommendations (record; mostly not yet built)
 

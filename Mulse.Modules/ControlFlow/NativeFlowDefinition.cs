@@ -75,12 +75,12 @@ public sealed class NativeFlowDefinition
             if (nodes.Count > 0 && depth > 32) throw new ArgumentException("Native control flow exceeds 32 nested levels.");
             foreach (var node in nodes)
             {
-                if (node is null || string.IsNullOrWhiteSpace(node.Id) || node.Id.Length > 128 || !ids.Add(node.Id) || ids.Count > 1000
+                if (node is null || string.IsNullOrWhiteSpace(node.Id) || node.Id.Length > 128 || !ids.Add(node.Id) || ids.Count > 2000
                     || node.Name is null || node.Module is null || node.Settings is null || node.Conditions is null || node.Children is null || node.Otherwise is null
                     || node.BlockReason is null || node.MessageName is null || node.Channel is null || node.CorrelationKeys is null
                     || !Enum.IsDefined(node.Kind) || node.Settings.Count > 128
                     || node.Settings.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Value is null))
-                    throw new ArgumentException("Native control flow requires at most 1000 nodes with unique IDs, known kinds and non-null fields/settings.");
+                    throw new ArgumentException("Native control flow requires at most 2000 nodes with unique IDs, known kinds and non-null fields/settings.");
                 if (node.Kind == NativeFlowNodeKind.Blocked && (!allowBlocked || string.IsNullOrWhiteSpace(node.BlockReason)))
                     throw new NotSupportedException($"Native node '{node.Id}' is unresolved: {node.BlockReason}");
                 if (node.Kind is NativeFlowNodeKind.Augment or NativeFlowNodeKind.Render or NativeFlowNodeKind.Deliver or NativeFlowNodeKind.InvokeTransform)
