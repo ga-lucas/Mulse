@@ -116,7 +116,7 @@
                 throw new JsonException("Expected a bounded typed expression tree with active operands only.");
             if (value.Fact is { } fact && (fact.Kind is not ("Metadata" or "MetadataInt32" or "MetadataBoolean" or "XmlText" or "XmlCount" or "XmlExists" or "XmlString" or "XmlInt32" or "XmlBoolean")
                 || fact.MessageName is null || fact.MetadataKey is null || fact.Steps is null || fact.Steps.Count > 32
-                || fact.Steps.Any(step => step is null || step.Name is null || step.Namespace is null)))
+                || fact.Steps.Any(step => step is null || step.Name is null || step.Namespace is null || step.FilterAttribute is null || step.FilterValue is null)))
                 throw new JsonException("Expected a bounded message fact with known kind and non-null XML path steps.");
             foreach (var operand in value.Operands) Visit(operand, depth + 1);
         }
@@ -137,12 +137,14 @@
         if (fact.MessageName.Length > 128 || fact.MessageName != fact.MessageName.Trim()) return false;
         if (fact.Kind is "Metadata" or "MetadataInt32" or "MetadataBoolean") return !string.IsNullOrWhiteSpace(fact.MetadataKey) && fact.MetadataKey.Length <= 2048 && fact.Steps.Count == 0;
         if (fact.MetadataKey.Length != 0 || fact.Steps.Count == 0
-            || (fact.Kind is "XmlString" or "XmlInt32" or "XmlBoolean") && fact.Steps.Any(step => step.Attribute)) return false;
+            || (fact.Kind is "XmlString" or "XmlInt32" or "XmlBoolean") && fact.Steps.Any(step => step.Attribute || step.Descendant || step.FilterAttribute.Length != 0)) return false;
         for (var index = 0; index < fact.Steps.Count; index++)
         {
             var step = fact.Steps[index];
             if (step.Name.Length is 0 or > 256 || step.Namespace.Length > 2048 || step.Attribute && (index == 0 || index != fact.Steps.Count - 1)) return false;
-            try { System.Xml.XmlConvert.VerifyNCName(step.Name); }
+            if (step.FilterAttribute.Length > 256 || step.FilterValue.Length > 2048 || step.FilterAttribute.Length == 0 && step.FilterValue.Length != 0
+                || (step.FilterAttribute.Length != 0 || step.Descendant) && step.Attribute || step.Descendant && index != 0) return false;
+            try { System.Xml.XmlConvert.VerifyNCName(step.Name); if (step.FilterAttribute.Length != 0) System.Xml.XmlConvert.VerifyNCName(step.FilterAttribute); }
             catch (System.Xml.XmlException) { return false; }
         }
         return true;

@@ -112,7 +112,15 @@ public sealed class NativeMessageFactTests : IDisposable
     }
 
     [Theory]
-    [InlineData("count(//Item)")]
+    [InlineData("count(/r//Item)")]
+    [InlineData("count(//Item//Sub)")]
+    [InlineData("count(//@id)")]
+    [InlineData("count(//Item[1])")]
+    [InlineData("count(//Item[@id])")]
+    [InlineData("count(//Item[@id!='a'])")]
+    [InlineData("count(//Item[@id='a' and @x='b'])")]
+    [InlineData("count(//Item/@id[.='a'])")]
+    [InlineData("count(//Item[@p:id='a'])")]
     [InlineData("count(/r/*)")]
     [InlineData("string(/r/i[1])")]
     [InlineData("string(/r/@id/child)")]

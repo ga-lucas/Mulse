@@ -55,6 +55,7 @@ internal sealed class NativeSourceMessageCatalog
                         {
                             var step = fact.Steps[index];
                             if (step.Attribute) throw new NotSupportedException("Distinguished attribute members require explicit source semantics.");
+                            if (step.Descendant || step.FilterAttribute.Length != 0) throw new NotSupportedException("Distinguished members require exact child paths, not descendant or filtered steps.");
                             var element = elements.SingleOrDefault(candidate => candidate.QualifiedName.Name == step.Name && candidate.QualifiedName.Namespace == step.Namespace)
                                 ?? throw new NotSupportedException("Distinguished field does not match an exact compiled schema path.");
                             if (element.MaxOccurs != 1)

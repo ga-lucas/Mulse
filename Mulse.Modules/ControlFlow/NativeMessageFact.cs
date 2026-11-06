@@ -14,6 +14,11 @@ public sealed class NativeXmlStep
     public string Name { get; set; } = "";
     public string Namespace { get; set; } = "";
     public bool Attribute { get; set; }
+    /// <summary>First step only: select the element at any depth (XPath <c>//name</c>) instead of as a child of the root.</summary>
+    public bool Descendant { get; set; }
+    /// <summary>Optional exact filter on an unqualified attribute of this element (XPath <c>[@name='value']</c>).</summary>
+    public string FilterAttribute { get; set; } = "";
+    public string FilterValue { get; set; } = "";
 }
 
 public sealed class NativeMessageFact
@@ -45,6 +50,13 @@ public sealed class NativeMessageFact
                 if (step is null || string.IsNullOrEmpty(step.Name) || step.Namespace is null || step.Namespace.Length > 2048
                     || step.Name.Length > 256 || step.Attribute && (index == 0 || index != Steps.Count - 1))
                     throw new ArgumentException("XML fact steps require expanded names; attributes may appear only at the end after an element.");
+                if (step.FilterAttribute is null || step.FilterValue is null || step.FilterAttribute.Length > 256 || step.FilterValue.Length > 2048
+                    || step.FilterAttribute.Length == 0 && step.FilterValue.Length != 0
+                    || (step.FilterAttribute.Length != 0 || step.Descendant) && (step.Attribute || Kind is NativeMessageFactKind.XmlString or NativeMessageFactKind.XmlInt32 or NativeMessageFactKind.XmlBoolean)
+                    || step.Descendant && index != 0)
+                    throw new ArgumentException("XML descendant selection is allowed only on the first element step and attribute filters only on element steps; typed scalars use exact child paths.");
+                try { if (step.FilterAttribute.Length != 0) XmlConvert.VerifyNCName(step.FilterAttribute); }
+                catch (XmlException exception) { throw new ArgumentException("XML fact filter attributes require valid unqualified XML local names.", exception); }
                 try { XmlConvert.VerifyNCName(step.Name); }
                 catch (XmlException exception) { throw new ArgumentException("XML fact steps require valid XML local names.", exception); }
             }
@@ -71,7 +83,10 @@ public sealed class NativeMessageFact
             var step = Steps[index];
             var name = XName.Get(step.Name, step.Namespace);
             if (step.Attribute) return Result(elements.Attributes(name).Where(attribute => !attribute.IsNamespaceDeclaration).Select(attribute => attribute.Value));
-            elements = elements.Where(element => element.Name == name).ToArray();
+            elements = step.Descendant ? document.Descendants(name) : elements.Where(element => element.Name == name);
+            if (step.FilterAttribute.Length != 0)
+                elements = elements.Where(element => element.Attribute(XName.Get(step.FilterAttribute)) is { } filter && string.Equals(filter.Value, step.FilterValue, StringComparison.Ordinal));
+            elements = Steps[0].Descendant ? elements.OrderBy(element => element, XNode.DocumentOrderComparer).ToArray() : elements.ToArray();
             if (index == Steps.Count - 1) return Result(elements.Select(element => element.Value));
             if (!Steps[index + 1].Attribute) elements = elements.Elements();
         }

@@ -86,7 +86,7 @@ The Designer exposes recursive typed operation/literal/variable controls plus th
 MetadataInt32/XmlCount/XmlInt32 (Int32), or MetadataBoolean/XmlExists/XmlBoolean (Boolean). Blank MessageName reads
 the current working batch; other names resolve only from durable named snapshots. Each requires one payload;
 missing named messages and exact metadata keys
-fail, never fall back. XML paths have 1-32 exact expanded-name steps, with an optional final attribute. XmlText
+fail, never fall back. XML paths have 1-32 exact expanded-name steps, with an optional final attribute. The first step may be `Descendant` (any depth) and element steps may set `FilterAttribute`/`FilterValue` (exact, unqualified, case-sensitive attribute equality); neither is allowed on typed scalar kinds. XmlText
 uses XPath string-value/first-node semantics (including whitespace, empty on absence); count/existence return
 zero/false on absence. XML is bounded to 1,000,000 characters, 64 levels and 50,000 nodes, with DTDs/external
 resolution prohibited. Scalar results retain the 4096-character limit. No XPath evaluator is used at runtime.
@@ -129,7 +129,7 @@ The import-time scalar reader consumes complete statements and conditions (no ar
 assumptions or source execution). Ordered source Decision branches become nested native If/Else nodes, preserving
 first-match behavior and source IDs. Unsupported predicates retain all branch bodies as Blocked review structure.
 Constant xpath(message, ...) calls support only count/string/boolean over absolute child/terminal-attribute
-paths (plain unqualified names or local-name()/namespace-uri() equality steps). Explicit ToInt32 of a count is
+paths (plain unqualified names or local-name()/namespace-uri() equality steps), an optional leading `//` and one `[@a='v']` filter per element step. Explicit ToInt32 of a count is
 safe because the bounded native count is already Int32. Comments are parsed lexically; complete source suffixes
 and overrides are preserved. Other XPath functions/axes/predicates and arbitrary CLR conversions remain blockers.
 Unique service-level scalar declarations without an initializer use language defaults (null String/zero Int32/false

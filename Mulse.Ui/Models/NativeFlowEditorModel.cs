@@ -66,6 +66,9 @@ public sealed class NativeXmlStepViewModel
     public string Name { get; set; } = "";
     public string Namespace { get; set; } = "";
     public bool Attribute { get; set; }
+    public bool Descendant { get; set; }
+    public string FilterAttribute { get; set; } = "";
+    public string FilterValue { get; set; } = "";
 }
 
 public sealed class NativeScalarViewModel

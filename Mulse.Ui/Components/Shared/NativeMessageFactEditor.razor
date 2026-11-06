@@ -22,7 +22,7 @@
     }
     else
     {
-        <p class="field-hint">Absolute path from the document root, using exact local names and namespace URIs. XmlCount returns Int32; XmlExists returns Boolean; XmlText returns the first text (empty when absent). XmlString/XmlInt32/XmlBoolean require one simple non-nil element at every step and parse the explicit XML scalar type; missing/duplicate/invalid values fail. Requires one payload. No arbitrary XPath is executed.</p>
+        <p class="field-hint">Path from the document root, using exact local names and namespace URIs. The first step may be a descendant step (//name), and each element step may carry one exact attribute filter (name = value, case-sensitive, no namespace). XmlCount returns Int32; XmlExists returns Boolean; XmlText returns the first text in document order (empty when absent). XmlString/XmlInt32/XmlBoolean require one simple non-nil element at every step, with exact child paths only, and parse the explicit XML scalar type; missing/duplicate/invalid values fail. Requires one payload. No arbitrary XPath is executed.</p>
         @foreach (var step in Value.Steps)
         {
             var index = Value.Steps.IndexOf(step);
@@ -30,6 +30,9 @@
                 <legend>XML path step @(index + 1)</legend>
                 <label class="field-label">Local name <input class="mapping-input" @bind="step.Name" @bind:after="Notify" /></label>
                 <label class="field-label">Namespace URI <input class="mapping-input" @bind="step.Namespace" @bind:after="Notify" /></label>
+                <label class="field-label"><input type="checkbox" disabled="@(TypedScalar || index != 0 || step.Attribute)" @bind="step.Descendant" @bind:after="Notify" /> Descendant (first step only: matches this element at any depth, like //name)</label>
+                <label class="field-label">Attribute filter name (optional, no namespace) <input class="mapping-input" disabled="@(TypedScalar || step.Attribute)" @bind="step.FilterAttribute" @bind:after="Notify" /></label>
+                <label class="field-label">Attribute filter value (exact, case-sensitive) <input class="mapping-input" disabled="@(TypedScalar || step.Attribute || step.FilterAttribute.Length == 0)" @bind="step.FilterValue" @bind:after="Notify" /></label>
                 <label class="field-label"><input type="checkbox" disabled="@(TypedScalar || index == 0 || index != Value.Steps.Count - 1)" @bind="step.Attribute" @bind:after="Notify" /> Attribute (final step only; typed scalars require elements)</label>
                 <button type="button" class="secondary-button" @onclick="() => RemoveStep(index)">Remove this step and descendants</button>
             </fieldset>
@@ -66,7 +69,7 @@
     {
         if (args.Value is not string kind || !AvailableKinds.Contains(kind) || kind == Value.Kind) return;
         Value.Kind = kind; Value.MetadataKey = "";
-        if (Metadata || TypedScalar && Value.Steps.Any(step => step.Attribute)) Value.Steps.Clear();
+        if (Metadata || TypedScalar && Value.Steps.Any(step => step.Attribute || step.Descendant || step.FilterAttribute.Length != 0)) Value.Steps.Clear();
         ClearSample();
         await Notify();
     }
@@ -74,10 +77,10 @@
     private async Task RemoveStep(int index) { Value.Steps.RemoveRange(index, Value.Steps.Count - index); await Notify(); }
     private async Task SelectPath(List<NativeXmlStepViewModel> path)
     {
-        Value.Steps = path.Select(step => new NativeXmlStepViewModel { Name = step.Name, Namespace = step.Namespace, Attribute = step.Attribute }).ToList();
+        Value.Steps = path.Select(step => new NativeXmlStepViewModel { Name = step.Name, Namespace = step.Namespace, Attribute = step.Attribute, Descendant = step.Descendant, FilterAttribute = step.FilterAttribute, FilterValue = step.FilterValue }).ToList();
         await Notify();
     }
-    private static string Label(List<NativeXmlStepViewModel> path) => "/" + string.Join("/", path.Select(step => (step.Attribute ? "@" : "") + (step.Namespace.Length == 0 ? "" : "{" + step.Namespace + "}") + step.Name));
+    private static string Label(List<NativeXmlStepViewModel> path) => string.Concat(path.Select(step => (step.Descendant ? "//" : "/") + (step.Attribute ? "@" : "") + (step.Namespace.Length == 0 ? "" : "{" + step.Namespace + "}") + step.Name + (step.FilterAttribute.Length == 0 ? "" : "[@" + step.FilterAttribute + "='" + step.FilterValue + "']")));
     private void InspectSample()
     {
         ClearSample();

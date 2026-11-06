@@ -390,7 +390,7 @@ null equality, and short-circuit And/Or/Not. Add **DeclareVariable** and **SetVa
 operation/type/value/variable pickers require no expression text or JSON. Variables are instance-scoped,
 explicitly initialized, and survive durable waits/restarts. They are not inferred message/XML fields.
 Choose **MessageValue** for explicit metadata or XML facts from the working payload, or a named durable message.
-XML text/count/existence selectors use exact element/attribute names and namespace URIs, not arbitrary XPath.
+XML text/count/existence selectors use exact element/attribute names and namespace URIs. The first step may be a descendant step (`//name`) and each element step may have one exact attribute filter (`[@name='value']`); there is no other XPath.
 Use **Choose XML path from a sample** and click a discovered path, or add child steps manually; the sample and
 its values are not saved. Metadata keys are exact/case-sensitive and missing keys fail. XML count/existence
 return zero/false when absent; XML text returns the first matching node's text, or empty when absent. Named
@@ -455,7 +455,7 @@ The BizTalk import panel defaults to **Generate native control-flow draft** (API
 Safe ordered containers, receives, exact named-message copies, uniquely bound sends and replies become native
 nodes. Supported scalar declarations/assignments, ordered first-match decisions and bounded loops translate to
 native expression trees, not stored source code. Complete constant XPath count/string/boolean reads of declared
-messages translate only for absolute child/final-attribute paths with exact expanded names; ToInt32(count(...))
+messages translate only for absolute child/final-attribute paths with exact expanded names, an optional leading `//` and one exact `[@a='v']` filter per element step; ToInt32(count(...))
 is supported. Exact distinguished members now resolve through uniquely owned declared XSDs, including explicit
 relative imports of other declared schema files. Supported built-in String/Int32/Boolean members compile to native
 typed selectors and writes. Complete XmlDocument.LoadXml/copy/member-assignment blocks compile to native nodes;
