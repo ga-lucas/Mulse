@@ -24,7 +24,7 @@ internal sealed class NativeSourceContextCatalog
         "BTAHL7Schemas.ToBeBatched", "BTAHL7Schemas.MSH5_1", "BTAHL7Schemas.MSH3_1", "BTAHL7Schemas.MSH2", "BTAHL7Schemas.MSH1", "BTAHL7Schemas.MessageClass",
         "BTAHL7Schemas.MessageEncoding", "BTAHL7Schemas.ParseError", "BTAHL7Schemas.ZPartPresent", "BTAHL7Schemas.SegmentDelimiter2Char",
         "FTP.UserName", "FTP.Password", "FTP.PassiveMode", "FTP.FtpsConnectionMode", "FTP.UseSsl", "FTP.UseDataProtection",
-        "FILE.Username", "FILE.Password", "MIME.FileName",
+        "FILE.Username", "FILE.Password", "MIME.FileName", "BTS.ReceivePortName",
         "SMTP.Subject", "SMTP.From", "SMTP.SMTPHost", "SMTP.SMTPAuthenticate", "SMTP.EmailBodyText", "SMTP.EmailBodyTextCharset",
         "nsoftware.BizTalk.FTP.User", "nsoftware.BizTalk.FTP.Password", "nsoftware.BizTalk.FTP.FTPServer", "nsoftware.BizTalk.FTP.RemoteFile",
         "nsoftware.BizTalk.FTP.RemotePath", "nsoftware.BizTalk.FTP.FTPPort", "nsoftware.BizTalk.FTP.SSLCertSubject", "nsoftware.BizTalk.FTP.SSLAcceptServerCertAcceptAny",

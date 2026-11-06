@@ -327,7 +327,7 @@ public sealed partial class BizTalkImportService
                         Otherwise = [new() { Id = "source-" + handlerNode.Id, Name = handlerNode.Name, Children = handler }],
                         ExceptionMessageVariable = messageVariable, ExceptionDetailsVariable = detailsVariable };
                 }
-                var children = node.Children.Select(Convert).ToList();
+                var children = node.Children.Where(child => !(node.ShapeType == "Receive" && child.ShapeType == "DNFPredicate")).Select(Convert).ToList();
                 var translated = new NativeFlowNode { Id = "source-" + node.Id, Name = node.Name.Length == 0 ? node.ShapeType : node.Name, Children = children };
                 switch (node.ShapeType)
                 {
@@ -336,6 +336,9 @@ public sealed partial class BizTalkImportService
                     case "Module": case "PortType": case "OperationDeclaration": case "PortDeclaration":
                     case "PhysicalBindingAttribute": case "LogicalBindingAttribute": case "PropertyRef":
                     case "CorrelationType": case "PartDeclaration": case "MultipartMessageType":
+                    case "DirectBindingAttribute" when node.Properties.GetValueOrDefault("DirectBindingType") == "MessageBox":
+                        if (node.ShapeType == "DirectBindingAttribute")
+                            Warn("Ports bound directly to the MessageBox (publish/subscribe) are kept as named declarations. A Receive on such a port keeps its channel and translated filter as native conditions, but nothing here publishes or subscribes: the host must deliver messages with the port name as 'channel' metadata and the filter properties as metadata. Outbound direct-bound Sends stay blocked until a native publish route is configured.");
                         // Contract/wiring declarations carry no execution semantics; wiring is resolved from bindings (Send) or channel names (Receive).
                         translated.Name = node.ShapeType + ": " + translated.Name;
                         return translated;
@@ -442,10 +445,17 @@ public sealed partial class BizTalkImportService
                     case "Receive":
                         if (node.Properties.Any(pair => pair.Key.Contains("Correlation", StringComparison.Ordinal) || pair.Key.Contains("Filter", StringComparison.Ordinal))
                             || children.Count != 0)
-                            return Block(node, "Source receive filters/correlation declarations require explicit native channel and promoted-metadata bindings.", children);
+                            return Block(node, "Source receive correlation declarations require explicit native channel and promoted-metadata bindings.", children);
                         var message = node.Properties.GetValueOrDefault("MessageName", "");
                         var channel = node.Properties.GetValueOrDefault("PortName", "");
                         if (message.Length == 0 || channel.Length == 0) return Block(node, "Receive has no exact message/port identity.");
+                        var filterPredicates = node.Children.Where(child => child.ShapeType == "DNFPredicate").ToArray();
+                        if (filterPredicates.Length > 0)
+                        {
+                            try { translated.Conditions = TranslateReceiveFilter(filterPredicates, message, contextCatalog); }
+                            catch (NotSupportedException exception) { return Block(node, "Receive filter is not translated: " + exception.Message); }
+                            Warn("Receive filters become native receive conditions on promoted-metadata keys. Native comparisons are case-insensitive (BizTalk filters are case-sensitive), and Exists requires a non-blank value (BizTalk tests presence). The host must supply the channel and these metadata keys, and unmatched messages are rejected rather than routed elsewhere; review each filter.");
+                        }
                         translated.Kind = NativeFlowNodeKind.Receive; translated.MessageName = message; translated.Channel = channel;
                         return translated;
                     case "Send":
