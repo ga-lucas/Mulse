@@ -400,7 +400,7 @@ Review these deliberate limits before enabling any imported flow:
 - `Try` catches faults raised by its body only. It does not catch `Terminate`, failed Deliver/Augment/Render effects, persistence faults, cancellation, or faults that cross a ForEach, Receive or Wait.
 - `StackTrace` is the exception type name plus message, not a CLR stack trace.
 - Typed catches, several catches, fault-message catches and assignments to `ex.*` stay Blocked.
-- Correlation sets (`CorrelationDeclaration`/`StatementRef`) and receive filters remain Blocked nodes; correlation must be configured by hand.
+- Correlation sets (`CorrelationDeclaration`/`StatementRef`) that are only initialized by a Send and never followed (all 14 in BillingServiceProcess) import as named "(not enforced)" evidence: BizTalk's promoted-property requirement on the sent message is not enforced and nothing subscribes later. Followed sets (the batch flows' Receive First/Next pair), receive filters and any set that cannot be proven stay Blocked nodes; correlation must be configured by hand.
 
 Re-measured against the Billing sample (stand-in config helper, so indicative): BillingServiceProcess unresolved nodes 136 -> 126, BatchDoubleBody 54 -> 46, BatchWithTrailer 60 -> 48. Imported flows stay disabled and no BizTalk equivalence is claimed.
 

@@ -203,6 +203,28 @@ public sealed partial class BizTalkImportService
                 }
                 return translated;
             }
+            // A correlation set that is only ever initialized by Send shapes of this service and never followed has no native effect; BizTalk's property-promotion requirement is not enforced.
+            var sourceShapes = FlattenNativeSource(source.Roots).Where(shape => shape.SourceId.Length > 0).GroupBy(shape => shape.SourceId, StringComparer.Ordinal)
+                .Where(group => group.Count() == 1).ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal);
+            var correlationTypes = FlattenNativeSource(source.Roots).Where(shape => shape.ShapeType == "CorrelationType" && shape.Name.Length > 0).ToArray();
+            var inertCorrelations = new Dictionary<int, string>();
+            var inertCorrelationRefs = new HashSet<int>();
+            foreach (var declaration in FlattenNativeSource(source.Roots).Where(shape => shape.ShapeType == "CorrelationDeclaration"))
+            {
+                var typeName = declaration.Properties.GetValueOrDefault("Type", "");
+                var senders = new List<string>();
+                var inert = declaration.Name.Length > 0 && declaration.Properties.GetValueOrDefault("ParamDirection", "In") == "In"
+                    && correlationTypes.Count(type => typeName == type.Name || typeName.EndsWith("." + type.Name, StringComparison.Ordinal)) == 1;
+                foreach (var reference in declaration.Children)
+                {
+                    if (inert && reference.ShapeType == "StatementRef" && reference.Children.Count == 0 && reference.Properties.GetValueOrDefault("Initializes") == "True"
+                        && sourceShapes.TryGetValue(reference.Properties.GetValueOrDefault("Ref", ""), out var target) && target.ShapeType == "Send") senders.Add(target.Name);
+                    else inert = false;
+                }
+                if (!inert) continue;
+                inertCorrelations[declaration.Id] = senders.Count == 0 ? "declared, unused" : "initialized by Send " + string.Join(", ", senders.Distinct(StringComparer.Ordinal).Select(name => "'" + name + "'")) + ", never followed";
+                foreach (var reference in declaration.Children) inertCorrelationRefs.Add(reference.Id);
+            }
             NativeFlowNode Convert(OdxNode node)
             {
                 if (node.ShapeType == "Decision")
@@ -456,6 +478,15 @@ public sealed partial class BizTalkImportService
                                 Kind = NativeFlowNodeKind.Augment, Module = "xml-rules-augment", Settings = new() { ["policyJson"] = proposal, ["factMode"] = "Metadata", ["metadataPrefix"] = "rules." } });
                         return Block(node, latest is null ? "Called policy is absent from supplied exports." :
                             "Policy proposal is attached, but CallRules input/output fact bindings and source version resolution require review. Latest exported version is not deployed proof.", children);
+                    case "CorrelationDeclaration" when inertCorrelations.TryGetValue(node.Id, out var correlationEvidence):
+                        translated.Name = "CorrelationDeclaration (not enforced): " + node.Name + " - " + correlationEvidence;
+                        Warn("Correlation sets that are only initialized by a Send and never followed are kept as named evidence; they do not change native behavior. BizTalk's requirement that the sent message carries the set's promoted properties is not enforced, and nothing here subscribes a later Receive. Review any external consumer that relied on these sets.");
+                        return translated;
+                    case "StatementRef" when inertCorrelationRefs.Contains(node.Id):
+                        translated.Name = "StatementRef (not enforced): " + node.Name;
+                        return translated;
+                    case "CorrelationDeclaration":
+                        return Block(node, "Correlation set is followed by a Receive, is initialized by a non-Send statement, or its type or statements could not be proven; it needs explicit native channel and correlation-key bindings.", children);
                     case "LongRunningTransaction": case "AtomicTransaction": case "TransactionAttribute":
                         if (children.Count != 0) return Block(node, $"{node.ShapeType} contains unsupported nested behavior.", children);
                         var transactionSettings = string.Join("; ", node.Properties.Where(pair => pair.Key is not ("Name" or "Signal" or "ReportToAnalyst")).OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Key + "=" + pair.Value));
