@@ -51,6 +51,143 @@ public sealed class NativeDurableUiTests
     }
 
     [Fact]
+    public async Task TerminateCanBeEditedSavedAndReopened()
+    {
+        var model = new NativeFlowEditorModel { Durable = true };
+        var editor = new NativeFlowNodesEditor(); Set(editor, nameof(editor.Nodes), model.Nodes);
+        string saved = "";
+        Set(editor, nameof(editor.Changed), EventCallback.Factory.Create(new object(), () => saved = JsonSerializer.Serialize(model, Json)));
+        await Invoke(editor, "Add"); var node = model.Nodes.Single();
+        await Invoke(editor, "ChangeKind", node, "Terminate"); node.TerminateMessage = "Stop here"; await Invoke(editor, "Notify");
+        Assert.Equal("Stop here", NativeFlowDefinition.Read(saved).Nodes.Single().TerminateMessage);
+        var html = await Render(saved, []);
+        Assert.Contains("Termination message", html); Assert.Contains("Stop here", html);
+        Assert.DoesNotContain("Original JSON is preserved", html); Assert.DoesNotContain("Some nodes are incomplete", html);
+        node.TerminateMessage = new string('x', 2001); await Invoke(editor, "Notify");
+        Assert.Contains("Some nodes are incomplete", await Render(saved, []));
+        await Invoke(editor, "ChangeKind", node, "Sequence");
+        Assert.Null(NativeFlowDefinition.Read(saved).Nodes.Single().TerminateMessage);
+    }
+
+    [Fact]
+    public async Task TryCanBeEditedSavedAndReopened()
+    {
+        var model = new NativeFlowEditorModel { Durable = true };
+        var editor = new NativeFlowNodesEditor(); Set(editor, nameof(editor.Nodes), model.Nodes);
+        string saved = "";
+        Set(editor, nameof(editor.Changed), EventCallback.Factory.Create(new object(), () => saved = JsonSerializer.Serialize(model, Json)));
+        await Invoke(editor, "Add"); var node = model.Nodes.Single();
+        await Invoke(editor, "ChangeKind", node, "Try");
+        await Invoke(editor, "SetExceptionVariable", node, false, "failure");
+        await Invoke(editor, "SetExceptionVariable", node, true, "failureDetails");
+        node.Children.Add(new() { Kind = "Terminate", TerminateMessage = "body" });
+        node.Otherwise.Add(new() { Kind = "Terminate", TerminateMessage = "handler" });
+        await Invoke(editor, "Notify");
+        var read = NativeFlowDefinition.Read(saved).Nodes.Single();
+        Assert.Equal(NativeFlowNodeKind.Try, read.Kind);
+        Assert.Equal("failure", read.ExceptionMessageVariable); Assert.Equal("failureDetails", read.ExceptionDetailsVariable);
+        Assert.Single(read.Children); Assert.Single(read.Otherwise);
+        var html = await Render(saved, []);
+        Assert.Contains("Catch handler", html); Assert.Contains("Exception message variable", html);
+        Assert.DoesNotContain("Original JSON is preserved", html); Assert.DoesNotContain("Some nodes are incomplete", html);
+        await Invoke(editor, "SetExceptionVariable", node, true, "failure");
+        Assert.Contains("Some nodes are incomplete", await Render(saved, []));
+        await Invoke(editor, "ChangeKind", node, "Sequence"); node.Otherwise.Clear(); await Invoke(editor, "Notify");
+        Assert.Null(NativeFlowDefinition.Read(saved).Nodes.Single().ExceptionMessageVariable);
+    }
+
+    [Fact]
+    public async Task InvokeTransformCanBeEditedSavedAndReopenedAndValidatesItsModuleKind()
+    {
+        var model = new NativeFlowEditorModel { Durable = true };
+        var modules = new ModuleViewModel[] { new("upper-udf", "Upper UDF", "Transform", "Test", [], [], [], []), new("sink", "Sink", "Deliver", "Test", [], [], [], []) };
+        var editor = new NativeFlowNodesEditor(); Set(editor, nameof(editor.Nodes), model.Nodes); Set(editor, nameof(editor.Modules), modules);
+        string saved = "";
+        Set(editor, nameof(editor.Changed), EventCallback.Factory.Create(new object(), () => saved = JsonSerializer.Serialize(model, Json)));
+        await Invoke(editor, "Add"); var declare = model.Nodes.Single();
+        await Invoke(editor, "ChangeKind", declare, "DeclareVariable"); declare.Variable = "name"; declare.Expression!.Literal!.Value = "";
+        await Invoke(editor, "Add"); var node = model.Nodes.Last();
+        await Invoke(editor, "ChangeKind", node, "InvokeTransform"); node.Variable = "name";
+        await Invoke(editor, "ChangeModule", node, "upper-udf");
+        node.TransformInputs![0].Literal!.Value = "abc";
+        await Invoke(editor, "AddTransformInput", node); node.TransformInputs[1].Literal!.Value = "def";
+        await Invoke(editor, "Notify");
+        var read = NativeFlowDefinition.Read(saved).Nodes[1];
+        Assert.Equal(NativeFlowNodeKind.InvokeTransform, read.Kind);
+        Assert.Equal("upper-udf", read.Module); Assert.Equal("name", read.Variable); Assert.Equal(2, read.TransformInputs!.Count);
+        var html = await Render(saved, modules);
+        Assert.Contains("Result variable", html); Assert.Contains("Argument 2", html); Assert.Contains("Upper UDF", html);
+        Assert.DoesNotContain("Original JSON is preserved", html); Assert.DoesNotContain("Some nodes are incomplete", html);
+        await Invoke(editor, "RemoveTransformInput", node, 1); Assert.Single(NativeFlowDefinition.Read(saved).Nodes[1].TransformInputs!);
+        await Invoke(editor, "ChangeModule", node, "sink");
+        Assert.Contains("Some nodes are incomplete", await Render(saved, modules));
+        await Invoke(editor, "ChangeKind", node, "Sequence");
+        var reopened = NativeFlowDefinition.Read(saved).Nodes[1];
+        Assert.Null(reopened.TransformInputs); Assert.Null(reopened.Variable);
+    }
+
+    [Fact]
+    public async Task DeliverDynamicSettingsCanBeAddedRenamedRemovedAndReopened()
+    {
+        var model = new NativeFlowEditorModel { Durable = true };
+        var settings = new ModuleSettingViewModel[] { new("host", "Host", "", true, "Text", "default-host", []), new("remotePath", "Remote path", "", false, "Text", "/", []) };
+        var modules = new ModuleViewModel[] { new("sink", "Sink", "Deliver", "Test", settings, [], [], []) };
+        var editor = new NativeFlowNodesEditor(); Set(editor, nameof(editor.Nodes), model.Nodes); Set(editor, nameof(editor.Modules), modules);
+        string saved = "";
+        Set(editor, nameof(editor.Changed), EventCallback.Factory.Create(new object(), () => saved = JsonSerializer.Serialize(model, Json)));
+        await Invoke(editor, "Add"); var node = model.Nodes.Single();
+        await Invoke(editor, "ChangeKind", node, "Deliver"); await Invoke(editor, "ChangeModule", node, "sink"); node.MessageName = "source";
+        Assert.True(node.Settings.ContainsKey("host"));
+        await Invoke(editor, "AddSettingExpression", node);
+        Assert.False(node.Settings.ContainsKey("host")); Assert.True(node.SettingExpressions!.ContainsKey("host"));
+        node.SettingExpressions["host"].Literal!.Value = "sftp.example.test"; await Invoke(editor, "Notify");
+        var read = NativeFlowDefinition.Read(saved).Nodes.Single();
+        Assert.True(read.SettingExpressions!.ContainsKey("host")); Assert.False(read.Settings.ContainsKey("host"));
+        var html = await Render(saved, modules);
+        Assert.Contains("Dynamic settings", html); Assert.DoesNotContain("Original JSON is preserved", html); Assert.DoesNotContain("Some nodes are incomplete", html);
+        await Invoke(editor, "RenameSettingExpression", node, "host", "remotePath");
+        Assert.True(node.SettingExpressions.ContainsKey("remotePath")); Assert.False(node.Settings.ContainsKey("remotePath"));
+        await Invoke(editor, "RemoveSettingExpression", node, "remotePath");
+        Assert.Null(node.SettingExpressions); Assert.Equal("/", node.Settings["remotePath"]);
+        Assert.Null(NativeFlowDefinition.Read(saved).Nodes.Single().SettingExpressions);
+    }
+
+    [Fact]
+    public async Task NamedAugmentCanBeEditedAndReopened()
+    {
+        var model = new NativeFlowEditorModel { Durable = true, Nodes = [new() { Kind = "Augment", Module = "augment" }] };
+        var node = model.Nodes.Single(); var editor = new NativeFlowNodesEditor(); Set(editor, nameof(editor.Nodes), model.Nodes);
+        await Invoke(editor, "ChangeRenderMode", node, "Named"); await Invoke(editor, "ChangeRenderInput", node, 0, "source");
+        node.MessageName = "output";
+        var saved = JsonSerializer.Serialize(model, Json);
+        Assert.Equal("source", Assert.Single(NativeFlowDefinition.Read(saved).Nodes.Single().InputMessages!));
+        var modules = new ModuleViewModel[] { new("augment", "Test augment", "OrchestrationAugment", "Test", [], [], [], []) };
+        var html = await Render(saved, modules);
+        Assert.Contains("Augment message mode", html); Assert.Contains("One named input to named output", html);
+        Assert.DoesNotContain("Some nodes are incomplete", html); Assert.DoesNotContain("Original JSON is preserved", html);
+        node.InputMessages!.Add("another");
+        Assert.Contains("Some nodes are incomplete", await Render(JsonSerializer.Serialize(model, Json), modules));
+        await Invoke(editor, "ChangeRenderMode", node, "Working");
+        Assert.Null(node.InputMessages); Assert.Equal("", node.MessageName);
+    }
+
+    [Fact]
+    public async Task NestedBlockersAreListedWithLinksToTheirEditableNodes()
+    {
+        var model = new NativeFlowEditorModel { Durable = true, Nodes = [new() { Id = "outer", Kind = "If", Name = "Choice", Conditions = [new()], Children = [
+            new() { Id = "inner", Kind = "Blocked", Name = "Unsupported delay", BlockReason = "Needs a duration" }], Otherwise = [
+            new() { Id = "other", Kind = "Blocked", Name = "Unsupported delay", BlockReason = "Needs another duration" }] }] };
+        var html = await Render(JsonSerializer.Serialize(model, Json), []);
+        Assert.Contains("Unresolved native nodes (2)", html);
+        Assert.Contains("Choice / Then / Unsupported delay", html); Assert.Contains("Choice / Else / Unsupported delay", html);
+        Assert.Contains("(inner)", html); Assert.Contains("(other)", html); Assert.Contains("Needs a duration", html);
+        var match = System.Text.RegularExpressions.Regex.Match(html, "href=\"#(?<id>native-node-[a-f0-9]+-inner)\"");
+        Assert.True(match.Success, html);
+        Assert.Contains("id=\"" + match.Groups["id"].Value + "\"", html);
+        Assert.Contains("execution is not approved by editing", html);
+    }
+
+    [Fact]
     public async Task ScratchXmlConstructionAndWriteTargetsCanBeAuthoredWithGraphicalCallbacksAndSampleClicks()
     {
         var model = new NativeFlowEditorModel { Durable = true };

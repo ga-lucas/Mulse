@@ -4,9 +4,14 @@ using Mulse.Modules.Abstractions;
 using Mulse.Modules.Execution;
 using Mulse.Modules.Sdk;
 
-namespace Mulse.Billing;
+namespace Mulse.CompatibilityPack;
 
-public static class BillingFilename
+/// <summary>
+/// Expands filename templates that use bracketed macros such as <c>[DATE(yyyyMMdd)]</c>, <c>[UTCDATETIME(fmt)]</c>,
+/// <c>[DAY(n)]</c>, <c>[GUID]</c>, <c>[TICKS]</c> and <c>[SECONDS]</c>. The syntax is the one used by the legacy
+/// SpaceTRAX FilenameMaker helper; it is not the BizTalk file-adapter %macro% syntax.
+/// </summary>
+public static class FilenameTemplate
 {
     private static readonly Regex Token = new(@"\[(?:(?<date>DATE|DATETIME|UTCDATETIME|UTCTIME|TIME|DAY)\((?<format>[A-Za-z0-9_.,-]*)\)|(?<simple>GUID|TICKS|SECONDS))\]", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     private static readonly Regex Unexpanded = new(@"\[(?:DATE|DATETIME|UTCDATETIME|UTCTIME|TIME|DAY|GUID|TICKS|SECONDS)(?:\b|\()", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
@@ -18,7 +23,7 @@ public static class BillingFilename
 
     public static string Expand(string template, DateTimeOffset instant, TimeZoneInfo timeZone, CultureInfo culture, Guid guid)
     {
-        if (template is null || template.Length > 4096) throw new ArgumentException("Billing filename templates must not exceed 4096 characters.");
+        if (template is null || template.Length > 4096) throw new ArgumentException("Filename templates must not exceed 4096 characters.");
         ArgumentNullException.ThrowIfNull(timeZone);
         ArgumentNullException.ThrowIfNull(culture);
         var local = TimeZoneInfo.ConvertTime(instant, timeZone).DateTime;
@@ -40,15 +45,15 @@ public static class BillingFilename
                     "GUID" => guid.ToString("D"),
                     "TICKS" => local.Ticks.ToString(culture),
                     "SECONDS" => (local - new DateTime(2001, 1, 1)).TotalSeconds.ToString("0", culture),
-                    _ => throw new ArgumentException("Unsupported Billing filename macro.")
+                    _ => throw new ArgumentException("Unsupported filename macro.")
                 };
                 replacements.Add(match.Value, value);
             }
             length = checked(length + value.Length - match.Length);
-            if (length > 4096) throw new ArgumentException("Expanded Billing filename exceeds 4096 characters.");
+            if (length > 4096) throw new ArgumentException("Expanded filename exceeds 4096 characters.");
             return value;
         });
-        if (Unexpanded.IsMatch(result)) throw new ArgumentException("Billing filename contains an invalid or unsupported macro format; no unresolved token was accepted.");
+        if (Unexpanded.IsMatch(result)) throw new ArgumentException("Filename contains an invalid or unsupported macro format; no unresolved token was accepted.");
         return result;
     }
 

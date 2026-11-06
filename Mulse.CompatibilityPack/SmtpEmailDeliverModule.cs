@@ -22,7 +22,8 @@ public sealed class SmtpEmailDeliverModule : IDeliverModule
         new("username", "Username", "Optional SMTP username.", false),
         new("password", "Password", "Optional SMTP password.", false),
         new("attachPayload", "Attach payload", "Attaches the rendered payload to the email when enabled.", false, ModuleSettingInputKind.Boolean, "true"),
-        new("usePayloadAsBody", "Use payload as body", "Uses the payload text as the email body when enabled and the payload is text-like.", false, ModuleSettingInputKind.Boolean, "false")
+        new("usePayloadAsBody", "Use payload as body", "Uses the payload text as the email body when enabled and the payload is text-like.", false, ModuleSettingInputKind.Boolean, "false"),
+        new("attachmentNameMetadataKey", "Attachment name metadata key", "Optional exact metadata key (for example '{urn:mime}FileName', as written by the Billing set-property step) whose value names the attachment. Falls back to the payload name when absent or empty.", false)
     ];
 
     private static readonly ModuleRecommendationProfile Recommendation = new(
@@ -55,6 +56,7 @@ public sealed class SmtpEmailDeliverModule : IDeliverModule
         var password = ModuleSettings.GetOptional(step.Settings, "password");
         var attachPayload = ModuleSettings.GetBoolean(step.Settings, "attachPayload", defaultValue: true, Descriptor.Id);
         var usePayloadAsBody = ModuleSettings.GetBoolean(step.Settings, "usePayloadAsBody", defaultValue: false, Descriptor.Id);
+        var attachmentNameKey = ModuleSettings.GetOptional(step.Settings, "attachmentNameMetadataKey");
 
         using var client = new SmtpClient(host, port)
         {
@@ -85,7 +87,11 @@ public sealed class SmtpEmailDeliverModule : IDeliverModule
             if (attachPayload)
             {
                 var attachmentStream = new MemoryStream(payload.Content.ToArray());
-                var attachment = new Attachment(attachmentStream, payload.Name, payload.ContentType);
+                var attachmentName = !string.IsNullOrWhiteSpace(attachmentNameKey)
+                    && payload.Metadata.TryGetValue(attachmentNameKey, out var named) && !string.IsNullOrWhiteSpace(named)
+                    ? named
+                    : payload.Name;
+                var attachment = new Attachment(attachmentStream, attachmentName, payload.ContentType);
                 message.Attachments.Add(attachment);
             }
 

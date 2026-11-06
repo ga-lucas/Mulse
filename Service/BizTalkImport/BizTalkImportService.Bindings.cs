@@ -125,8 +125,66 @@ public sealed partial class BizTalkImportService
             transportType,
             address,
             receivePipeline,
-            ParseTransportProperties(transportData));
+            ParseTransportProperties(transportData))
+        {
+            Operational = new ReceiveLocationOperationalSettings
+            {
+                Enabled = !string.Equals(ChildText(locationElement, "Enable"), "false", StringComparison.OrdinalIgnoreCase),
+                ServiceWindowEnabled = ChildBool(locationElement, "ReceiveLocationServiceWindowEnabled"),
+                ServiceWindowFrom = ChildText(locationElement, "ReceiveLocationFromTime"),
+                ServiceWindowTo = ChildText(locationElement, "ReceiveLocationToTime"),
+                ScheduleRecurrenceType = ChildText(locationElement, "ScheduleRecurrenceType"),
+                StartDateEnabled = ChildBool(locationElement, "ReceiveLocationStartDateEnabled"),
+                EndDateEnabled = ChildBool(locationElement, "ReceiveLocationEndDateEnabled"),
+                HasPipelineConfiguration = ParsePipelineProperties(ChildText(locationElement, "ReceivePipelineData")).Count > 0
+            }
+        };
     }
+
+    private static string ChildText(XElement parent, string name)
+        => parent.Elements().FirstOrDefault(element => string.Equals(element.Name.LocalName, name, StringComparison.Ordinal))?.Value.Trim() ?? string.Empty;
+
+    private static bool ChildBool(XElement parent, string name)
+        => bool.TryParse(ChildText(parent, name), out var value) && value;
+
+    private static XElement? ChildElement(XElement parent, string name)
+        => parent.Elements().FirstOrDefault(element => string.Equals(element.Name.LocalName, name, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Extracts component property assignments from a BizTalk <c>ReceivePipelineData</c>/<c>SendPipelineData</c>
+    /// document as <c>Component: Property=Value</c> lines. Secret-looking properties are reported by name only.
+    /// </summary>
+    private static IReadOnlyList<string> ParsePipelineProperties(string? pipelineData)
+    {
+        if (string.IsNullOrWhiteSpace(pipelineData))
+        {
+            return [];
+        }
+
+        try
+        {
+            var document = XDocument.Parse(pipelineData, LoadOptions.None);
+            var lines = new List<string>();
+            foreach (var component in document.Descendants().Where(static element => element.Name.LocalName == "Component"))
+            {
+                var componentName = component.Attribute("Name")?.Value ?? "Component";
+                foreach (var property in component.Elements().Where(static element => element.Name.LocalName == "Properties").Elements())
+                {
+                    var secret = SecretPropertyPattern.IsMatch(property.Name.LocalName);
+                    lines.Add($"{componentName}: {property.Name.LocalName}={(secret ? "(secret not exported)" : property.Value.Trim())}");
+                }
+            }
+
+            return lines;
+        }
+        catch (System.Xml.XmlException)
+        {
+            return [];
+        }
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex SecretPropertyPattern =
+        new("password|secret|passphrase|private|credential|token", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
     private static SendPortAnalysis ParseSendPort(XElement sendPortElement)
     {
@@ -151,7 +209,67 @@ public sealed partial class BizTalkImportService
             ParseIsTwoWay(sendPortElement),
             ParseTransportProperties(transportData),
             retryCount,
-            retryIntervalMinutes);
+            retryIntervalMinutes)
+        {
+            Operational = ParseSendPortOperational(sendPortElement, primaryTransport),
+            IsDynamic = string.Equals(sendPortElement.Attribute("IsStatic")?.Value, "false", StringComparison.OrdinalIgnoreCase),
+            DynamicTransportTypes = [.. sendPortElement.Descendants().Where(static element => element.Name.LocalName == "DynamicSendHanders")
+                .SelectMany(static handlers => handlers.Descendants().Where(static element => element.Name.LocalName == "TransportType"))
+                .Select(static element => element.Attribute("Name")?.Value ?? "").Where(static name => name.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)]
+        };
+    }
+
+    private static SendPortOperationalSettings ParseSendPortOperational(XElement sendPortElement, XElement? primaryTransport)
+    {
+        var secondary = ChildElement(sendPortElement, "SecondaryTransport");
+        var secondaryAddress = secondary is null ? string.Empty : ChildText(secondary, "Address");
+        var sendPipelineData = ParsePipelineProperties(ChildText(sendPortElement, "SendPipelineData"));
+        var receivePipelineData = ParsePipelineProperties(ChildText(sendPortElement, "ReceivePipelineData"));
+        return new SendPortOperationalSettings
+        {
+            OrderedDelivery = ChildBool(sendPortElement, "OrderedDelivery"),
+            StopSendingOnFailure = ChildBool(sendPortElement, "StopSendingOnFailure"),
+            RouteFailedMessage = ChildBool(sendPortElement, "RouteFailedMessage"),
+            Priority = int.TryParse(ChildText(sendPortElement, "Priority"), out var priority) ? priority : 5,
+            Tracking = int.TryParse(ChildText(sendPortElement, "Tracking"), out var tracking) ? tracking : 0,
+            ServiceWindowEnabled = primaryTransport is not null && ChildBool(primaryTransport, "ServiceWindowEnabled"),
+            ServiceWindowFrom = primaryTransport is null ? string.Empty : ChildText(primaryTransport, "FromTime"),
+            ServiceWindowTo = primaryTransport is null ? string.Empty : ChildText(primaryTransport, "ToTime"),
+            DeliveryNotification = primaryTransport is null ? string.Empty : ChildText(primaryTransport, "DeliveryNotification"),
+            SecondaryTransportType = secondary?.Descendants().FirstOrDefault(static element => element.Name.LocalName == "TransportType")?.Attribute("Name")?.Value ?? string.Empty,
+            SecondaryAddress = secondaryAddress,
+            HasSendPipelineConfiguration = sendPipelineData.Count > 0,
+            HasReceivePipelineConfiguration = receivePipelineData.Count > 0,
+            HasInboundTransforms = ChildElement(sendPortElement, "InboundTransforms") is { HasElements: true },
+            HasOutboundTransforms = ChildElement(sendPortElement, "Transforms") is { HasElements: true },
+            PipelineProperties = [.. sendPipelineData, .. receivePipelineData],
+            PipelineComponents = ParsePipelineComponents(ChildText(sendPortElement, "SendPipelineData"))
+        };
+    }
+
+    private static IReadOnlyList<PipelineComponentConfig> ParsePipelineComponents(string? pipelineData)
+    {
+        if (string.IsNullOrWhiteSpace(pipelineData))
+        {
+            return [];
+        }
+
+        try
+        {
+            return XDocument.Parse(pipelineData, LoadOptions.None).Descendants()
+                .Where(static element => element.Name.LocalName == "Component")
+                .Select(static component => new PipelineComponentConfig(
+                    component.Attribute("Name")?.Value ?? string.Empty,
+                    component.Elements().Where(static element => element.Name.LocalName == "Properties").Elements()
+                        .Where(static property => !SecretPropertyPattern.IsMatch(property.Name.LocalName))
+                        .GroupBy(static property => property.Name.LocalName, StringComparer.Ordinal)
+                        .ToDictionary(static group => group.Key, static group => group.First().Value.Trim(), StringComparer.Ordinal)))
+                .ToArray();
+        }
+        catch (System.Xml.XmlException)
+        {
+            return [];
+        }
     }
 
     private static int ParseNonNegativeInt(string? value)
@@ -170,17 +288,61 @@ public sealed partial class BizTalkImportService
         try
         {
             var transportDocument = XDocument.Parse(transportData, LoadOptions.None);
-            return transportDocument.Root?.Elements()
+            var properties = transportDocument.Root?.Elements()
                 .GroupBy(static element => element.Name.LocalName, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(
                     static group => group.Key,
                     static group => group.Last().Value,
                     StringComparer.OrdinalIgnoreCase)
                 ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // nsoftware adapters store their whole configuration as an escaped <Config> document inside AdapterConfig.
+            if (properties.TryGetValue("AdapterConfig", out var adapterConfig) && !string.IsNullOrWhiteSpace(adapterConfig))
+            {
+                try
+                {
+                    var config = XDocument.Parse(adapterConfig, LoadOptions.None);
+                    if (config.Root is not null)
+                    {
+                        FlattenAdapterConfig(config.Root, string.Empty, properties);
+                    }
+                }
+                catch (XmlException)
+                {
+                    // Keep the raw AdapterConfig value; unparsable adapter configuration is reported by the caller.
+                }
+            }
+
+            return properties;
         }
         catch (XmlException)
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>
+    /// Flattens a nested adapter configuration into dotted keys (e.g. <c>SSHAcceptServerHostKey.AcceptAny</c>). Masked
+    /// (all-asterisk) values are skipped because BizTalk never exports secrets; a top-level leaf also keeps its bare name.
+    /// </summary>
+    private static void FlattenAdapterConfig(XElement element, string prefix, IDictionary<string, string> target)
+    {
+        foreach (var child in element.Elements())
+        {
+            var key = prefix.Length == 0 ? child.Name.LocalName : prefix + "." + child.Name.LocalName;
+            if (child.HasElements)
+            {
+                FlattenAdapterConfig(child, key, target);
+                continue;
+            }
+
+            var value = child.Value.Trim();
+            if (value.Length == 0 || value.All(static character => character == '*'))
+            {
+                continue;
+            }
+
+            target[key] = value;
         }
     }
 

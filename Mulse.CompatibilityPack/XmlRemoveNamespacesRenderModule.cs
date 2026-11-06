@@ -5,12 +5,12 @@ using Mulse.Modules.Mapping;
 using Mulse.Modules.Payloads;
 using Mulse.Modules.Pipeline;
 
-namespace Mulse.Billing;
+namespace Mulse.CompatibilityPack;
 
-public sealed class BillingRemoveNamespacesRenderModule : IRenderModule
+public sealed class XmlRemoveNamespacesRenderModule : IRenderModule
 {
-    public ModuleDescriptor Descriptor { get; } = new("billing-remove-namespaces-render", "Billing XML - remove namespaces", ModuleKind.Render,
-        "Native equivalent of the supplied namespace-removal stylesheet: removes element/attribute namespace identities while retaining text, CDATA, comments and processing instructions. Attribute-name collisions fail rather than losing data.", []);
+    public ModuleDescriptor Descriptor { get; } = new("xml-remove-namespaces-render", "XML - remove namespaces", ModuleKind.Render,
+        "Native equivalent of a namespace-removal stylesheet: removes element/attribute namespace identities while retaining text, CDATA, comments and processing instructions. Attribute-name collisions fail rather than losing data.", []);
 
     public Task<IntegrationBatch> RenderAsync(FlowExecutionContext context, IntegrationBatch batch, ModuleStepDefinition step, CancellationToken cancellationToken)
     {

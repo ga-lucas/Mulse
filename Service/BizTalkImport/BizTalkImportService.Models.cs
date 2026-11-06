@@ -57,7 +57,48 @@ public sealed partial class BizTalkImportService
         string TransportType,
         string Address,
         string ReceivePipeline,
-        IReadOnlyDictionary<string, string> TransportProperties);
+        IReadOnlyDictionary<string, string> TransportProperties)
+    {
+        public ReceiveLocationOperationalSettings Operational { get; init; } = new();
+    }
+
+    /// <summary>BizTalk receive-location behavior that has no single Mulse equivalent and must be reviewed or configured.</summary>
+    internal sealed record ReceiveLocationOperationalSettings
+    {
+        public bool Enabled { get; init; } = true;
+        public bool ServiceWindowEnabled { get; init; }
+        public string ServiceWindowFrom { get; init; } = string.Empty;
+        public string ServiceWindowTo { get; init; } = string.Empty;
+        public string ScheduleRecurrenceType { get; init; } = string.Empty;
+        public bool StartDateEnabled { get; init; }
+        public bool EndDateEnabled { get; init; }
+        public bool HasPipelineConfiguration { get; init; }
+    }
+
+    /// <summary>BizTalk send-port behavior that has no single Mulse equivalent and must be reviewed or configured.</summary>
+    internal sealed record SendPortOperationalSettings
+    {
+        public bool OrderedDelivery { get; init; }
+        public bool StopSendingOnFailure { get; init; }
+        public bool RouteFailedMessage { get; init; }
+        public int Priority { get; init; } = 5;
+        public int Tracking { get; init; }
+        public bool ServiceWindowEnabled { get; init; }
+        public string ServiceWindowFrom { get; init; } = string.Empty;
+        public string ServiceWindowTo { get; init; } = string.Empty;
+        public string DeliveryNotification { get; init; } = string.Empty;
+        public string SecondaryTransportType { get; init; } = string.Empty;
+        public string SecondaryAddress { get; init; } = string.Empty;
+        public bool HasSendPipelineConfiguration { get; init; }
+        public bool HasReceivePipelineConfiguration { get; init; }
+        public bool HasInboundTransforms { get; init; }
+        public bool HasOutboundTransforms { get; init; }
+        public IReadOnlyList<string> PipelineProperties { get; init; } = [];
+        public IReadOnlyList<PipelineComponentConfig> PipelineComponents { get; init; } = [];
+    }
+
+    /// <summary>A component instance from a binding's SendPipelineData, with non-secret property values.</summary>
+    internal sealed record PipelineComponentConfig(string ClassName, IReadOnlyDictionary<string, string> Properties);
 
     internal sealed record SendPortAnalysis(
         string Name,
@@ -70,5 +111,12 @@ public sealed partial class BizTalkImportService
         bool IsTwoWay,
         IReadOnlyDictionary<string, string> TransportProperties,
         int RetryCount = 0,
-        int RetryIntervalMinutes = 0);
+        int RetryIntervalMinutes = 0)
+    {
+        public SendPortOperationalSettings Operational { get; init; } = new();
+        /// <summary>True when the binding declares IsStatic="false"; the transport is then chosen by the orchestration at run time.</summary>
+        public bool IsDynamic { get; init; }
+        /// <summary>Transport type names the binding allows for a dynamic send port (DynamicSendHanders).</summary>
+        public IReadOnlyList<string> DynamicTransportTypes { get; init; } = [];
+    }
 }

@@ -1,10 +1,11 @@
+using Mulse.Modules.Abstractions;
 using Mulse.Modules.ControlFlow;
 using Mulse.Modules.Decisions;
 
 namespace Mulse.Modules.BuiltIn.Augment;
 
 public sealed class NativeControlFlowAugmentModule(IAugmentModuleInvoker augments, IRenderModuleInvoker renderers,
-    IFlowOrchestrationStateStore? store = null, TimeProvider? clock = null, IDeliverModuleInvoker? deliveries = null) : IOrchestrationAugmentModule
+    IFlowOrchestrationStateStore? store = null, TimeProvider? clock = null, IDeliverModuleInvoker? deliveries = null, IModuleInvoker? transforms = null) : IOrchestrationAugmentModule
 {
     public ModuleDescriptor Descriptor { get; } = new(NativeFlowDefinition.ModuleId, "Native control flow", ModuleKind.OrchestrationAugment,
         "Source-independent sequences, branches and bounded loops; optional persisted waits, correlated receives, named messages and replies. Ambiguous external effects require reconciliation. Transactions are unsupported.",
@@ -15,7 +16,7 @@ public sealed class NativeControlFlowAugmentModule(IAugmentModuleInvoker augment
         var definition = NativeFlowDefinition.Read(ModuleSettingReader.GetRequired(step.Settings, "flowJson", Descriptor.Id));
         if (definition.Durable)
             return await new NativeDurableExecutor(store ?? throw new NotSupportedException("Native durable control flow requires a configured state store."),
-                clock ?? TimeProvider.System, augments, renderers, deliveries).ExecuteAsync(definition, context, batch, step, cancellationToken).ConfigureAwait(false);
+                clock ?? TimeProvider.System, augments, renderers, deliveries, transforms).ExecuteAsync(definition, context, batch, step, cancellationToken).ConfigureAwait(false);
         var executed = 0;
         var variables = new Dictionary<string, NativeScalar>(StringComparer.Ordinal);
         var variableTypes = new Dictionary<string, NativeScalarType>(StringComparer.Ordinal);

@@ -37,8 +37,10 @@
     {
         <p class="field-hint">Stable native durable instance GUID, preserved across waits and restart. This is not a BizTalk instance ID or a new ID per evaluation. Durable execution is required.</p>
     }
+    @if (Hint(Value.Kind) is { } hint) { <p class="field-hint">@hint</p> }
     @for (var index = 0; index < Value.Operands.Count; index++)
     {
+        @if (OperandLabel(Value.Kind, index) is { } label) { <span class="field-label">@label</span> }
         <NativeExpressionEditor Value="Value.Operands[index]" Variables="Variables" MessageNames="MessageNames" Changed="Changed" Depth="@(Depth + 1)" />
     }
     @if (Depth >= 32) { <p class="field-hint">Maximum expression nesting reached. Choose a literal or variable here.</p> }
@@ -50,16 +52,42 @@
     [Parameter] public IReadOnlyList<string> MessageNames { get; set; } = [];
     [Parameter] public EventCallback Changed { get; set; }
     [Parameter] public int Depth { get; set; }
-    private static readonly string[] AllKinds = ["Literal", "Variable", "Not", "And", "Or", "Equal", "NotEqual", "Less", "LessOrEqual", "Greater", "GreaterOrEqual", "Add", "Subtract", "Multiply", "Divide", "Remainder", "Negate", "MessageValue", "InstanceId"];
+    internal static readonly string[] AllKinds = ["Literal", "Variable", "Not", "And", "Or", "Equal", "NotEqual", "Less", "LessOrEqual", "Greater", "GreaterOrEqual", "Add", "Subtract", "Multiply", "Divide", "Remainder", "Negate", "MessageValue", "InstanceId",
+        "Length", "IndexOf", "LastIndexOf", "Substring", "SubstringLength", "RegexIsMatch", "ToInt32", "ToText"];
     private IEnumerable<string> Kinds => Depth >= 32 ? AllKinds.Where(kind => kind is "Literal" or "Variable" or "MessageValue" or "InstanceId") : AllKinds;
     private static readonly string[] Types = ["String", "Int32", "Boolean", "Null"];
+    internal static int ArityOf(string kind) => kind switch
+    {
+        "Literal" or "Variable" or "MessageValue" or "InstanceId" => 0,
+        "Not" or "Negate" or "Length" or "ToInt32" or "ToText" => 1,
+        "SubstringLength" => 3,
+        _ => 2
+    };
+    private static string? OperandLabel(string kind, int index) => kind switch
+    {
+        "IndexOf" or "LastIndexOf" => index == 0 ? "Text to search" : "Text to find (ordinal)",
+        "Substring" => index == 0 ? "Text" : "Start index (to end of text)",
+        "SubstringLength" => index switch { 0 => "Text", 1 => "Start index", _ => "Length" },
+        "RegexIsMatch" => index == 0 ? "Input text" : "Regular expression pattern",
+        _ => null
+    };
+    private static string? Hint(string kind) => kind switch
+    {
+        "Length" => "Number of characters in the text operand. Requires a String.",
+        "IndexOf" or "LastIndexOf" => "Zero-based ordinal position, or -1 when absent. BizTalk's default string search is culture-sensitive; the two agree for ordinary text.",
+        "Substring" or "SubstringLength" => "Fails the flow when the range is outside the text; nothing is clamped.",
+        "RegexIsMatch" => "Unanchored .NET regular expression test with no options and a 2-second limit.",
+        "ToInt32" => "Parses a String as a base-10 integer (invariant culture); a null becomes 0 and an invalid value fails the flow.",
+        "ToText" => "Converts an Int32, Boolean or String to text (Boolean becomes True or False).",
+        _ => null
+    };
     private Task Notify() => Changed.InvokeAsync();
     private async Task ChangeKind(ChangeEventArgs args)
     {
         if (args.Value is not string kind || !Kinds.Contains(kind) || kind == Value.Kind) return;
         Value.Kind = kind; Value.Literal = kind == "Literal" ? new() : null; Value.Variable = kind == "Variable" ? "" : null;
         Value.Fact = kind == "MessageValue" ? new() : null;
-        var arity = kind is "Literal" or "Variable" or "MessageValue" or "InstanceId" ? 0 : kind is "Not" or "Negate" ? 1 : 2;
+        var arity = ArityOf(kind);
         Value.Operands = Enumerable.Range(0, arity).Select(_ => new NativeExpressionViewModel()).ToList();
         await Notify();
     }

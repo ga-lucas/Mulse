@@ -11,6 +11,13 @@ reference evidence, not prerequisites for importing a disabled draft or authorin
 They may be supplied later if a BizTalk development environment becomes available. Their absence means
 source-oracle parity is unverified; it does not prevent continued native implementation or synthetic testing.
 
+In the native control-flow editor, **Test native control flow with mocks** accepts synthetic text and
+metadata, and explicit mock responses for augments, renders and deliveries. It runs only the native
+control-flow definition in isolated memory: no real source, destination, module or workspace checkpoint
+is used. The output includes mock calls, output and replies. Unresolved nodes still block execution;
+suspended waits/receives cannot yet be resumed in this one-shot test. This is not a full-flow test or
+an imported-flow execution approval, and mocked module responses do not verify their real behavior.
+
 Use a native Render node, or **Select map during processing** for metadata-based selection, and configure
 **Dynamic map / renderer choices**. Each exact selection value is independently bound to a visual XML mapper,
 ordered renderer pipeline or loaded renderer plugin, with editable settings. Separate choices can represent
@@ -278,14 +285,30 @@ end-to-end business verification.
 
 ### Native Billing modules now available separately
 
-The new `Mulse.Billing` SDK-only plugin independently implements four explicit native activities:
+Only `billing-field-augment` is Billing-specific and lives in the `Mulse.Billing` plugin. The other helpers were reviewed, found generic, and renamed with no alias (saved flows using the old `billing-*` IDs fail closed until re-selected): the first four plus the set-property step are built into the Compatibility Pack, and the HL7 message-type step is in the `Mulse.Hl7` package (enable it like `hl7-xml-render`).
 
 | Module | Native capability | UI location |
 |---|---|---|
-| `billing-filename-transform` | One-text-input filename macros | Map parsed data transform selector |
-| `billing-filename-augment` | Literal/exact-metadata template to a configured metadata key | Augment toolbox / Native control flow Augment |
+| `filename-template-transform` (Compatibility Pack) | One-text-input filename macros. The importer translates `x = FilenameMaker.MakeFilename(arg);` (String target and argument) to a native `InvokeTransform` node with assumed `timeZone=UTC`, `culture=Invariant` settings: review both against the deployed host. `[GUID]` is random per call and `InvokeTransform` is not journaled, so checkpoint the result before a Deliver that must be replay-stable. Dynamic port `Address`/`TransportType` assignments are still blocked | Native control flow `InvokeTransform` node / Map parsed data transform selector |
+| `filename-template-augment` (Compatibility Pack) | Literal/exact-metadata template to a configured metadata key | Augment toolbox / Native control flow Augment |
 | `billing-field-augment` | Exact nonsensitive CommonBilling field to custom text or declared context-property metadata | Augment toolbox / Native control flow Augment |
-| `billing-remove-namespaces-render` | Namespace-removal XML renderer with collision rejection | Renderer selector / Ordered renderer pipeline |
+| `xml-remove-namespaces-render` (Compatibility Pack) | Namespace-removal XML renderer with collision rejection | Renderer selector / Ordered renderer pipeline |
+| `hl7-message-type-augment` (`Mulse.Hl7`) | Replaces the `HL7TypeCaster` pipeline component: parses the XML root and writes `<namespace>#<root>` (default `http://microsoft.com/HealthCare/HL7/2X`) to a configurable key (default the BizTalk system `MessageType` identity). Body unchanged; non-XML input fails instead of being swallowed | Augment toolbox / Native control flow Augment |
+| `set-context-property-augment` (Compatibility Pack) | Replaces the `SetProperty` pipeline component: writes a value to metadata key `{namespace}name`; no-op when any of the three is empty, as in the source | Augment toolbox / Native control flow Augment |
+
+The importer now reads each send port's `SendPipelineData` from the binding and automatically adds
+`hl7-message-type-augment` (for `HL7TypeCaster`) and `set-context-property-augment` (for `SetProperty`, with
+name/namespace/value pre-filled) to the draft flow; MIME/S-MIME and BTAHL7 components produce explicit warnings with
+their property values. These steps run for the whole flow, so when send ports differ, scope them per route in the UI.
+
+Downstream behavior is wired too: a BTAHL7 assembler on a send port selects the new `hl7-xml-render` module
+(HL7 v2 XML to ER7; trailing-delimiter setting imported from `TrailingDelimiterAllowed`), and a `SetProperty` that sets
+`FileName` fills SMTP deliver's new `attachmentNameMetadataKey` so the attachment is named as BizTalk's MIME encoder
+named it. Not replicated: HL7 escape sequences, schema validation/acks, and S-MIME signing/encryption.
+
+The migration report now emits
+`SetProperty`, BTAHL7, MIME/S-MIME and flat-file components, naming the native module to use. Still open: MIME/S-MIME
+signing/encryption (no native module), BTAHL7 assembler fidelity, partner dynamic maps, correlation/atomic semantics.
 
 Build `Mulse.slnx`, then enable **Mulse.Billing** in **Modules**. A scratch native flow can select **Read
 CommonBilling field**, choose **TargetLocation** and `billing.TargetLocation`, then **Expand Billing target
@@ -313,7 +336,7 @@ The renderer reproduces namespace-removal semantics without loading the supplied
 Text, CDATA, comments and processing instructions survive; colliding attribute local names fail explicitly.
 The inspected AddBlockCharacters source returns its input unchanged: no HL7 framing has been invented from its
 name. Existing native renderer dispatch/pipelines remain the explicit replacement seam for dynamic transforms;
-actual selected partner maps and pipeline assembly behavior are **not** implemented by these four modules.
+actual selected partner maps and pipeline assembly behavior are **not** implemented by these modules.
 
 Synthetic verification covers every allowlisted schema field, macro semantics and bounds, real hot-loaded
 catalog/mapper invocation, UI controls, dependency protection/unload, and disk-backed native
@@ -354,6 +377,40 @@ maps/pipelines, helper call-site adapters and transactions remain unresolved. No
 destinations were executed. Generic synthetic fixtures verify supported receive/copy/send/reply flows,
 construction/typed writes across disk restart, graphical scratch authoring, and verified-committed reconciliation
 through the UI/API without replaying the held effect. This is deliberately not actual Billing parity proof.
+
+### Binding transports (FTP/SFTP/SMTP/FILE) and operational settings
+
+The beta binding export has about 66 send ports (12 nsoftware FTP, 7 nsoftware SFTP, 2 SMTP, 1 FILE, 2 WCF-WSHttp) and 7 receive locations
+(2 FILE, 5 WCF-WSHttp). FTP/SFTP send ports now import to the native `ftp-deliver`/`sftp-deliver` modules instead of a repository placeholder.
+In the flow UI, supply: host/port/path values for any `%Variable%` binding values (Config), user names and passwords (Secret, never exported by
+BizTalk), and the SFTP `hostKeyFingerprint` (the export accepted any host key; Mulse requires a pinned fingerprint or an explicit
+`acceptAnyHostKey`). Set `privateKey` if SFTP key authentication was used and review `encryptionMode`/`acceptAnyCertificate` for FTP.
+Backup (secondary) transports, ordered delivery, stop-on-failure, service windows, port maps and pipeline component properties are not
+imported; each is reported as a draft warning with its UI equivalent (see "Transport and operational binding increment" in
+`BizTalk-Import-Compatibility-Plan.md`).
+
+## Native conditionals, Try and Scope import (latest)
+
+Expression shapes containing `if (...) { ... } else { ... }` now import as native `If` nodes with an Otherwise branch, editable in the flow editor. A BizTalk `Scope` becomes a native `Sequence`; a Scope with exactly one `System.Exception` catch becomes a native `Try` node (durable flows) whose body, catch handler and exception message/details variables are all editable in the UI. In the handler, `ex.Message` and `ex.StackTrace` read those variables.
+
+Review these deliberate limits before enabling any imported flow:
+
+- Transactions (`LongRunningTransaction`, `AtomicTransaction`, `TransactionAttribute` batch/retry/timeout/isolation) are kept as named "(not enforced)" evidence nodes. No atomicity, compensation, retry or timeout is applied.
+- `Try` catches faults raised by its body only. It does not catch `Terminate`, failed Deliver/Augment/Render effects, persistence faults, cancellation, or faults that cross a ForEach, Receive or Wait.
+- `StackTrace` is the exception type name plus message, not a CLR stack trace.
+- Typed catches, several catches, fault-message catches and assignments to `ex.*` stay Blocked.
+- Correlation sets (`CorrelationDeclaration`/`StatementRef`) and receive filters remain Blocked nodes; correlation must be configured by hand.
+
+Re-measured against the Billing sample (stand-in config helper, so indicative): BillingServiceProcess unresolved nodes 136 -> 126, BatchDoubleBody 54 -> 46, BatchWithTrailer 60 -> 48. Imported flows stay disabled and no BizTalk equivalence is claimed.
+
+## Native string functions
+
+The native expression editor now offers `Length`, `IndexOf`, `LastIndexOf`, `Substring` (with or without length), `RegexIsMatch`, `ToInt32` and `ToText`, each with labeled operands and hints. The importer translates `string.Length/IndexOf/LastIndexOf/Substring`, `Regex.IsMatch` and `Convert.ToInt32/ToString` for Billing-style address parsing only when operand types are proven; anything else stays a visible blocker. Review two deliberate differences: `IndexOf`/`LastIndexOf` search ordinally (BizTalk's default is culture-sensitive; only printable-ASCII constant search text is imported), and `Substring` fails the flow instead of clamping. With bindings, schemas, rules and a host configuration supplied, BillingServiceProcess unresolved nodes fell from 164 to 136. `GlobalInterfaceAppSettings.GetSMTPPattern/GetFTPPattern` need `NativeHostConfigurationPath` and the helper source path; `if` blocks inside expression shapes, `FilenameMaker.MakeFilename` and dynamic port `Address` assignments are the next gaps.
+
+## Pipelines and ODX audit (2026-11-05)
+
+- Send-pipeline components (BTAHL7 assembler, SetPropertyFileName) are imported as editable steps. When send ports use different pipelines, each step is scoped to its route with a `targetRoute` condition; populate `targetRoute` per payload as the draft warns. If a binding has no pipeline data, defaults come from the matching `.btp` file (secret-named properties are dropped). Receive pipelines are evidence only.
+- ODX audit of the three Billing orchestrations: every shape is retained as evidence, but behavioral equivalence is not achieved. The draft path turns simple decisions into metadata tags only and does not run branch bodies. The opt-in native path reports fail-closed `BT-NATIVE-UNRESOLVED` blockers (128 / 128 / 338). See "ODX audit" in `BizTalk-Import-Compatibility-Plan.md` for the breakdown and remaining work.
 
 ## Decision
 

@@ -219,7 +219,182 @@ public sealed class NativeMessageFactTests : IDisposable
         Assert.NotNull(Field(facts, "_sampleError").GetValue(facts));
     }
 
-    private async Task<BizTalkFlowCandidateResponse> Import(string statements)
+    private static NativeExpression Lit(object value) => new() { Literal = NativeScalar.From(value) };
+    private static NativeExpression Op(NativeExpressionKind kind, params NativeExpression[] operands) => new() { Kind = kind, Operands = [.. operands] };
+    private static object? Eval(NativeExpression expression) { NativeExpression.Validate(expression); return expression.Evaluate(new Dictionary<string, NativeScalar>()).Read(); }
+
+    [Fact]
+    public void StringFunctionsEvaluateWithOrdinalSearchAndStrictBounds()
+    {
+        Assert.Equal(4, Eval(Op(NativeExpressionKind.Length, Lit("abcd"))));
+        Assert.Equal(3, Eval(Op(NativeExpressionKind.IndexOf, Lit("ab@cd@"), Lit("c"))));
+        Assert.Equal(5, Eval(Op(NativeExpressionKind.LastIndexOf, Lit("ab@cd@"), Lit("@"))));
+        Assert.Equal(-1, Eval(Op(NativeExpressionKind.IndexOf, Lit("abc"), Lit("A"))));
+        Assert.Equal("cd", Eval(Op(NativeExpressionKind.Substring, Lit("abcd"), Lit(2))));
+        Assert.Equal("", Eval(Op(NativeExpressionKind.Substring, Lit("abcd"), Lit(4))));
+        Assert.Equal("bc", Eval(Op(NativeExpressionKind.SubstringLength, Lit("abcd"), Lit(1), Lit(2))));
+        Assert.True((bool)Eval(Op(NativeExpressionKind.RegexIsMatch, Lit("x@y.com"), Lit("@[a-z]+\\."))));
+        Assert.False((bool)Eval(Op(NativeExpressionKind.RegexIsMatch, Lit("abc"), Lit("^b"))));
+        Assert.Equal(12, Eval(Op(NativeExpressionKind.ToInt32, Lit("12"))));
+        Assert.Equal(0, Eval(Op(NativeExpressionKind.ToInt32, new NativeExpression { Literal = new(NativeScalarType.Null, "") })));
+        Assert.Equal(1, Eval(Op(NativeExpressionKind.ToInt32, Lit(true))));
+        Assert.Equal("True", Eval(Op(NativeExpressionKind.ToText, Lit(true))));
+        Assert.Equal("7", Eval(Op(NativeExpressionKind.ToText, Lit(7))));
+    }
+
+    [Fact]
+    public void StringFunctionsFailClosedOnBadOperandsRangesPatternsAndArity()
+    {
+        Assert.Throws<InvalidOperationException>(() => Eval(Op(NativeExpressionKind.Length, Lit(5))));
+        Assert.Throws<InvalidOperationException>(() => Eval(Op(NativeExpressionKind.Substring, Lit("ab"), Lit(3))));
+        Assert.Throws<InvalidOperationException>(() => Eval(Op(NativeExpressionKind.SubstringLength, Lit("ab"), Lit(1), Lit(5))));
+        Assert.Throws<InvalidOperationException>(() => Eval(Op(NativeExpressionKind.SubstringLength, Lit("ab"), Lit(-1), Lit(1))));
+        Assert.Throws<InvalidOperationException>(() => Eval(Op(NativeExpressionKind.RegexIsMatch, Lit("a"), Lit("("))));
+        Assert.Throws<InvalidOperationException>(() => Eval(Op(NativeExpressionKind.ToInt32, Lit("1.5"))));
+        Assert.Throws<InvalidOperationException>(() => Eval(Op(NativeExpressionKind.ToInt32, Lit("99999999999"))));
+        Assert.Throws<ArgumentException>(() => NativeExpression.Validate(Op(NativeExpressionKind.SubstringLength, Lit("ab"), Lit(1))));
+        Assert.Throws<ArgumentException>(() => NativeExpression.Validate(Op(NativeExpressionKind.Length, Lit("a"), Lit("b"))));
+    }
+
+    [Fact]
+    public void SourceStringMembersConvertCallsAndRegexTranslateWithStaticTypeProof()
+    {
+        var variables = new Dictionary<string, NativeScalarType> { ["address"] = NativeScalarType.String, ["position"] = NativeScalarType.Int32,
+            ["name"] = NativeScalarType.String, ["valid"] = NativeScalarType.Boolean, ["text"] = NativeScalarType.String };
+        var nodes = new NativeSourceExpressionReader("position = address.IndexOf(\"@\"); name = address.Substring(0, position); valid = System.Text.RegularExpressions.Regex.IsMatch(address, \"^[a-z]+@\"); position = System.Convert.ToInt32(\"4\") + address.Length; text = System.Convert.ToString(position);", variables).ReadAssignments("s");
+        Assert.Equal(5, nodes.Count);
+        var state = new Dictionary<string, NativeScalar> { ["address"] = new(NativeScalarType.String, "bob@x.com"), ["position"] = NativeScalar.From(0), ["name"] = NativeScalar.From(""), ["valid"] = NativeScalar.From(false), ["text"] = NativeScalar.From("") };
+        foreach (var node in nodes) state[node.Variable!] = node.Expression!.Evaluate(state);
+        Assert.Equal("bob", state["name"].Value); Assert.Equal("true", state["valid"].Value, ignoreCase: true);
+        Assert.Equal("13", state["position"].Value); Assert.Equal("13", state["text"].Value);
+    }
+
+    [Theory]
+    [InlineData("position = address.IndexOf(name);")]
+    [InlineData("position = address.IndexOf(\"\");")]
+    [InlineData("position = address.IndexOf(\"é\");")]
+    [InlineData("position = address.IndexOf(\"@\", 2);")]
+    [InlineData("position = position.Length;")]
+    [InlineData("name = position.Substring(1);")]
+    [InlineData("name = address.Substring(\"1\");")]
+    [InlineData("valid = System.Text.RegularExpressions.Regex.IsMatch(address, \"a\", System.Text.RegularExpressions.RegexOptions.IgnoreCase);")]
+    [InlineData("valid = System.Text.RegularExpressions.Regex.IsMatch(position, \"a\");")]
+    [InlineData("position = System.Convert.ToInt32(xpath(request, \"string(/r)\"));")]
+    [InlineData("position = address.ToUpper().Length;")]
+    public void UnprovenStringCallsStayBlockedRatherThanGuessed(string source)
+    {
+        var variables = new Dictionary<string, NativeScalarType> { ["address"] = NativeScalarType.String, ["position"] = NativeScalarType.Int32,
+            ["name"] = NativeScalarType.String, ["valid"] = NativeScalarType.Boolean };
+        Assert.Throws<NotSupportedException>(() => new NativeSourceExpressionReader(source, variables, new HashSet<string> { "request" }).ReadAssignments("s"));
+    }
+
+    [Fact]
+    public async Task ImportedStringFunctionsBecomeNativeNodesWithOrdinalSearchWarning()
+    {
+        var candidate = await Import("count = address.IndexOf(\"@\") + address.Length;", stringVariable: true);
+        Assert.False(candidate.DraftFlow.Enabled);
+        var definition = NativeFlowDefinition.Read(candidate.DraftFlow.Augments.Single().Settings["flowJson"]);
+        var set = Assert.Single(definition.AllNodes(), node => node.Kind == NativeFlowNodeKind.SetVariable && node.Variable == "count");
+        Assert.True(set.Expression!.UsesOrdinalSearch);
+        Assert.Contains(candidate.DraftFlow.Warnings, warning => warning.Contains("culture-sensitive"));
+    }
+
+    [Fact]
+    public async Task ExpressionEditorOffersStringFunctionsWithMatchingOperandCounts()
+    {
+        var expression = new NativeExpressionViewModel();
+        var editor = new NativeExpressionEditor(); Set(editor, "Value", expression);
+        await Invoke(editor, "ChangeKind", new ChangeEventArgs { Value = "SubstringLength" });
+        Assert.Equal(3, expression.Operands.Count);
+        await Invoke(editor, "ChangeKind", new ChangeEventArgs { Value = "Length" });
+        Assert.Single(expression.Operands);
+        await Invoke(editor, "ChangeKind", new ChangeEventArgs { Value = "RegexIsMatch" });
+        Assert.Equal(2, expression.Operands.Count);
+    }
+
+    [Fact]
+    public void ConditionalBlocksBecomeNestedNativeIfNodes()
+    {
+        var variables = new Dictionary<string, NativeScalarType> { ["address"] = NativeScalarType.String, ["count"] = NativeScalarType.Int32, ["valid"] = NativeScalarType.Boolean };
+        var nodes = new NativeSourceExpressionReader("if (valid) { count = 1; } else if (address.Length > 3) { if (!valid) { count = 2; } } else { count = 3; } count++;", variables).ReadAssignments("s");
+        Assert.Equal(2, nodes.Count);
+        var first = nodes[0];
+        Assert.Equal(NativeFlowNodeKind.If, first.Kind);
+        Assert.Single(first.Children);
+        var elseIf = Assert.Single(first.Otherwise);
+        Assert.Equal(NativeFlowNodeKind.If, elseIf.Kind);
+        Assert.Equal(NativeFlowNodeKind.If, Assert.Single(elseIf.Children).Kind);
+        Assert.Single(elseIf.Otherwise);
+    }
+
+    [Theory]
+    [InlineData("if (count) { count = 1; }")]
+    [InlineData("if (valid) count = 1;")]
+    [InlineData("if (valid) { count = 1;")]
+    [InlineData("if (valid) { count = 1; } else")]
+    [InlineData("count = 1; }")]
+    [InlineData("if (valid) { if (valid) { if (valid) { if (valid) { if (valid) { if (valid) { if (valid) { if (valid) { if (valid) { count = 1; } } } } } } } } }")]
+    public void ConditionalBlocksFailClosedOnMalformedOrNonBooleanSource(string source)
+    {
+        var variables = new Dictionary<string, NativeScalarType> { ["count"] = NativeScalarType.Int32, ["valid"] = NativeScalarType.Boolean };
+        Assert.Throws<NotSupportedException>(() => new NativeSourceExpressionReader(source, variables).ReadAssignments("s"));
+    }
+
+    [Fact]
+    public void ConditionalCannotInterruptEmptyDocumentConstruction()
+    {
+        var variables = new Dictionary<string, NativeScalarType> { ["valid"] = NativeScalarType.Boolean };
+        Assert.Throws<NotSupportedException>(() => new NativeSourceExpressionReader("doc = new System.Xml.XmlDocument(); if (valid) { doc.LoadXml(\"<a/>\"); }", variables,
+            new HashSet<string> { "doc" }, documents: new HashSet<string> { "doc" }).ReadAssignments("s"));
+    }
+
+    private static readonly IReadOnlyDictionary<string, NativeSourceUdf> Udfs = new Dictionary<string, NativeSourceUdf>
+    { ["FilenameMaker.MakeFilename"] = new("filename-template-transform", new Dictionary<string, string> { ["timeZone"] = "UTC", ["culture"] = "Invariant" }, 1) };
+
+    [Fact]
+    public void KnownHelperCallBecomesAnInvokeTransformNodeWithExplicitSettings()
+    {
+        var variables = new Dictionary<string, NativeScalarType> { ["target"] = NativeScalarType.String, ["address"] = NativeScalarType.String };
+        var node = Assert.Single(new NativeSourceExpressionReader("target = Shs.Common.FilenameMaker.MakeFilename(address + \".txt\");", variables, udfs: Udfs).ReadAssignments("s"));
+        Assert.Equal(NativeFlowNodeKind.InvokeTransform, node.Kind);
+        Assert.Equal("filename-template-transform", node.Module);
+        Assert.Equal("target", node.Variable);
+        Assert.Equal("UTC", node.Settings["timeZone"]);
+        Assert.Single(node.TransformInputs!);
+    }
+
+    [Theory]
+    [InlineData("count = FilenameMaker.MakeFilename(address);")]
+    [InlineData("target = FilenameMaker.MakeFilename(count);")]
+    [InlineData("target = FilenameMaker.MakeFilename(address, address);")]
+    [InlineData("target = FilenameMaker.MakeFilename();")]
+    [InlineData("target = FilenameMaker.MakeFilename(address)")]
+    public void KnownHelperCallFailsClosedOnUnprovenTypesArityOrSyntax(string source)
+    {
+        var variables = new Dictionary<string, NativeScalarType> { ["target"] = NativeScalarType.String, ["address"] = NativeScalarType.String, ["count"] = NativeScalarType.Int32 };
+        Assert.Throws<NotSupportedException>(() => new NativeSourceExpressionReader(source, variables, udfs: Udfs).ReadAssignments("s"));
+    }
+
+    [Fact]
+    public void HelperCallIsNotTranslatedWithoutAnExplicitBinding()
+    {
+        var variables = new Dictionary<string, NativeScalarType> { ["target"] = NativeScalarType.String, ["address"] = NativeScalarType.String };
+        Assert.Throws<NotSupportedException>(() => new NativeSourceExpressionReader("target = FilenameMaker.MakeFilename(address);", variables).ReadAssignments("s"));
+    }
+
+    [Fact]
+    public async Task ImportedFilenameMakerBecomesATransformNodeWithAReviewWarning()
+    {
+        var candidate = await Import("address = Shs.SpaceTrax2.Interfaces.Common.FilenameMaker.MakeFilename(address);", stringVariable: true);
+        Assert.False(candidate.DraftFlow.Enabled);
+        var definition = NativeFlowDefinition.Read(candidate.DraftFlow.Augments.Single().Settings["flowJson"], allowBlocked: true);
+        var call = Assert.Single(definition.AllNodes(), node => node.Kind == NativeFlowNodeKind.InvokeTransform);
+        Assert.Equal("filename-template-transform", call.Module);
+        Assert.Equal("address", call.Variable);
+        Assert.Contains(candidate.DraftFlow.Warnings, warning => warning.Contains("timeZone=UTC") && warning.Contains("not pinned"));
+    }
+
+    private async Task<BizTalkFlowCandidateResponse> Import(string statements, bool stringVariable = false)
     {
         Directory.CreateDirectory(_directory);
         XNamespace ns = "http://schemas.microsoft.com/BizTalk/2003/DesignerData";
@@ -227,6 +402,7 @@ public sealed class NativeMessageFactTests : IDisposable
         XElement N(string kind, string name, params object[] children) => new(ns + "Element", new XAttribute("Type", kind), P("Name", name), children);
         var source = new XElement(ns + "MetaModel", N("ServiceDeclaration", "Service",
             N("MessageDeclaration", "request"), N("VariableDeclaration", "count", P("Type", "System.Int32"), P("InitialValue", "0")),
+            stringVariable ? N("VariableDeclaration", "address", P("Type", "System.String"), P("InitialValue", "\"user@example.com\"")) : new XComment("none"),
             N("ServiceBody", "Body", N("Receive", "input", P("MessageName", "request"), P("PortName", "input")), N("VariableAssignment", "counts", P("Expression", statements)))));
         var project = Path.Combine(_directory, "Facts.btproj");
         await File.WriteAllTextAsync(project, "<Project><PropertyGroup><AssemblyName>Facts</AssemblyName></PropertyGroup><ItemGroup><XLang Include='Facts.odx'/></ItemGroup></Project>");

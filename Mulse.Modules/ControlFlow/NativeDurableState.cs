@@ -36,3 +36,5 @@ public sealed class NativeDurableCursor
 public sealed class NativeAmbiguousEffectException(string message, Exception? inner = null) : InvalidOperationException(message, inner);
 public sealed class NativePersistenceException(string message, Exception inner) : IOException(message, inner);
 public sealed class NativeUnmatchedMessageException(string message) : InvalidOperationException(message);
+/// <summary>An explicit Terminate. It is deliberately not catchable by a native Try handler.</summary>
+public sealed class NativeTerminationException(string message) : InvalidOperationException(message);

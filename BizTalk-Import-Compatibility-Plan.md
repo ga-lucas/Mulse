@@ -1,17 +1,70 @@
-# BizTalk Import Compatibility Plan
+﻿# BizTalk Import Compatibility Plan
 
 ## Goal
 
-Import BizTalk projects into Mulse and automatically map as much functionality as possible into editable, executable Mulse workflows without running the BizTalk runtime directly.
-
-The target experience is:
+Build a reusable BizTalk importer that automatically preserves as much behavior and workflow as possible in native Mulse flows, without hosting BizTalk code or runtime. Billing is a worked example, not the product scope; only truly Billing-specific code (the CommonBilling field read) lives in `Mulse.Billing`, and reusable legacy-compat modules live in the built-in Compatibility Pack (or `Mulse.Hl7` for HL7). Make all flow and module settings explicitly editable in the UI, including configuration for unsupported or unknown behavior. Imported and scratch-built flows should share the same tools.
 
 ```text
 BizTalk project -> analyzed artifacts -> canonical Mulse model
-			 -> Flow Designer + Mapping Designer -> executable Mulse workflow
+				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Target behavior: imported workflows must remain disabled until required configuration and unsupported behavior are resolved and verified. Flows carrying migration reports now have a fail-closed enable/run gate: they remain editable as disabled drafts, but cannot execute until verified translation support exists. Report statuses and configuration review are not approvals. Older flows without migration metadata cannot be identified retroactively and need reanalysis/re-import to receive the gate. The same Mulse modules, mappings, transforms, routes, and diagnostics must also be available when creating a workflow from scratch in the UI.
+Latest verification: 1,570 service tests passed and the solution built.
+
+Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
+
+## Current continuation: isolated testing and Billing migration
+
+- **Partial:** the native control-flow editor now offers a one-shot isolated test with synthetic text input, editable input and mock-output metadata, explicit mock outputs and captured deliveries/replies. Native decisions and message operations use the existing executor; no real source, destination, module catalog or workspace checkpoint is accessed. Unresolved nodes still block, and missing mocks fail explicitly. Each kind/module has one response, with additional dynamic-module mocks available.
+- **Timer waits:** an opt-in "advance waits" setting resumes durable timer Waits on a virtual clock (max 32 resumes, no real delay) with the same checkpoint semantics and single-delivery guarantee; Receive nodes still end the test as Suspended because they need a real arrival.
+- **String/conversion functions (native, UI-editable):** `Length`, ordinal `IndexOf`/`LastIndexOf`, `Substring`, `Substring(start,length)`, `Regex.IsMatch` (unanchored, no options, 2 s limit), `ToInt32` and `ToText` are expression kinds in the runtime and in the expression editor (labeled operands and hints). The importer translates `variable`/distinguished-field `.Length/.IndexOf("literal")/.LastIndexOf("literal")/.Substring(...)`, static `Regex.IsMatch`, and `Convert.ToInt32/ToString` only when operand types are statically proven; `Convert.ToInt32(xpath(string))`, non-ASCII/empty/non-literal search text, overloads and chained calls stay Blocked. Known deviation, warned at import: the legacy default string search is culture-sensitive, native is ordinal.
+- **`if`/`else` blocks (native, UI-editable):** `if (cond) { ... } else if (...) { ... } else { ... }` inside expression shapes becomes a native `If` with an `Otherwise` branch (max depth 8, 64 statements per block). It cannot interrupt an incomplete XML document construction.
+- **Native `Try` node (durable flows only, UI-editable):** body plus catch handler, with explicit message/details exception variables (String, truncated to 2,000 characters). It catches body faults only. It does not catch `Terminate`, failed Deliver/Augment/Render effects (ambiguous, need reconciliation), persistence faults, cancellation, or faults that cross a ForEach/Receive/Wait. The details variable holds `TypeName: message`, not a CLR stack trace.
+- **Scope/Catch import:** a `Scope` becomes a native `Sequence`, or a `Try` when it has exactly one untyped `System.Exception` catch (`ex.Message`/`ex.StackTrace` map to the exception variables, read-only). Scope-local scalar declarations are supported. `LongRunningTransaction`, `AtomicTransaction` and `TransactionAttribute` stay as named "(not enforced)" evidence nodes plus a warning: no atomicity, compensation, retry or timeout is implemented. Typed or multiple catches, fault-message catches and assignments to `ex.*` remain Blocked. `CorrelationDeclaration`/`StatementRef` stay visible blockers because they carry correlation semantics.
+- **Editor fix:** the native flow editor validated expressions against a stale hard-coded kind list and would have refused flows using the string functions; it now shares the expression editor's kind/arity list. A truncated `AppendChild` consumption in the XML-root reader was also restored.
+- **Measured Billing effect (re-measured with a stand-in config helper; indicative only):** unresolved nodes BillingServiceProcess 136 -> 126, BatchDoubleBody 54 -> 46, BatchWithTrailer 60 -> 48. The original `GlobalInterfaceAppSettings` source was not found on disk, so helper-derived values differ from a real run. Flows stay disabled; no BizTalk equivalence is claimed.
+- **Next measured gaps (Billing):** dynamic transforms needing map choices (28), native protocol adapters for bound Sends (15 + 9 without unique binding), structural children/cascades (StatementRef 14, DecisionBranch), `CorrelationDeclaration` (14) and DNFPredicate/Receive filters, `Listen`/`ListenBranch`, `FilenameMaker.MakeFilename`, dynamic port `Address`/`TransportType` assignments, DateTime values and `Subtract(DateTime.Now)` delays, and Distinguished scalars beyond string/int/boolean.
+- **Verification:** 1,550 service tests passed and the solution built.
+
+### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
+
+- **Custom C# transforms are supported.** An `ITransformModule` is a hot-loadable, pure value function (`Task<JsonNode?> InvokeAsync(context, inputs, step, ct)`, registered with `AddTransform<T>()`, kind `Transform`). Before this increment only other modules could call one (`IModuleInvoker.InvokeTransformAsync`); a native flow could not.
+- **New native node `InvokeTransform` (durable flows only, UI-editable):** module picker (Transform modules only), declared String result variable, 1-8 argument expressions (String/Int32/Boolean/null), module settings. The result must be a String of at most 65,536 characters. It is pure and **not journaled**, so it re-runs after a crash before the next checkpoint; faults are ordinary exceptions that `Try` can catch. A missing package fails closed (dependency discovery reports the transform; the isolated test runner offers a "Transform" mock kind).
+- **Importer:** `x = Ns.FilenameMaker.MakeFilename(arg);` with a declared String target and one proven String argument becomes `InvokeTransform` on `filename-template-transform`. Settings `timeZone=UTC` and `culture=Invariant` are **assumptions** (the deployed host's zone and culture are unknown); they are visible, editable and warned about at import. Wrong target type, argument count or argument type stays Blocked. The mapping table (`KnownUdfs`) is explicit; no other helper is translated implicitly.
+- **Verification:** 18 new tests (core 9, importer 8, UI 1); 1,568 service tests passed and the solution built. Dynamic port `Address`/`TransportType` assignments that use `MakeFilename` remain Blocked.
+
+### Increment: generic modules moved out of `Mulse.Billing`
+
+Review rule: a module with no hard-coded customer schema is generic. No aliases were added; saved flows that use an old ID fail closed until re-selected.
+
+| Old ID | New ID | Home |
+| --- | --- | --- |
+| `billing-filename-transform` | `filename-template-transform` | Compatibility Pack (built-in) |
+| `billing-filename-augment` | `filename-template-augment` | Compatibility Pack |
+| `billing-set-property-augment` | `set-context-property-augment` | Compatibility Pack |
+| `billing-remove-namespaces-render` | `xml-remove-namespaces-render` | Compatibility Pack |
+| `billing-hl7-message-type-augment` | `hl7-message-type-augment` | `Mulse.Hl7` (hot-loadable; enable it, as for `hl7-xml-render`) |
+| `billing-field-augment` | unchanged | `Mulse.Billing` (hard-codes the CommonBilling namespace and field list) |
+
+- Importer IDs, warnings and report hints were updated. `[GUID]` is random per call and `InvokeTransform` is not journaled: checkpoint the result before a Deliver that must be replay-stable (future option: derive the GUID from instance and node IDs).
+- **Verification:** 1,570 service tests passed and the solution built.
+
+### Placement and UDF recommendations (record; mostly not yet built)
+
+"UDF" = a pure user-defined function we implement as a hot-loadable `ITransformModule` and call through `InvokeTransform`.
+
+| Item | Where it should live | UDF? |
+| --- | --- | --- |
+| `FilenameMaker` macros (and other pure legacy helpers) | Compatibility Pack transform modules (`filename-template-transform`) | Yes (done for `MakeFilename`) |
+| Protocol adapters for bound Sends/Receives (FTP, SFTP, SMTP, others) | Hot-loadable deliver/fetch packages (e.g. `Mulse.Adapters`) | No: modules with side effects |
+| Map renderers / pipeline components | Render/Augment modules; importer wires them from explicit user choices | No (modules) |
+| Dynamic port `Address` / `TransportType` overrides | Core native `Deliver` setting expressions + `If` per transport | No |
+| Correlation sets, `DNFPredicate`, `Listen`/`ListenBranch`, `DateTime`, transactions | Core durable executor | No |
+
+Rules: anything that affects flow correctness, durability or recovery stays in core; hot-loadable packages hold adapters and pure UDFs; a missing package must fail closed; imported call sites must stay explicit in the UI.
+
+**Version pinning (future, not implemented):** today module code versions are not pinned. Plan: add a `Version` to `ModuleDescriptor`; add an optional pinned version to `InvokeTransform` and to module step definitions; record the code version in checkpoints so replay detects a changed UDF; enforce in `FlowModuleDependencies` (refuse to start on a missing or mismatched version). Until then, a replayed `InvokeTransform` may produce a different value after a package update.
+and multi-arrival (Receive) continuation. The temporary checkpoint is discarded after each test.
 
 ## 2026-11-04 increment: application bindings and BRL exports
 
@@ -27,41 +80,46 @@ Target behavior: imported workflows must remain disabled until required configur
 - Actual beta export validation and remaining Billing gaps are recorded in the Billing migration guide.
   Full orchestration, dynamic-map, pipeline and operational compatibility remains unfinished.
 
-## Native visual building-block increment
+## Transport and operational binding increment
 
-- External field transforms expose descriptor-driven mapping controls and can be loaded/reloaded without
-  restarting the host. A real sample regex transform and collectible lifecycle tests exercise invocation,
-  reload, saved-flow protection and unloading. Plugin activation isolates collectible logger resolution;
-  typed plugin examples use package-local generated JSON contracts to avoid process-wide reflection roots.
-- Checkpoint state captures now have a visual source/key/path editor, advanced repair, strict runtime
-  validation and suspend/resume tests. This is not a general orchestration interpreter or batch collector.
-- Native render-dispatch allowlists per-payload renderer choices and settings, invokes extensible renderers
-  under leases, and tracks every choice for module dependencies and unload protection. XML choices use the
-  existing visual mapper. Its map-dispatch-augment counterpart supports the same choices mid-flow, allowing
-  normalization before later promotions/policies/maps. Optional per-selection grouping supplies same-selection
-  inputs to one renderer call within the current execution only; per-payload behavior remains the default.
-  Neither mode is durable cross-run batching. Nested dispatch is deliberately unsupported.
-- Optional metadata-mode XML policies preserve original bodies and publish actual assignments. Visual
-  metadata promotion supplies facts; policy outputs can select real maps without replacing the message
-  with a fact document. Multi-client synthetic tests cover the complete native chain.
-- A native count-triggered collector persists correlated batches across executions/restarts and holds source
-  receipts until successful downstream processing/acknowledgements. Descriptor-driven UI settings and a safe
-  dashboard/designer checkpoint inventory expose collection state. Same-execution retry append deduplication,
-  failed-write persistence, delayed acknowledgements, input bounds and pending-data maintenance guards have
-  explicit tests. Released ambiguous/exhausted failures freeze instead of guessing that replay is safe.
-- Optional daily cutoffs require explicit per-flow timezones and persist the first arrival's UTC deadline.
-  The enabled-flow driver releases due state without source fetch/upstream remapping, including idle manual
-  and push flows. DST gap/fold choices, restart, competing polls and fail-closed ready batches have tests.
-  This is not original policy BatchInterval/variable BatchTime translation, arbitrary source-batch partitioning
-  or exactly-once delivery.
-- Confirmed early release lets an operator finish a collecting instance through UI/API, without fetching or
-  replaying upstream maps. The instance and inspected count must still match; retries, disabled flows and
-  already-released data block confirmation. Release intent is durable before downstream side effects. This
-  does not add replay/discard of ambiguous or partially delivered instances.
-- These capabilities are available to imported and scratch-built nodes. No increment auto-translates
-  original Billing control flow or clears migration reports. Original dynamic maps, custom helpers/pipelines,
-  batch/correlation/timing, request/reply, transaction and failure equivalence still require translation
-  and independent verification; the existing fail-closed execution gate is unchanged.
+New native deliver modules (descriptor-driven, so every setting is editable in the flow UI):
+
+- `sftp-deliver` (SSH.NET): host, port, username, password, privateKey/passphrase, `hostKeyFingerprint` (SHA256 base64) or an explicit
+  `acceptAnyHostKey` (default false), remotePath, remoteFileName (`{{payloadName}}`, `{{flowId}}`, `{{executionId}}`, `{{metadata.key}}`),
+  overwrite, append, remoteTempPath (upload then rename), timeoutSeconds.
+- `ftp-deliver` (FluentFTP): the same plus `encryptionMode` (Auto/None/Explicit/Implicit), `passive`, `acceptAnyCertificate` (default false).
+
+Importer changes (bindings only; flows stay disabled and fail-closed):
+
+- nsoftware `AdapterConfig` nested XML is flattened; masked (`******`) values are never read. `nsoftware.SFTP`/`nsoftware.FTP` send ports map to
+  `sftp-deliver`/`ftp-deliver`. `%Variable%` binding values become Config requirements; user names and passwords become Secret requirements;
+  `%SourceFileName%` -> `{{payloadName}}`, `%MessageID%` -> `{{executionId}}` (approximation, warned).
+- SMTP now reads `SMTPHost` (`host:port`), To/CC/From/Subject/Username/SMTPAuthenticate (previously ignored). FILE send maps `FileName`/`CopyMode`;
+  FILE receive splits the address wildcard from the directory, honors `FileMask`, and uses `PollingInterval` as an Interval trigger.
+- Send-port subscription filters are translated to a suggested `conditionJson` (operators ==, !=, exists; single group) in the draft warnings; it is
+  not auto-applied because the promoted-property metadata keys must be populated first. Other filters are reported.
+
+Not importable (reported as draft warnings, configure in the UI instead):
+
+| BizTalk setting | Mulse option |
+| --- | --- |
+| SecondaryTransport (backup) | add a second delivery action |
+| OrderedDelivery / Priority | no strict ordering; review concurrency |
+| StopSendingOnFailure / RouteFailedMessage | flow retry, `onFailure` and failure handling |
+| Send/receive service windows, schedules | Interval trigger schedule |
+| Enable=false receive location | draft stays disabled; enable deliberately |
+| Pipeline-component properties, port-level maps | render/augment/transform steps |
+| DeliveryNotification, Tracking | not imported |
+| WCF-WSHttp security, timeouts, message sizes | `http-deliver` has no equivalent; use headersJson/proxy |
+
+Unverified assumptions: nsoftware `SSLStartMode` (mapped to Implicit on port 990, otherwise Auto), `SSHAuthMode` (password assumed; set `privateKey`
+if keys were used) and BizTalk FILE `CopyMode` (0 append -> unsupported, 1 create new, 2 overwrite).
+
+## Native visual building blocks
+
+- Descriptor-driven external transforms support hot reload; checkpoint state has visual configuration and repair. Render/map dispatch supports allowlisted renderer settings, leased invocation and per-execution grouping, not nested dispatch or durable cross-run batching.
+- Metadata-mode XML policies and visual promotion preserve bodies and can select maps. Count-triggered collectors persist correlated batches and receipts, support timezone-aware deadlines and confirmed early release, and freeze ambiguous failures rather than replay blindly. Tests cover persistence, restart, retries, acknowledgement and DST cases; these are not exactly-once delivery or automatic translation of Billing batching policies.
+- These controls are shared by imported and scratch-built flows. They neither translate all Billing control flow nor clear its execution gate; dynamic maps, pipelines, correlation/timing, request/reply, transactions and failure equivalence remain open.
 
 ## Developer SDK/control-flow increment
 
@@ -121,6 +179,100 @@ Target behavior: imported workflows must remain disabled until required configur
   correlations, DateTime/batch expressions, general schema/context/DOM behavior, actual maps/pipelines, transaction
   recovery, canonical importer wiring and imported end-to-end equivalence remain open. Helpers stay untranslated.
   The existing imported-flow execution gate is unchanged.
+
+## 2026-11-05 increment: pipeline components, HL7 XML render, SMTP attachment name
+
+Implemented (tests: `BizTalkTransportMappingTests`, `BillingHelperModuleTests`, `Hl7XmlRenderTests`, `BillingPluginTests`):
+
+- Pipeline-component equivalents (later renamed; see the module-move increment below): `hl7-message-type-augment` (HL7TypeCaster
+  equivalent, `Mulse.Hl7`) and `set-context-property-augment` (SetProperty equivalent, Compatibility Pack). Both are
+  descriptor-driven, so all settings are labeled UI fields.
+- The importer parses `SendPipelineData` from bindings into `PipelineComponentConfig` (secret-named properties dropped) and inserts
+  pre-filled augment steps for `HL7TypeCaster`/`SetProperty`. MIME/S-MIME and BTAHL7 components produce warnings; hints use
+  `BT-PIPELINE-COMPONENT-HINT`.
+- `hl7-xml-render` (`Mulse.Hl7`) renders HL7 v2 XML to ER7 (`trimTrailingDelimiters`, `segmentTerminator` CR/LF/CRLF dropdown). It is
+  selected when a send port has a BTAHL7 `*Asm` component.
+- `smtp-email-deliver` has `attachmentNameMetadataKey`; the importer sets it from a SetProperty FileName component.
+- UI render test confirms the new modules expose explicit labeled fields (the "Add setting" button is only for undeclared keys).
+
+### Work tracker (status recorded between steps)
+
+| # | Item | Status |
+| --- | --- | --- |
+| 1 | Importer tests: `hl7-xml-render` selection/trim setting, SMTP `attachmentNameMetadataKey` | done (2 tests in `BizTalkTransportMappingTests`) |
+| 2 | Scope pipeline-component augments per send-port route | done: identical pipelines run flow-wide; differing ones get a `targetRoute` = `route-N` condition (test added); 1487 tests pass |
+| 3 | Read default pipeline components from `.btp` when binding lacks `SendPipelineData`; map receive pipelines | send side done: `ApplyPipelineFileDefaults` matches the port's TransmitPipeline to a `.btp` artifact by name, reads `<Property><Value>` defaults (secret-named dropped) and warns that deployed overrides are unknown (test added, 1488 pass). Receive pipelines: only evidence/`BT-PIPELINE-COMPONENT-HINT` guidance, no auto-inserted steps (no native equivalents for disassemblers beyond `hl7-parse`/`flat-file-parse`) |
+| 4 | Audit ODX translation for the three Billing orchestrations (translated / stubbed / dropped) | done - see "ODX audit" below |
+| 5 | Final docs/verification update | done (full suite 1488 passed, 0 failed) |
+
+### ODX audit (real Billing project, 3 orchestrations; analysis run 2026-11-05, bindings sample included)
+
+Shape inventory is complete (nothing dropped from evidence): 192 / 196 / 574 shapes for BillingBatchDoubleBodyProcess / BillingBatchWithTrailerProcess / BillingServiceProcess. Each artifact reports `StubGenerated`.
+
+**Default import path** (draft flow: `route-selection-augment`, `decision-augment`, `stateful-orchestration-augment`, pipeline augments):
+
+| Source construct | Result |
+| --- | --- |
+| Decisions (10 / 10 / 31) | Simple equality branches become `decision-augment` rules that only tag metadata (`biztalk:<decision>`). 9 / 9 / 24 branches were too complex and are quoted in a scaffolded C# module. |
+| Decision branch bodies (sends, map construction, assignments) | NOT executed by the draft flow; the tags are not consumed by anything yet. The behavior still has to be wired by hand, or by the native path below. |
+| Listen / correlation / convoy / long-running + atomic scopes | Represented only by a scaffolded `stateful-orchestration-augment` and atomic-scope tagging with a compensation requirement per route. |
+| CallRules `Billing Processing Policy` (version -1) | Reported (`BT-RULE-POLICY-MISSING`); policy not in supplied exports; no policy is wired. |
+| Dynamic maps (`Create Header & Body`, ...) | Evidence only; require explicit native renderer choices. |
+| Delay | Not translated in the draft path (native path supports pinned timers by explicit binding). |
+
+**Opt-in native path** (`GenerateNativeFlow`): replaces the augments with a single `native-control-flow-augment` and produces a fail-closed `BT-NATIVE-UNRESOLVED` blocker for each construct it cannot prove. Blocker counts: 128 / 128 / 338. Dominant causes by shape: decisions/branches (34 / 34 / 91), port declarations and binding attributes (22 / 22 / 33), Sends needing explicit protocol adapters (11 / 11 / 24), message assignments needing exact schema ownership or explicit map choices (10 / 11 / 56), variable assignments without distinguished-field declarations, DateTime/`System.Type` variables, port types/operations/property refs (structural contract translation), correlation declarations, transaction/scope attributes, Listen/Delay.
+
+`GenerateNativeFlow` is exposed in the import panel and enabled by default; browser interaction has not been verified.
+
+
+### Native-first loop
+
+Billing is only the worked example. Changes below are generic importer rules.
+
+| # | Item | Status |
+| --- | --- | --- |
+| N1 | Contract/wiring declarations (`Module`, `PortType`, `OperationDeclaration`, `PortDeclaration`, Physical/Logical binding attributes, `PropertyRef`, `CorrelationType`, `PartDeclaration`, `MultipartMessageType`, operation `MessageRef`) no longer produce `BT-NATIVE-UNRESOLVED`; they are kept as named structure nodes. Test: `NativeImport_TreatsContractDeclarationsAsNonBlocking`. | done |
+| N2 | Native `Send` accepts FTP / SFTP / SMTP bound ports (settings pre-filled from bindings) in addition to FILE / HTTP | done |
+| N3 | Native `Send` with a transmit pipeline: attach imported pipeline components (`hl7-xml-render`, set-property) as ordered native nodes instead of blocking. | partial: durable Augment now supports a single named input and named output with isolated working/source messages, explicit UI configuration and verified effect recovery. Import still blocks transmit pipelines with manual wiring guidance: component identity, complete source order, deployed overrides, unsupported stages and message-copy naming need safe translation before automatic wiring. |
+| N4 | `System.DateTime` / `System.Type` scalar variables and `DateTime` expressions in the native expression reader | pending |
+Billing's `dtEndTime.Subtract(DateTime.Now)` still needs N4. Native `Try`, Scope-as-Sequence/Try, Catch (single untyped) and "(not enforced)" transaction evidence nodes are done; `Listen`/`ListenBranch` and typed/multiple catches pending |
+| N6 | Correlation sets, receive filters (`DNFPredicate`), convoy semantics mapped to metadata-key bindings editable in the UI | pending |
+| N7 | `CallRules` policy version selection and fact bindings in the UI; dynamic-map renderer choices in the UI | partial: the import panel already exposes explicit policy test-version selection and dynamic renderer choices. Only a proven single XML fact can be wired automatically; broader fact binding and BRE behavior remain open. |
+| N8 | UI page to list and resolve each `BT-NATIVE-UNRESOLVED` blocker (and expose `GenerateNativeFlow`) | partial: native generation is exposed and enabled by default; the native editor now lists unresolved nodes, including nested branches, with links to their editable settings. Historical diagnostics remain unchanged and do not approve execution. A dedicated resolution workflow and full browser verification remain open. |
+| N9 | Receive-pipeline components, MIME/S-MIME, BTAHL7 escapes/validation/acks | pending |
+
+Full suite after N5/N8 increments: 1494 tests passed. Visual-editor rendering is covered by tests; browser interaction has not been verified.
+
+### Three-pass continuation (2026-11-06)
+
+1. **Partial:** repeated pipeline augments retain order; unknown components and movement across HL7 assemblers are reported. Full renderer ordering remains open.
+2. **Done:** candidate use requires matching successful analysis settings; reanalyze after external source-file changes, which are not detected automatically.
+3. **Done:** the editor links nested unresolved nodes by path and ID; historical diagnostics do not grant approval.
+
+Verification: 1,496 service tests passed; UI rendering was tested without a browser. No behavioral equivalence was established.
+
+### Ten-pass continuation: named-message pipeline foundation
+
+All ten passes completed: durable named augments validate one input/output payload, isolate the source and working batch, journal effects and recover verified outputs without blind replay. The editor exposes mode, names and module settings. Tests cover validation, round-trip, sequential Billing property augments, waits and disk-backed ambiguous outcomes. Send-pipeline import remains blocked, with port/pipeline-specific manual wiring guidance and its delivery retained; no component equivalence is assumed.
+
+Verification: 76 targeted tests and 1,508 service tests passed; solution build and `git diff --check` succeeded. UI component rendering was tested, not browser interaction. This does not establish BizTalk/Billing equivalence or automatically translate transmit pipelines; candidates remain disabled and unresolved nodes block execution.
+
+### Ten-pass continuation: exact native delay migration
+
+| Pass | Focus | Status |
+| --- | --- | --- |
+| 1 | Import exact tick-based TimeSpan constructors. | done: whole-second nonnegative integer ticks, optional `L` suffix. |
+| 2 | Import exact TimeSpan.FromTicks calls. | done: same exact literal subset, with optional `System` qualification. |
+| 3 | Enforce native duration and source literal bounds. | done: overflow and durations beyond 366 days remain blocked. |
+| 4 | Block fractional, zero, negative and dynamic durations. | done: no rounding, parsing of arbitrary expressions or replay assumptions. |
+| 5 | Preserve source evidence and diagnostics for blocked durations. | done: `BT-NATIVE-UNRESOLVED` and source expression remain visible. |
+| 6 | Preserve and block nested delay behavior. | done: source children are retained under the blocked node. |
+| 7 | Bound oversized diagnostic evidence. | done: parsing stops above 4,096 characters and delay expression excerpts are truncated at 1,024. |
+| 8 | Verify imported wait editor round-trip. | done: editor loads, persists and reopens the edited wait; component test, not a browser test. |
+| 9 | Verify imported wait suspends and resumes without replay. | done: synthetic execution waits until due, delivers once and does not refetch. The import gate remains in force. |
+| 10 | Run regression verification and record remaining gaps. | done: 68 targeted tests passed, solution build and `git diff --check` succeeded. |
+
+Dynamic DateTime delays, sub-second timing and the other N4/N5 behavior remain untranslated; no BizTalk equivalence or browser interaction was verified. The full suite was not rerun in this continuation.
 
 ## Product surfaces
 
@@ -204,20 +356,7 @@ Raw XSLT is an output/runtime representation, not the primary editing format.
 - End-to-end tests for import -> Mapping Designer edit -> synthetic execution -> output comparison.
 - UI tests proving every supported module and mapping operation is available to scratch-built workflows as well as imported workflows.
 
-## Implementation order
-
-1. Canonical migration models and diagnostics.
-2. Path-aware dependency and project resolution.
-3. Mulse message/context abstractions.
-4. Mapping Designer foundation and scratch workflow parity.
-5. Reliable direct-link map translation.
-6. `script-transform` and C# script extraction/classification.
-7. Pipeline translation.
-8. Binding and routing translation.
-9. Orchestration translation.
-10. Readiness gates and SpaceTRAX pilot golden tests.
-
-## Implementation status (updated 2026-10-30)
+## Implementation status (baseline updated 2026-10-30; later increments above)
 
 **Overall: in progress, not fully implemented.** Completion below refers only to the explicitly listed increment, not to BizTalk-equivalent execution.
 
@@ -234,83 +373,22 @@ Raw XSLT is an output/runtime representation, not the primary editing format.
 | Readiness gates | Fail-closed increment verified; verified approval pending | Flows carrying migration reports cannot be enabled or run through UI/API/runtime, schedules, push registration, or processing retries. Saved provenance cannot be replaced by flow updates. Disabled editing, duplication and terminal source acknowledgements remain available. No manual override or verified approval/revalidation path exists yet; legacy flows without metadata need re-import. |
 | Verified SpaceTRAX pilot | Source/import assessment verified; executable parity pending | BillingServiceProcess now analyzes from its ODX through its exact owning project, with three Billing candidates and specific missing behavior identified. No BizTalk golden-output comparison or production execution has been performed. See BillingServiceProcess-Migration-Guide.md. |
 
-### Completed increment: path-aware dependency resolution
+### Completed increments: dependencies and migration reports
 
-- Preserve raw reference includes, optional HintPath values, resolution method, selected project path, alternative candidate paths, and an explanation.
-- Identify projects by normalized full path rather than assembly name. Duplicate project/assembly names no longer cause the name-keyed dictionary exception or merge dependencies.
-- Resolve explicit `ProjectReference` paths within the analyzed workspace, even without `<Name>` metadata or when that metadata disagrees with the path.
-- Infer assembly references from a concrete HintPath only when the output name and closest owning source-project directory agree. Compiled assemblies do not need to exist and are not loaded or executed.
-- Use a unique-name fallback only when no path evidence was supplied. Ambiguous names, stale/mismatched paths, and unevaluated MSBuild expressions produce explicit diagnostics instead of substituting a namesake.
-- Traverse BizTalk dependencies by path, handle cycles/diamond graphs, and deduplicate referenced artifact paths. Custom assembly consumers are identified by source-project path, including consumers reached through BizTalk libraries.
-- Keep draft IDs and generated configuration-reference prefixes distinct when project or orchestration names normalize to the same ID. Existing non-colliding IDs retain their format. Collision suffixes are deterministic for the same analyzed paths/order; relocating projects or changing the workspace can change IDs.
-- Expose **Project dependencies** in the existing **Import from BizTalk** panel. Each flow candidate shows its source-project path. Direct/transitive unresolved-reference warnings remain visible in the draft's follow-up panel after loading it onto the canvas.
-- Update the README with the implemented behavior and its limits.
-
-### Verification results: dependency-resolution increment
-
-- **53 targeted tests passed**, including **16 new dependency/provenance/UI regression cases** plus existing BizTalk analyzer and Flow Designer rendering tests.
-- **Full solution build succeeded** after the implementation and documentation updates; `git diff --check` reported no patch whitespace errors.
-- New coverage includes duplicate project and custom-assembly names, explicit references without reliable name metadata, HintPath inference without compiled binaries, ambiguous/missing/mismatched paths, MSBuild expressions, unique-name fallback, external references, cycles/diamonds, additional/overlapping source scopes, normalized orchestration-name collisions, draft/config ID consistency, transitive warnings, and API-to-UI serialization/rendering.
-- Read-only analysis of the complete SpaceTRAX Interface source root succeeded: **52 BizTalk projects**, **17 custom assemblies**, **53 candidates**, **53 unique draft IDs**, **all drafts disabled**, and **2 duplicate project-name groups** retained separately.
-- Reference results for that analysis: **7 ProjectPath**, **10 HintPath**, **126 Unresolved**, **441 External**. These counts describe source-project resolution, not translation readiness. Unresolved references need review; External means no matching source project exists in the analyzed workspace, not that an assembly is supported or executable.
-- No imported flow was executed, no BizTalk assembly was loaded, no production endpoint was contacted, and the external source repository was not modified. The temporary verification harness was kept outside the repository and removed after use.
-
-### Completed increment: persistent migration reports and artifact diagnostics
-
-- Add a versioned, portable `FlowMigrationReport` to the saved pipeline and API/UI contracts. Preserve source system, source-project path, selected orchestration, artifact paths/statuses, coded diagnostics with severity/remediation, and original import warnings.
-- Classify missing/unreadable/unrecognized maps and unsupported functoids explicitly instead of dropping them from the report. Referenced maps use their owning project's analysis. Direct-link starter XSLT remains **review required**, with a blocking **not wired** diagnostic; it is not installed or made executable by this increment.
-- Identify generated orchestration modules as **stub generated**, never completed translations. Split candidates retain only their own orchestration report plus shared artifact inventory. Pipeline/custom assembly behavior remains unsupported; schemas and inferred bindings require review.
-- Include unresolved dependencies, missing bindings, configuration references, and a mandatory unverified-semantics diagnostic. No generated artifact is classified fully translated. `FullyTranslated` and `ConfigurationRequired` remain available contract statuses; configuration requirements currently appear as report diagnostics.
-- Expose an expandable **Migration report** on every candidate in **Import from BizTalk**, and in **BizTalk import follow-up** after loading, saving, or reopening the flow in the designer. Show source evidence, blocking counts, artifact details, and next actions. Clearing/editing the canvas does not silently erase the snapshot.
-- Preserve the report through ordinary and designed-flow creation, updates, category/enable copies, duplication, configuration resolution, disk reload, and encrypted workspace backup/restore. Older clients omitting the new property retain the existing report; old/manual flows without it remain compatible.
-- Reports are import-time snapshots, not live validation or execution approvals. Resolving config or editing a map does not clear a diagnostic. This initial increment accepted client-editable metadata, not trusted approval evidence; the subsequent readiness increment below protects saved provenance and blocks imports regardless of submitted status.
-- Scratch-created flows keep the same existing designer and save paths without requiring import metadata. This increment adds no import-only transformation engine and does not complete the shared Mapping Designer or script tooling.
-
-### Verification results: migration-report increment
-
-- **154 targeted tests passed**, including **14 new migration-report cases**, extended backup coverage, and existing BizTalk, mapping/API, storage, configuration, flow-management, workspace API, and designer rendering regressions.
-- New coverage verifies direct/partial/functoid/malformed/missing maps, referenced-map analysis, custom code, unresolved dependencies, schema/pipeline classification, orchestration split/stub isolation, string-enum API/UI round trips, real disk reload, metadata-omitting updates, copies/categories, designed creation, configuration resolution without report secret substitution, designer apply/save/update/reopen/clear, rendered remediation, and old flows without metadata. Encrypted workspace backup/restore also retains the snapshot.
-- **Full solution Debug build succeeded** with no compilation errors. Build output includes ImageSharp licensing and test-project validation-source-generator warnings, plus the installed preview SDK notice. Visual Studio's build/error tools were unavailable, so validation used `dotnet build .\Mulse.slnx --no-restore` and targeted `dotnet test` commands.
-- Verification used synthetic local fixtures; no BizTalk assembly or imported business workflow was executed, no production endpoint was contacted, and SpaceTRAX source was not modified. The whole-root SpaceTRAX counts above belong to the previous increment, not a new equivalence test.
+- Projects are identified by full path, with explicit project references, conservative HintPath inference, cycle handling, collision-safe draft IDs and diagnostics for ambiguous or unevaluated references. Import UI exposes dependency evidence. Evaluated/deployed identity remains unproven.
+- Versioned migration reports preserve source provenance, artifact statuses, blocking diagnostics and remediation across UI/API, saves, copies, reload and backup. Reports are import-time snapshots, not live approval; stubs and unwired mappings are not completed translations.
+- Earlier checks passed 53 dependency and 154 report-related tests and solution builds. Read-only SpaceTRAX analysis found 52 BizTalk projects, 17 custom assemblies and 53 disabled candidates; 126 references were unresolved and 441 external to the analyzed workspace. These are inventory counts, not readiness or behavioral evidence.
 
 ### Completed increment: fail-closed migration readiness
 
-- User-selected policy: keep imported flows blocked until verified translation support exists, rather than adding a manual review/acceptance override. No report status, empty diagnostic list, unknown report version, or configuration edit grants permission to run.
-- Add one server-side migration guard, used by enabled ordinary/designed-flow creation and updates, including the dedicated enable API. Attempts return an explicit HTTP 409 conflict through the standard problem-details handler. Saving a valid disabled draft, disabling an older enabled import, categorizing a disabled draft, and duplicating it remain supported.
-- Protect saved import provenance: omitting metadata retains the saved report; supplying a changed report through a flow update returns 409 instead of silently replacing it. Round-tripping the unchanged report still works. Copies, persistence, and backup restoration retain the gate.
-- Guard the runtime before module leases, source fetches, transforms, or delivery; scheduled and push-dispatched runs use the same path. Re-read the definition after acquiring the execution lock. Previously enabled imports are blocked even if the stored enabled flag is still true.
-- Do not register push sources for flows with migration reports. Existing registrations are removed during reconciliation; blocked registration is logged. Processing retry recovery fails explicitly and retains pending state instead of deleting it as a stale retry.
-- Preserve terminal source-outcome notifications for work already completed: notification-only recovery can acknowledge its original receipts without fetching, parsing, transforming, or delivering again. Blocking such cleanup would strand source state or risk replay. Already-running executions are not cancelled by this increment.
-- Show blocking guidance and migration reports in dashboard cards, disable imported Enable/Run controls, and prevent checking Enabled/saving enabled imports in the designer. Older enabled imports can still be disabled. Imported drafts remain editable; scratch-built flows without migration metadata use their existing modules and execution paths unchanged.
-- Update importer warnings, API endpoint descriptions, README, and this plan to distinguish configuration review from verified translation approval.
-
-### Verification results: readiness increment
-
-- **215 targeted tests passed**, including **24 new readiness cases** and **one new dashboard/designer rendering case**, plus the updated report/designer regression and existing import, API, runtime, source-outcome, configuration, persistence, backup and workspace tests.
-- **Full solution build succeeded** through Visual Studio. The targeted CLI test build still reports the existing validation-source-generator warning and installed preview SDK notice; neither prevented compilation or test execution. `git diff --check` found no whitespace errors.
-- Coverage includes every translation status, empty/future-version snapshots, enabled ordinary/designed creation, omitted/replaced provenance, disabled edits/copies, legacy enabled definitions, all three trigger modes, scheduled dispatch, push registration without module leasing, all five processing retry stage kinds with retained state, disk reload/raw-store restoration, real HTTP 409 responses, and unchanged scratch-flow execution.
-- A synthetic terminal callback test proves that notification-only recovery can finish with exactly one original fetch and one original delivery; no business processing is replayed after applying the migration gate. UI tests verify blocked controls, visible reports, disabled-draft guidance, and rejection before a designer save request is sent.
-- No real BizTalk business workflow was executed, no production endpoint was contacted, and SpaceTRAX source was not modified. The gate is not proof that any translation is correct.
+- Report-bearing imports cannot be enabled or run through UI/API, scheduled/push execution or processing retries; provenance is protected. Disabled drafts remain editable and copyable. Configuration changes or report statuses do not grant approval; there is no manual override or verified approval path yet.
+- Existing terminal source acknowledgements can complete without replay, but already-running executions are not cancelled. The gate is a workflow safeguard, not an authorization boundary; legacy imports without metadata need reanalysis/re-import.
+- Earlier verification: 215 targeted tests and solution build passed, including disabled editing, retry retention, source acknowledgements and scratch-flow compatibility. No real BizTalk workflow was executed.
 
 ### Completed increment: persisted scalar XML Mapping Designer
 
-- Add canonical `Mulse.Modules.Mapping.XmlMappingDefinition` version 1, saved as a render node's `mappingJson` setting. It models explicit namespace prefixes, a target root, named source/target paths, and text constants (including empty constants). XSLT is generated from this editable model, not stored as the primary model.
-- Register `xml-mapping-render` in the built-in compatibility package. The module maps each XML payload independently, preserves metadata, and emits XML. Named source paths must select exactly one scalar element or attribute; missing, repeating, complex, or wrong-namespace values fail explicitly rather than selecting the first match or passing through the original message.
-- Support namespace-qualified target roots/elements/attributes, shared target containers, unqualified names in no namespace, escaped literals and empty scalar values. Reject duplicate/overlapping targets, undeclared/reserved prefixes, unsupported model versions/properties, wildcard/predicate/function XPath expressions, and invalid definitions. No script or external document execution is introduced.
-- Replace the temporary global mapping table with node-owned editors in **Flow Designer > Mapping Designer**. **Add XML mapping render** adds a render-only route (or fills a route missing a render); add a deliver node before saving. Existing XML mapping renders have an **Edit XML mapping** Properties action. Namespace, root, source-field, constant, add/remove-field and raw-definition controls write directly into that node's settings; normal **Create flow / Save flow** persists them on both new and existing flows.
-- Existing join mappings remain in the per-join Properties editor; Mapping Designer links to those editors instead of keeping a separate table that disappeared on reopen or could overwrite every join. The designed-flow API remains available for existing clients.
-- Add `POST /api/flow-designer/xml-mapping/preview` and its UI client. **Preview XML mapping** accepts an unsaved synthetic sample, shows output XML and generated XSLT, and uses the exact runtime engine without fetching sources or delivering data. Clear preview output on edits; ignore an in-flight response if the definition/sample changed. Invalid/future JSON is preserved for correction and shown as an editor error, not silently reset.
-- Keep all import readiness gates and reports unchanged. Adding/editing/previewing a native map in an imported disabled draft is possible, but does not approve execution or automatically replace its existing BizTalk map stub/stylesheet reference. No existing `.btm` analyzer output is newly claimed as fully translated or automatically installed.
-- Bound definitions to 262,144 characters, 128 fields, 32 namespace prefixes and 32 path segments; XML input to 1,000,000 characters and output to 4,000,000 characters. These limits apply to preview and runtime. DTDs, external resolution and XSLT scripts/document access are disabled. Sample XML is not saved with the flow.
-
-### Verification results: scalar XML mapping increment
-
-- **45 new mapping test cases** cover expanded names, nested target containers, attributes, constants/escaping/empty values, explicit cardinality failures, malformed/unsafe inputs, unsupported paths/models/namespaces, overlapping targets, size/output limits and cancellation.
-- Tests exercise actual module registration through the API, disk reload and duplication, a complete source -> XML parser -> native mapping render -> captured delivery, and real HTTP preview responses with the UI API client. Preview and runtime output are compared directly.
-- UI tests exercise field edits through editor callbacks and designer create/update/reopen for both manual flows and report-bearing disabled drafts, rendered controls/native render creation, malformed/future-definition preservation, and preview output/error handling/invalidation. These are component-rendering tests, not a browser drag/drop test.
-- **287 related tests passed; full solution build succeeded** through Visual Studio. The final targeted compilation reported no warnings, only the installed preview SDK notice; CS8785 was treated as an error. `git diff --check` found no whitespace errors. Visual Studio file-error inspection was unavailable, so compilation and test execution supplied validation.
-- All samples are synthetic/local; no SpaceTRAX business map or production endpoint was executed. This is a bounded Mapping Designer foundation, not completed BizTalk map translation or a schema-to-schema tree editor.
-- Follow-up to the prior increment's CS8785 warning: API test hosts now share one `AddValidation` call site. Generator validation remains enabled, with a two-host request-validation regression test; targeted builds treat CS8785 as an error rather than suppressing it.
+- Node-owned `mappingJson` models scalar paths, namespaces and constants; `xml-mapping-render` generates XSLT and fails explicitly for unsupported cardinality or invalid mappings. The designer edits and saves the model for scratch and imported drafts; preview uses the same runtime without source fetch or delivery. Preview samples are not saved. Limits, unsafe XML/XSLT restrictions and validation apply to both preview and execution.
+- Editing or previewing does not wire an imported map or approve execution. Repeating records, general functoids and business-map parity remain open. Earlier verification: 287 related tests and solution build passed using synthetic fixtures; UI tests covered component callbacks, not browser gestures.
 
 ### Completed increments: orchestration source evidence, ODX entry point and fail-explicit scaffolds
 
@@ -368,18 +446,10 @@ It records owning project/path, schema references, direct links, constants, unsu
 - **Verification:** 604 portable Service.Tests cases pass with zero failures/skips. New checks cover saved report/disk/UI round trips, exact caps and omissions, malformed inputs, metadata escaping/value exclusion, string semantics/order/absence/cardinality, UI editing/save/reopen/provenance, real HTTP preview and single/ZIP downloads, deterministic same-name pipeline identities, generated SDK compilation, cancellation and fail-explicit execution. Schema attach/remove retains operations. The rendered import panel exposes download buttons and non-approval warnings.
 - **Final build checks:** full solution build succeeded. An explicit test-project rebuild with CS8785 treated as an error produced zero warnings/errors; only the installed preview SDK notice appeared. The complete 604-test suite passed after that rebuild. `git diff --check` found no whitespace errors; the existing Designer.razor LF/CRLF advisory remains. Visual Studio file-error inspection was unavailable/stale, so actual compiler/test results supplied verification. No dependencies were installed and no external source files were changed.
 
-### Completed increment: visual scalar Mapping Designer
+### Completed increments: visual mapping and builder
 
-- **UI:** a widened Mapping Designer now contains a scrollable source-tree / connection-and-operation / target-tree canvas. Schema hierarchy is indented; saved assignments have visible connector lines, constants and ordered operation nodes. Select a source and target scalar field then **Connect fields** (click/keyboard selection, not dragging). Select a connection/operation node to edit its existing field settings below; add/reorder/remove operations there, or remove connections directly. **Show all field settings** restores the full form editor. Layout is deterministic/automatic, not a separately saved freeform graph.
-- **Persistence/integration:** the visual surface edits the same `mappingJson` through existing callbacks and preview invalidation. Scratch-built flows and report-bearing drafts share the UI. Existing maps/proposals reopen visually. Attached validation schemas reload automatically; inspected schemas are labeled separately and are not silently attached. Without schemas, saved path hierarchy and connections still appear. Load failures are visible and retryable; replaced schemas invalidate selections, and stale async responses cannot overwrite newer trees.
-- **Guards:** namespace URIs, not prefix spelling, match schema and saved path nodes. Visual connections reuse compatible prefixes and reject incompatible roots, duplicate/overlapping targets and the existing 128-field/32-prefix limits without mutating saved JSON. Source-root assertions remain enforced. Optional-source/optional-target links start with explicit version-2 Omit; field settings and canvas guidance expose that behavior. Repeating/record/unsupported shapes remain visible but cannot create scalar links. No functoid inference, repeated-record runtime, message/context abstraction, reference-path assertions or imported execution approval was added by this UI increment.
-- **Verification:** 611 portable Service.Tests cases passed with no failures/skips. Added coverage includes rendered tree/line/constant/operation markup, namespace alias identity and hierarchy, disabled repetitions, saved-schema errors/retry/races, root/overlap/field/prefix limits, actual runtime omission output, and visual connection callbacks surviving scratch/imported designer create/update/reopen while preserving provenance and output. UI checks are component rendering/callback tests, not browser drag/file-picker or pixel-layout verification. Full solution build succeeded; an explicit test-project rebuild with CS8785 treated as an error produced zero warnings/errors (only the installed preview SDK notice). Whitespace checks passed apart from the existing Designer.razor LF/CRLF advisory. Visual Studio file-error inspection was unavailable; actual builds/tests supplied verification. No dependencies were installed or external source files changed.
-
-### Completed increment: tabbed builder and compact contextual help
-
-- **Workspace UX:** Flow / Mapping tabs replace the floating Mapping Designer. Mapping occupies the work area, with a render-node selector showing one map at a time. Properties' Edit XML mapping opens the correct map; creating a map selects it. Join links return to Flow Properties. Flow-only layout/clear controls are disabled in Mapping. Both workspaces and opened map editors stay mounted while hidden, retaining toolbox positions, schema inputs, sample XML and preview state during tab/map switches. The shared save bar still persists only the flow definition; inputs/previews are not saved.
-- **Reduced prose:** descriptive guidance in the builder, mapping editor and source tools moved to reusable focusable ? help controls (hover/focus/click; Escape dismisses). Map settings, field settings, JSON and Test mapping are collapsible; selecting a connection/operation or adding a field opens field settings. Errors, import-execution blocking notices, proposal warnings and unsaved status remain visible rather than becoming tooltip-only. Workspace tabs support Left/Right and Home/End navigation. No execution semantics or approval gates changed.
-- **Verification:** all 612 Service.Tests cases passed with zero failures/skips. Component tests retain the same map/source-tool/toolbox instances through tab switches, assert transient schema/sample/preview state and dragged toolbox position, and check multi-map selection and help association/escaping/Escape dismissal. UI build succeeded. The running service's apphost was locked during the initial CLI build; tests used `-p:UseAppHost=false` without stopping it or changing project files. File-error inspection was unavailable; actual compiler/test results supplied validation. Actual browser positioning, hover and keyboard-focus behavior still require visual acceptance; component tests are not pixel-layout verification.
+- Scratch flows and imported drafts share the tabbed Flow/Mapping builder and persisted scalar mapping editor. Schema trees, click/keyboard connections, constants and ordered operations edit the same `mappingJson`; schemas can be inspected separately from runtime validation. Root, namespace, cardinality and overlap guards remain explicit. Repeated records and functoid inference remain unsupported.
+- Tabs preserve transient editor state; contextual help and collapsible settings keep errors and migration blockers visible. Component tests cover editing, persistence and navigation; browser layout, file-picker, hover and keyboard-focus acceptance remain open. Prior verification: 612 service tests passed and UI build succeeded.
 
 ### Known limits / next increments
 

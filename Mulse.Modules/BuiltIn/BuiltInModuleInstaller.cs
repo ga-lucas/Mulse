@@ -28,6 +28,8 @@ public sealed class BuiltInModuleInstaller : IModuleInstaller
         builder.AddDeliver<LoggingDeliverModule>();
         builder.AddDeliver<FileSystemDeliverModule>();
         builder.AddDeliver<HttpDeliverModule>();
+        builder.AddDeliver<SftpDeliverModule>();
+        builder.AddDeliver<FtpDeliverModule>();
         builder.AddDeliver<FlowLinkDeliverModule>();
         builder.AddTransform<ConcatTransformModule>();
         builder.AddTransform<AddTransformModule>();

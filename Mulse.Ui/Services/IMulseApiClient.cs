@@ -26,6 +26,9 @@ public interface IMulseApiClient
 
     Task<XmlMappingPreviewViewModel> PreviewXmlMappingAsync(XmlMappingPreviewRequestViewModel request, CancellationToken cancellationToken);
 
+    Task<NativeFlowTestResponseViewModel> TestNativeFlowAsync(NativeFlowTestRequestViewModel request, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support isolated native testing.");
+
     Task<XmlSchemaTreeViewModel> AnalyzeXmlMappingSchemasAsync(XmlSchemaAnalysisRequestViewModel request, CancellationToken cancellationToken);
 
     Task<NativeMapConversionViewModel> ImportNativeXmlMappingAsync(XmlMappingImportRequestViewModel request, CancellationToken cancellationToken);

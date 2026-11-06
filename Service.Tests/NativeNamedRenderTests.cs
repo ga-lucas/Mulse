@@ -212,7 +212,7 @@ public sealed class NativeNamedRenderTests
             case "too-many": node.InputMessages = Enumerable.Repeat("first", 33).ToList(); break;
             case "blank": node.InputMessages = [" "]; break;
             case "non-durable": flow.Durable = false; break;
-            case "inactive": node.Kind = NativeFlowNodeKind.Augment; break;
+            case "inactive": node.Kind = NativeFlowNodeKind.Deliver; break;
             case "no-output": node.MessageName = ""; break;
             case "no-inputs": node.InputMessages = null; break;
         }

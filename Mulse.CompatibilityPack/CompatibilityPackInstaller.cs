@@ -14,6 +14,11 @@ public sealed class CompatibilityPackInstaller : IModuleInstaller
         builder.AddParse<XmlEnvelopeDebatchParseModule>();
         builder.AddOrchestrationAugment<MetadataPromotionAugmentModule>();
         builder.AddOrchestrationAugment<RouteSelectionAugmentModule>();
+        builder.AddOrchestrationAugment<FilenameTemplateAugmentModule>();
+        builder.AddOrchestrationAugment<SetContextPropertyAugmentModule>();
+        builder.AddTransform<FilenameTemplateTransformModule>();
+        builder.AddTransform<AddressPartTransformModule>();
+        builder.AddRender<XmlRemoveNamespacesRenderModule>();
         builder.AddRender<FlatFileRenderModule>();
         builder.AddRender<XsltRenderModule>();
         builder.AddRender<XmlMappingRenderModule>();

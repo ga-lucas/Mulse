@@ -69,7 +69,7 @@ public sealed class NativeDurableRecovery(IFlowOrchestrationStateStore store, Ti
         if (node.Kind == NativeFlowNodeKind.Deliver) state.Responses.AddRange(snapshots);
         else if (node.InputMessages is not null)
         {
-            if (snapshots.Count != 1) throw new ArgumentException("Verified named renderer output requires exactly one payload.", nameof(output));
+            if (snapshots.Count != 1) throw new ArgumentException("Verified named transform output requires exactly one payload.", nameof(output));
             state.Messages[node.MessageName] = snapshots;
         }
         else working = snapshots;

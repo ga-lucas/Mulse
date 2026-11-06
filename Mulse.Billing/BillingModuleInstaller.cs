@@ -6,9 +6,6 @@ public sealed class BillingModuleInstaller : IModuleInstaller
 {
     public void Install(IModuleRegistryBuilder builder)
     {
-        builder.AddTransform<BillingFilenameTransformModule>();
-        builder.AddOrchestrationAugment<BillingFilenameAugmentModule>();
         builder.AddOrchestrationAugment<BillingFieldAugmentModule>();
-        builder.AddRender<BillingRemoveNamespacesRenderModule>();
     }
 }

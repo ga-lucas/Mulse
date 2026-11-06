@@ -269,6 +269,9 @@ public sealed class BizTalkMigrationReportTests : IDisposable
         var designer = new Designer();
         Property("ApiClient").SetValue(designer, new MulseApiClient(http));
         Property("Navigation").SetValue(designer, new TestNavigation());
+        Field("_bizTalkAnalysis").SetValue(designer, new BizTalkSolutionAnalysisViewModel("source", "Project", "source", "", 1, 0, 1, 1, 0, 0, [], [], [], [view], []));
+        var analysisRequest = Invoke(designer, "CurrentBizTalkAnalysisRequest")!;
+        Field("_bizTalkAnalysisFingerprint").SetValue(designer, JsonSerializer.Serialize(analysisRequest, analysisRequest.GetType()));
         Invoke(designer, "ApplyBizTalkCandidate", view);
         Field("_enabled").SetValue(designer, true);
         await (Task)Invoke(designer, "SaveAsync")!;

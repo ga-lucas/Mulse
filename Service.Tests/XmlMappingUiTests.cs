@@ -316,6 +316,8 @@ public sealed class XmlMappingUiTests
                 }));
                 Assert.NotNull(designer);
                 Field(designer, "_bizTalkAnalysis").SetValue(designer, view);
+                var request = Invoke(designer, "CurrentBizTalkAnalysisRequest")!;
+                Field(designer, "_bizTalkAnalysisFingerprint").SetValue(designer, JsonSerializer.Serialize(request, request.GetType()));
                 Field(designer, "_showBizTalkPanel").SetValue(designer, true);
                 await designer.SetParametersAsync(ParameterView.Empty);
                 var html = rendered.ToHtmlString();
@@ -324,6 +326,39 @@ public sealed class XmlMappingUiTests
                 Assert.Contains(">Download</button>", html);
                 Assert.Contains("C# stubs fail until implemented", html);
                 Assert.Contains("does not approve execution", html);
+                Assert.True((bool)Property(designer, "BizTalkAnalysisIsCurrent").GetValue(designer)!);
+                foreach (var name in new[] { "_additionalBindingPaths", "_additionalSourcePaths", "_additionalRulePaths", "_nativeHostConfigurationPath", "_nativeConfigurationHelperPaths" })
+                {
+                    var field = Field(designer, name); var original = field.GetValue(designer);
+                    field.SetValue(designer, "changed");
+                    Assert.False((bool)Property(designer, "BizTalkAnalysisIsCurrent").GetValue(designer)!);
+                    field.SetValue(designer, original);
+                }
+                var mapSettings = (Dictionary<string, string>)Field(designer, "_nativeMapSettings").GetValue(designer)!;
+                mapSettings["casesJson"] = "[{}]";
+                Assert.False((bool)Property(designer, "BizTalkAnalysisIsCurrent").GetValue(designer)!);
+                mapSettings["casesJson"] = "[]";
+                var policies = (Dictionary<string, string>)Field(designer, "_nativePolicyVersions").GetValue(designer)!;
+                policies["policy"] = "1.0";
+                Assert.False((bool)Property(designer, "BizTalkAnalysisIsCurrent").GetValue(designer)!);
+                policies.Clear();
+                Field(designer, "_generateNativeBizTalkFlow").SetValue(designer, false);
+                Assert.False((bool)Property(designer, "BizTalkAnalysisIsCurrent").GetValue(designer)!);
+                Field(designer, "_generateNativeBizTalkFlow").SetValue(designer, true);
+                Assert.True((bool)Property(designer, "BizTalkAnalysisIsCurrent").GetValue(designer)!);
+
+                Field(designer, "_sourcePath").SetValue(designer, "different.btproj");
+                await designer.SetParametersAsync(ParameterView.Empty);
+                html = rendered.ToHtmlString();
+                Assert.Contains("Import settings changed since analysis", html);
+                Assert.Contains("disabled", html);
+                Invoke(designer, "ApplyBizTalkCandidate", view.FlowCandidates.Single());
+                Assert.Contains("Analyze the source again", Assert.IsType<string>(Field(designer, "_errorMessage").GetValue(designer)));
+                await (Task)Invoke(designer, "DownloadBizTalkScaffoldedModulesAsync", view.FlowCandidates.Single())!;
+                Assert.Contains("Analyze the source again", Assert.IsType<string>(Field(designer, "_errorMessage").GetValue(designer)));
+                await (Task)Invoke(designer, "AnalyzeBizTalkAsync")!;
+                Assert.Null(Field(designer, "_bizTalkAnalysis").GetValue(designer));
+                Assert.False((bool)Property(designer, "BizTalkAnalysisIsCurrent").GetValue(designer)!);
             });
         }
         finally { Directory.Delete(directory, recursive: true); }

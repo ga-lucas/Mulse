@@ -31,6 +31,16 @@ public sealed partial class BizTalkImportService
     private static string SelectDeliverModule(string transportType, string address)
     {
         var normalized = $"{transportType} {address}".ToLowerInvariant();
+        if (IsNsoftwareSftp(transportType, address))
+        {
+            return "sftp-deliver";
+        }
+
+        if (IsNsoftwareFtp(transportType, address))
+        {
+            return "ftp-deliver";
+        }
+
         if (normalized.Contains("smtp") || normalized.StartsWith("mailto:", StringComparison.Ordinal))
         {
             return "smtp-email-deliver";
@@ -107,6 +117,11 @@ public sealed partial class BizTalkImportService
         if (IsSoapSendPort(sendPort))
         {
             return "soap-envelope-render";
+        }
+
+        if (sendPort?.Operational.PipelineComponents.Any(static component => IsBtaHl7Assembler(component.ClassName)) == true)
+        {
+            return "hl7-xml-render";
         }
 
         if (LooksLikeHl7(project))
@@ -272,6 +287,7 @@ public sealed partial class BizTalkImportService
         return renderModule switch
         {
             "hl7-render" => ".hl7",
+            "hl7-xml-render" => ".hl7",
             "flat-file-render" => ".txt",
             "json-render" => ".json",
             _ => ".xml"

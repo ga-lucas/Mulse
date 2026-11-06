@@ -1,7 +1,7 @@
 @foreach (var node in Nodes)
 {
     var index = Nodes.IndexOf(node);
-    <fieldset @key="node.Id">
+    <fieldset @key="node.Id" id="@(HtmlIdPrefix + node.Id)">
         <legend>@(string.IsNullOrWhiteSpace(node.Name) ? node.Kind : node.Name)</legend>
         <label class="field-label">Node name <input class="mapping-input" @bind="node.Name" @bind:after="Notify" /></label>
         <label class="field-label">Node kind
@@ -23,6 +23,22 @@
             </label>
             <p class="field-hint">SaveMessage captures the working batch. UseMessage restores a copy. Receive names the accepted arrival. Reply captures the named batch; Deliver sends it without replacing other named messages.</p>
         }
+        @if (node.Kind == "Terminate")
+        {
+            <label class="field-label">Termination message (the flow instance faults with this text)
+                <input class="mapping-input" maxlength="2000" @bind="node.TerminateMessage" @bind:after="Notify" />
+            </label>
+        }
+        @if (node.Kind == "Try")
+        {
+            <p class="field-hint">Runs the body; a fault raised by the body runs the handler instead. Durable flows only. Not caught: Terminate, failed Deliver/Augment/Render effects (they stay ambiguous for reconciliation), persistence faults, cancellation, and faults crossing a ForEach, Receive or Wait. Transaction timeout, retry, isolation and compensation are not enforced.</p>
+            <label class="field-label">Exception message variable (optional, String, declared automatically)
+                <input class="mapping-input" maxlength="128" value="@node.ExceptionMessageVariable" @onchange="args => SetExceptionVariable(node, false, args.Value?.ToString())" />
+            </label>
+            <label class="field-label">Exception details variable (optional, String: type name and message, not a CLR stack trace)
+                <input class="mapping-input" maxlength="128" value="@node.ExceptionDetailsVariable" @onchange="args => SetExceptionVariable(node, true, args.Value?.ToString())" />
+            </label>
+        }
         @if (node.Kind is "Wait" or "Receive")
         {
             <label class="field-label">@(node.Kind == "Wait" ? "Wait seconds" : "Receive timeout seconds (0 means no timeout)")
@@ -40,11 +56,11 @@
             }
             <button type="button" class="secondary-button" disabled="@(node.CorrelationKeys.Count >= 32)" @onclick="() => AddCorrelation(node)">Add correlation key</button>
         }
-        @if (node.Kind == "Render")
+        @if (node.Kind is "Render" or "Augment")
         {
-            <label class="field-label">Renderer message mode
-                <select class="selector" aria-label="Renderer message mode" value="@(node.InputMessages is null ? "Working" : "Named")" @onchange="args => ChangeRenderMode(node, args.Value?.ToString())">
-                    <option value="Working">Replace working batch</option><option value="Named">Ordered named inputs to named output</option>
+            <label class="field-label">@(node.Kind == "Render" ? "Renderer message mode" : "Augment message mode")
+                <select class="selector" aria-label="@(node.Kind == "Render" ? "Renderer message mode" : "Augment message mode")" value="@(node.InputMessages is null ? "Working" : "Named")" @onchange="args => ChangeRenderMode(node, args.Value?.ToString())">
+                    <option value="Working">Replace working batch</option><option value="Named">@(node.Kind == "Render" ? "Ordered named inputs to named output" : "One named input to named output")</option>
                 </select>
             </label>
             @if (node.InputMessages is { } inputs)
@@ -58,14 +74,17 @@
                     </label>
                     <button type="button" class="secondary-button" disabled="@(position == 0)" @onclick="() => MoveRenderInput(node, position, -1)">Move input earlier</button>
                     <button type="button" class="secondary-button" disabled="@(position == inputs.Count - 1)" @onclick="() => MoveRenderInput(node, position, 1)">Move input later</button>
-                    <button type="button" class="secondary-button" @onclick="() => RemoveRenderInput(node, position)">Remove input argument</button>
+                    <button type="button" class="secondary-button" disabled="@(node.Kind == "Augment" && inputs.Count == 1)" @onclick="() => RemoveRenderInput(node, position)">Remove input argument</button>
                 }
                 <datalist id="@(node.Id + "-render-messages")">@foreach (var name in MessageNames) { <option value="@name"></option> }</datalist>
-                <button type="button" class="secondary-button" disabled="@(inputs.Count >= 32)" @onclick="() => AddRenderInput(node)">Add input argument</button>
-                <p class="field-hint">Requires durable execution and one payload in each named input, in the explicit argument order. Repeated inputs are allowed. The renderer must return one payload; only the named output is replaced. Other messages and the working batch stay unchanged. No aggregation wrapper or map equivalence is inferred. Renderer intent/outcome is journaled; ambiguous outcomes require verified reconciliation, never blind replay.</p>
+                @if (node.Kind == "Render")
+                {
+                    <button type="button" class="secondary-button" disabled="@(inputs.Count >= 32)" @onclick="() => AddRenderInput(node)">Add input argument</button>
+                }
+                <p class="field-hint">Requires durable execution and one payload in each named input. Augments require exactly one input; renderers support ordered inputs. The module must return one payload; only the named output is replaced. Other messages and the working batch stay unchanged. Intent/outcome is journaled; ambiguous outcomes require verified reconciliation, never blind replay.</p>
             }
         }
-        @if (node.Kind is "Augment" or "Render" or "Deliver")
+        @if (node.Kind is "Augment" or "Render" or "Deliver" or "InvokeTransform")
         {
             var descriptor = Modules.FirstOrDefault(module => module.Kind == ModuleKind(node.Kind) && module.Id.Equals(node.Module, StringComparison.OrdinalIgnoreCase));
             <label class="field-label">Module
@@ -94,8 +113,41 @@
             }
             else
             {
-                <ModuleSettingsFields Descriptor="descriptor" Settings="node.Settings" References="References" Changed="Notify" />
+                <ModuleSettingsFields Descriptor="descriptor" Settings="node.Settings" References="References" Changed="Notify" ExcludedKeys="@(node.SettingExpressions?.Keys.ToArray() ?? [])" />
             }
+            @if (node.Kind == "Deliver")
+            {
+                <fieldset><legend>Dynamic settings (computed at send time)</legend>
+                    <p class="field-hint">Each entry replaces the static value of that module setting with a typed expression evaluated when the message is sent, for example a dynamic port address held in a variable. Results must be String, Int32 or Boolean (never null); otherwise nothing is sent. Credentials computed here are not masked by this editor.</p>
+                    <datalist id="@(HtmlIdPrefix + node.Id + "-setting-keys")">
+                        @foreach (var setting in descriptor?.Settings ?? []) { <option value="@setting.Key">@setting.Label</option> }
+                    </datalist>
+                    @foreach (var dynamicSetting in node.SettingExpressions?.ToArray() ?? [])
+                    {
+                        var settingKey = dynamicSetting.Key;
+                        <fieldset @key="dynamicSetting.Value"><legend>@settingKey</legend>
+                            <label class="field-label">Module setting key <input class="mapping-input" aria-label="Dynamic setting key" list="@(HtmlIdPrefix + node.Id + "-setting-keys")" value="@settingKey" @onchange="args => RenameSettingExpression(node, settingKey, args.Value?.ToString())" /></label>
+                            <NativeExpressionEditor Value="dynamicSetting.Value" Variables="Variables" MessageNames="MessageNames" Changed="Changed" />
+                            <button type="button" class="secondary-button" @onclick="() => RemoveSettingExpression(node, settingKey)">Remove dynamic setting</button>
+                        </fieldset>
+                    }
+                    <button type="button" class="secondary-button" disabled="@((node.SettingExpressions?.Count ?? 0) >= 32)" @onclick="() => AddSettingExpression(node)">Add dynamic setting</button>
+                </fieldset>
+            }
+        }
+        @if (node.Kind == "InvokeTransform" && node.TransformInputs is { } transformInputs)
+        {
+            <p class="field-hint">Calls a pure, hot-loadable transform (UDF) with the ordered arguments below and stores its String result in a declared String variable. Durable flows only. It is not an external effect: it is not journaled and runs again if the host stops before the next checkpoint, so only choose deterministic transforms. A missing or unloaded module fails the flow. The transform's code version is not pinned.</p>
+            <label class="field-label">Result variable (declared String) <input class="mapping-input" aria-label="Transform result variable" @bind="node.Variable" @bind:after="Notify" /></label>
+            @for (var argumentIndex = 0; argumentIndex < transformInputs.Count; argumentIndex++)
+            {
+                var position = argumentIndex;
+                <fieldset @key="transformInputs[position]"><legend>Argument @(position + 1)</legend>
+                    <NativeExpressionEditor Value="transformInputs[position]" Variables="Variables" MessageNames="MessageNames" Changed="Changed" />
+                    <button type="button" class="secondary-button" disabled="@(transformInputs.Count == 1)" @onclick="() => RemoveTransformInput(node, position)">Remove argument</button>
+                </fieldset>
+            }
+            <button type="button" class="secondary-button" disabled="@(transformInputs.Count >= 8)" @onclick="() => AddTransformInput(node)">Add argument</button>
         }
         @if (node.Kind is "DeclareVariable" or "SetVariable")
         {
@@ -173,16 +225,16 @@
             <label class="field-label">Maximum iterations <input type="number" min="1" max="10000" @bind="node.MaxIterations" @bind:after="Notify" /></label>
             <p class="field-hint">ForEach processes original payloads in order and combines all outputs. While tests the updated output before each iteration and fails at its limit.</p>
         }
-        @if (node.Kind is "Sequence" or "If" or "ForEach" or "While" or "Blocked" || node.Children.Count > 0)
+        @if (node.Kind is "Sequence" or "If" or "ForEach" or "While" or "Try" or "Blocked" || node.Children.Count > 0)
         {
-            <fieldset><legend>@(node.Kind == "If" ? "Then" : "Body")</legend>
-                <NativeFlowNodesEditor Nodes="node.Children" Modules="Modules" References="References" Changed="Changed" Depth="@(Depth + 1)" MessageNames="MessageNames" Variables="Variables" />
+            <fieldset><legend>@(node.Kind == "If" ? "Then" : node.Kind == "Try" ? "Try body" : "Body")</legend>
+                <NativeFlowNodesEditor Nodes="node.Children" Modules="Modules" References="References" Changed="Changed" Depth="@(Depth + 1)" MessageNames="MessageNames" Variables="Variables" HtmlIdPrefix="@HtmlIdPrefix" />
             </fieldset>
         }
-        @if (node.Kind == "If" || node.Otherwise.Count > 0)
+        @if (node.Kind is "If" or "Try" || node.Otherwise.Count > 0)
         {
-            <fieldset><legend>Else</legend>
-                <NativeFlowNodesEditor Nodes="node.Otherwise" Modules="Modules" References="References" Changed="Changed" Depth="@(Depth + 1)" MessageNames="MessageNames" Variables="Variables" />
+            <fieldset><legend>@(node.Kind == "Try" ? "Catch handler" : "Else")</legend>
+                <NativeFlowNodesEditor Nodes="node.Otherwise" Modules="Modules" References="References" Changed="Changed" Depth="@(Depth + 1)" MessageNames="MessageNames" Variables="Variables" HtmlIdPrefix="@HtmlIdPrefix" />
             </fieldset>
         }
         <button type="button" class="secondary-button" disabled="@(index == 0)" @onclick="() => Move(node, -1)">Move node earlier</button>
@@ -200,8 +252,9 @@
     [Parameter] public int Depth { get; set; }
     [Parameter] public IReadOnlyList<string> MessageNames { get; set; } = [];
     [Parameter] public IReadOnlyList<string> Variables { get; set; } = [];
-    private static readonly string[] Kinds = ["Sequence", "If", "ForEach", "While", "Augment", "Render", "Wait", "Receive", "SaveMessage", "UseMessage", "Reply", "Deliver", "DeclareVariable", "SetVariable", "CreateXmlMessage", "SetMessageValue", "CreateXmlRoot", "AppendXmlMessage", "ApplyXmlRules", "Blocked"];
-    private static string ModuleKind(string kind) => kind == "Render" ? "Render" : kind == "Deliver" ? "Deliver" : "OrchestrationAugment";
+    [Parameter] public string HtmlIdPrefix { get; set; } = "";
+    private static readonly string[] Kinds = ["Sequence", "If", "ForEach", "While", "Augment", "Render", "Wait", "Receive", "SaveMessage", "UseMessage", "Reply", "Deliver", "DeclareVariable", "SetVariable", "CreateXmlMessage", "SetMessageValue", "CreateXmlRoot", "AppendXmlMessage", "ApplyXmlRules", "Terminate", "Try", "InvokeTransform", "Blocked"];
+    private static string ModuleKind(string kind) => kind == "Render" ? "Render" : kind == "Deliver" ? "Deliver" : kind == "InvokeTransform" ? "Transform" : "OrchestrationAugment";
     private static readonly string[] Sources = ["Metadata", "Payload", "PayloadName", "ContentType", "Literal"];
     private static readonly string[] Comparisons = ["Exists", "Equals", "NotEquals", "Contains", "StartsWith", "EndsWith", "In", "IsTrue", "IsFalse"];
     private static bool Excluded(string id) => id is "native-control-flow-augment" or "odx-program-augment" or "stateful-orchestration-augment" or "durable-batch-augment";
@@ -222,13 +275,17 @@
         if (kind is null || kind == node.Kind || !Kinds.Contains(kind)) return;
         node.Kind = kind; node.Module = ""; node.Settings.Clear(); node.Conditions.Clear();
         node.MessageName = ""; node.Channel = ""; node.DurationSeconds = 0; node.CorrelationKeys.Clear();
-        node.Variable = kind is "DeclareVariable" or "SetVariable" ? "" : null;
+        node.Variable = kind is "DeclareVariable" or "SetVariable" or "InvokeTransform" ? "" : null;
+        node.TransformInputs = kind == "InvokeTransform" ? [new()] : null;
+        node.SettingExpressions = null;
         node.VariableType = kind == "DeclareVariable" ? "String" : null;
         node.Expression = kind is "DeclareVariable" or "SetVariable" or "CreateXmlMessage" or "SetMessageValue" or "CreateXmlRoot" ? new() : null;
         node.Target = kind == "SetMessageValue" ? new() { Kind = "XmlString" } : null;
         node.NamespaceExpression = kind == "CreateXmlRoot" ? new() : null;
         node.SourceMessage = kind == "AppendXmlMessage" ? "" : null;
         node.PolicyJson = kind == "ApplyXmlRules" ? "" : null;
+        node.TerminateMessage = kind == "Terminate" ? "" : null;
+        node.ExceptionMessageVariable = null; node.ExceptionDetailsVariable = null;
         node.InputMessages = null; node.SelectionExpression = null;
         if (kind is "If" or "While") node.Conditions.Add(new());
         await Notify();
@@ -243,7 +300,7 @@
     private async Task ChangeModule(NativeFlowNodeViewModel node, string? module)
     {
         if (module is null || node.Module.Equals(module, StringComparison.OrdinalIgnoreCase)) return;
-        node.Module = module; node.SelectionExpression = null;
+        node.Module = module; node.SelectionExpression = null; node.SettingExpressions = null;
         node.Settings = Modules.FirstOrDefault(item => item.Id.Equals(module, StringComparison.OrdinalIgnoreCase))?.Settings
             .Where(setting => setting.DefaultValue is not null).ToDictionary(setting => setting.Key, setting => setting.DefaultValue!) ?? [];
         await Notify();
@@ -275,8 +332,41 @@
         if (destination < 0 || destination >= inputs.Count) return;
         (inputs[index], inputs[destination]) = (inputs[destination], inputs[index]); await Notify();
     }
+    private async Task AddTransformInput(NativeFlowNodeViewModel node) { if (node.TransformInputs!.Count < 8) node.TransformInputs.Add(new()); await Notify(); }
+    private async Task RemoveTransformInput(NativeFlowNodeViewModel node, int index) { node.TransformInputs!.RemoveAt(index); await Notify(); }
     private async Task SetSetting(NativeFlowNodeViewModel node, string key, string value) { node.Settings[key] = value; await Notify(); }
+    private async Task AddSettingExpression(NativeFlowNodeViewModel node)
+    {
+        node.SettingExpressions ??= new(StringComparer.OrdinalIgnoreCase);
+        if (node.SettingExpressions.Count >= 32) return;
+        var descriptor = Modules.FirstOrDefault(module => module.Kind == "Deliver" && module.Id.Equals(node.Module, StringComparison.OrdinalIgnoreCase));
+        var key = descriptor?.Settings.Select(setting => setting.Key).FirstOrDefault(candidate => !node.SettingExpressions.ContainsKey(candidate)) ?? "";
+        if (key.Length == 0 || node.SettingExpressions.ContainsKey(key)) return;
+        node.Settings.Remove(key); node.SettingExpressions[key] = new(); await Notify();
+    }
+    private async Task RenameSettingExpression(NativeFlowNodeViewModel node, string oldKey, string? newKey)
+    {
+        newKey = newKey?.Trim() ?? "";
+        if (node.SettingExpressions is not { } expressions || newKey.Length == 0 || newKey == oldKey
+            || expressions.ContainsKey(newKey) || !expressions.Remove(oldKey, out var expression)) return;
+        node.Settings.Remove(newKey); expressions[newKey] = expression; await Notify();
+    }
+    private async Task RemoveSettingExpression(NativeFlowNodeViewModel node, string key)
+    {
+        if (node.SettingExpressions is not { } expressions || !expressions.Remove(key)) return;
+        if (expressions.Count == 0) node.SettingExpressions = null;
+        var defaultValue = Modules.FirstOrDefault(module => module.Kind == "Deliver" && module.Id.Equals(node.Module, StringComparison.OrdinalIgnoreCase))?.Settings
+            .FirstOrDefault(setting => setting.Key.Equals(key, StringComparison.OrdinalIgnoreCase))?.DefaultValue;
+        if (defaultValue is not null) node.Settings[key] = defaultValue;
+        await Notify();
+    }
     private async Task SetPolicy(NativeFlowNodeViewModel node, string value) { node.PolicyJson = value; await Notify(); }
+    private async Task SetExceptionVariable(NativeFlowNodeViewModel node, bool details, string? value)
+    {
+        var name = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        if (details) node.ExceptionDetailsVariable = name; else node.ExceptionMessageVariable = name;
+        await Notify();
+    }
     private async Task AddCondition(NativeFlowNodeViewModel node) { node.Conditions.Add(new()); await Notify(); }
     private async Task RemoveCondition(NativeFlowNodeViewModel node, NativeFlowConditionViewModel condition) { node.Conditions.Remove(condition); await Notify(); }
 }

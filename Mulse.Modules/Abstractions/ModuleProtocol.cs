@@ -7,5 +7,6 @@ public enum ModuleProtocol
     SqlServer,
     Http,
     Plugin,
-    Internal
+    Internal,
+    Ftp
 }

@@ -222,7 +222,7 @@ public sealed class NativeXmlCompositionTests : IDisposable
     {
         const string expression = "document = new System.Xml.XmlDocument(); element = document.CreateElement(\"\", rules.RootName, rules.RootNamespace); document.AppendChild(element);";
         var (_, definition) = await Import(first: expression, next: expression, scopedElement: true);
-        Assert.Equal(NativeFlowNodeKind.Blocked, definition.AllNodes().Single(node => node.Name == "scope").Kind);
+        Assert.Equal(NativeFlowNodeKind.Sequence, definition.AllNodes().Single(node => node.Name == "scope").Kind);
         Assert.Equal(NativeFlowNodeKind.Sequence, definition.AllNodes().Single(node => node.Name == "start").Kind);
         Assert.Single(definition.AllNodes(), node => node.Kind == NativeFlowNodeKind.CreateXmlRoot);
         Assert.Equal(NativeFlowNodeKind.Blocked, definition.AllNodes().Single(node => node.Name == "next").Kind);

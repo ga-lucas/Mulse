@@ -1,0 +1,156 @@
+@inject IServiceProvider Services
+
+<details>
+    <summary>Test native control flow with mocks</summary>
+    Waiting or receiving suspends and ends this one-shot test unless wait advancing is enabled; receives cannot be resumed.
+    <label class="field-label">Input name <input class="mapping-input" @bind="_name" @bind:after="Invalidate" /></label>
+    <label class="field-label">Input content type <input class="mapping-input" @bind="_contentType" @bind:after="Invalidate" /></label>
+    <label class="field-label">Synthetic input text <textarea class="mapping-input" @bind="_content" @bind:after="Invalidate"></textarea></label>
+    <label class="field-label"><input type="checkbox" @bind="_advanceWaits" @bind:after="Invalidate" /> Advance a virtual clock past Wait nodes and resume (no real delay; Receive nodes still stop the test)</label>
+    <h4>Input metadata</h4>
+    @foreach (var entry in _metadata)
+    {
+        <div @key="entry">
+            <label class="field-label">Key <input class="mapping-input" @bind="entry.Key" @bind:after="Invalidate" /></label>
+            <label class="field-label">Value <input class="mapping-input" @bind="entry.Value" @bind:after="Invalidate" /></label>
+            <button type="button" class="secondary-button" @onclick="() => RemoveMetadata(entry)">Remove metadata</button>
+        </div>
+    }
+    <button type="button" class="secondary-button" @onclick="AddMetadata">Add metadata</button>
+    <h4>Mock module responses</h4>
+    @foreach (var mock in _mocks)
+    {
+        <fieldset @key="mock"><legend>@mock.Kind: @mock.Module</legend>
+            @if (mock.Manual)
+            {
+                <label class="field-label">Kind <select @bind="mock.Kind" @bind:after="Invalidate"><option>Augment</option><option>Render</option><option>Deliver</option><option>Transform</option></select></label>
+                <label class="field-label">Module ID <input class="mapping-input" @bind="mock.Module" @bind:after="Invalidate" /></label>
+                <button type="button" class="secondary-button" @onclick="() => RemoveMock(mock)">Remove mock</button>
+            }
+            <label class="field-label"><input type="checkbox" @bind="mock.Enabled" @bind:after="Invalidate" /> Supply explicit mock</label>
+            @if (mock.Enabled)
+            {
+                @if (mock.Kind == "Deliver") { <label class="field-label"><input type="checkbox" @bind="mock.HasOutput" @bind:after="Invalidate" /> Return a response payload</label> }
+                @if (mock.Kind != "Deliver" || mock.HasOutput)
+                {
+                    <label class="field-label">Output name <input class="mapping-input" @bind="mock.Name" @bind:after="Invalidate" /></label>
+                    <label class="field-label">Output content type <input class="mapping-input" @bind="mock.ContentType" @bind:after="Invalidate" /></label>
+                    <label class="field-label">Output text <textarea class="mapping-input" @bind="mock.Content" @bind:after="Invalidate"></textarea></label>
+                    <label class="field-label"><input type="checkbox" @bind="mock.UseCustomMetadata" @bind:after="Invalidate" /> Set output metadata independently</label>
+                    @if (mock.UseCustomMetadata)
+                    {
+                        @foreach (var entry in mock.Metadata)
+                        {
+                            <div @key="entry">
+                                <label class="field-label">Output metadata key <input class="mapping-input" @bind="entry.Key" @bind:after="Invalidate" /></label>
+                                <label class="field-label">Output metadata value <input class="mapping-input" @bind="entry.Value" @bind:after="Invalidate" /></label>
+                                <button type="button" class="secondary-button" @onclick="() => RemoveOutputMetadata(mock, entry)">Remove output metadata</button>
+                            </div>
+                        }
+                        <button type="button" class="secondary-button" @onclick="() => AddOutputMetadata(mock)">Add output metadata</button>
+                    }
+                    else { <p class="field-hint">The output uses the synthetic input metadata.</p> }
+                }
+            }
+        </fieldset>
+    }
+    <button type="button" class="secondary-button" @onclick="AddMock">Add mock for dynamic module</button>
+    <button type="button" class="secondary-button" disabled="@_running" @onclick="RunAsync">Run isolated test</button>
+    @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
+    @if (_result is not null)
+    {
+        <p>Test status: @_result.Status @(_result.SuspensionReason)</p>
+        @if (_result.WaitResumes > 0) { <p>Waits resumed on a virtual clock: @_result.WaitResumes</p> }
+        <h4>Mock calls</h4>
+        @foreach (var call in _result.Calls)
+        {
+            <p>@call.Kind: @call.Module</p>
+            @foreach (var payload in call.Input)
+            {
+                <p>@payload.Name (@payload.ContentType)</p><pre>@payload.Content</pre>
+                <ul>@foreach (var pair in payload.Metadata) { <li>@pair.Key: @pair.Value</li> }</ul>
+            }
+        }
+        <h4>Output</h4>
+        @foreach (var payload in _result.Output)
+        {
+            <p>@payload.Name (@payload.ContentType)</p><pre>@payload.Content</pre>
+            <ul>@foreach (var pair in payload.Metadata) { <li>@pair.Key: @pair.Value</li> }</ul>
+        }
+        <h4>Replies</h4>
+        @foreach (var payload in _result.Replies)
+        {
+            <p>@payload.Name (@payload.ContentType)</p><pre>@payload.Content</pre>
+            <ul>@foreach (var pair in payload.Metadata) { <li>@pair.Key: @pair.Value</li> }</ul>
+        }
+    }
+</details>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public List<NativeFlowNodeViewModel> Nodes { get; set; } = [];
+    private string _name = "sample.xml", _contentType = "application/xml", _content = "", _definition = "";
+    private readonly List<MetadataEntry> _metadata = [new() { Key = "group", Value = "test" }, new() { Key = "messageId", Value = "1" }, new() { Key = "channel", Value = "input" }];
+    private readonly List<MockEntry> _mocks = [];
+    private NativeFlowTestResponseViewModel? _result;
+    private string? _error;
+    private bool _running;
+    private bool _advanceWaits;
+    private int _revision;
+    protected override void OnParametersSet()
+    {
+        if (_definition == Value) return;
+        _definition = Value; Invalidate();
+        var choices = All(Nodes).Where(node => node.Kind is "Augment" or "Render" or "Deliver" or "InvokeTransform")
+            .Where(node => !string.IsNullOrWhiteSpace(node.Module)).Select(node => (Kind: node.Kind == "InvokeTransform" ? "Transform" : node.Kind, node.Module)).Distinct().ToArray();
+        _mocks.RemoveAll(mock => !mock.Manual && !choices.Contains((mock.Kind, mock.Module)));
+        foreach (var choice in choices)
+            if (!_mocks.Any(mock => mock.Kind == choice.Kind && mock.Module == choice.Module)) _mocks.Add(new() { Kind = choice.Kind, Module = choice.Module });
+    }
+    private static IEnumerable<NativeFlowNodeViewModel> All(IEnumerable<NativeFlowNodeViewModel> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            yield return node;
+            foreach (var child in All(node.Children)) yield return child;
+            foreach (var child in All(node.Otherwise)) yield return child;
+        }
+    }
+    private void Invalidate() { _revision++; _result = null; _error = null; }
+    private void AddMetadata() { _metadata.Add(new()); Invalidate(); }
+    private void RemoveMetadata(MetadataEntry entry) { _metadata.Remove(entry); Invalidate(); }
+    private void AddMock() { _mocks.Add(new() { Manual = true, Kind = "Render" }); Invalidate(); }
+    private void RemoveMock(MockEntry mock) { _mocks.Remove(mock); Invalidate(); }
+    private void AddOutputMetadata(MockEntry mock) { mock.Metadata.Add(new()); Invalidate(); }
+    private void RemoveOutputMetadata(MockEntry mock, MetadataEntry entry) { mock.Metadata.Remove(entry); Invalidate(); }
+    private static bool ValidMetadata(List<MetadataEntry> entries) => entries.All(entry => !string.IsNullOrWhiteSpace(entry.Key))
+        && entries.Select(entry => entry.Key).Distinct(StringComparer.Ordinal).Count() == entries.Count;
+    private async Task RunAsync()
+    {
+        _result = null; _error = null;
+        if (Services.GetService(typeof(IMulseApiClient)) is not IMulseApiClient api) { _error = "Native test API is unavailable."; return; }
+        if (!ValidMetadata(_metadata) || _mocks.Any(mock => mock.Enabled && (mock.Kind != "Deliver" || mock.HasOutput) && mock.UseCustomMetadata && !ValidMetadata(mock.Metadata)))
+        { _error = "Input and mock output metadata keys must be nonempty and unique."; return; }
+        var metadata = _metadata.ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
+        var input = new NativeFlowTestPayloadViewModel(_name, _content, _contentType, metadata);
+        var mocks = _mocks.Where(mock => mock.Enabled).Select(mock => new NativeFlowTestMockViewModel(mock.Kind, mock.Module,
+            mock.Kind == "Deliver" && !mock.HasOutput ? null : new(mock.Name, mock.Content, mock.ContentType,
+                mock.UseCustomMetadata ? mock.Metadata.ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal) : metadata))).ToList();
+        var revision = _revision; _running = true;
+        try
+        {
+            var result = await api.TestNativeFlowAsync(new(Value, input, mocks, _advanceWaits), default);
+            if (revision == _revision) _result = result;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or NotSupportedException)
+        { if (revision == _revision) _error = exception.Message; }
+        finally { _running = false; }
+    }
+    private sealed class MetadataEntry { public string Key { get; set; } = ""; public string Value { get; set; } = ""; }
+    private sealed class MockEntry
+    {
+        public string Kind { get; set; } = ""; public string Module { get; set; } = ""; public bool Enabled { get; set; } public bool Manual { get; set; }
+        public bool HasOutput { get; set; } public string Name { get; set; } = "mock.xml"; public string ContentType { get; set; } = "application/xml"; public string Content { get; set; } = "";
+        public bool UseCustomMetadata { get; set; } public List<MetadataEntry> Metadata { get; } = [];
+    }
+}

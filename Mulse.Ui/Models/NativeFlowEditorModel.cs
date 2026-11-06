@@ -26,6 +26,7 @@ public sealed class NativeFlowNodeViewModel
     public string BlockReason { get; set; } = "";
     public string MessageName { get; set; } = "";
     public int DurationSeconds { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? TerminateMessage { get; set; }
     public string Channel { get; set; } = "";
     public List<string> CorrelationKeys { get; set; } = [];
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NativeExpressionViewModel? Expression { get; set; }
@@ -37,6 +38,10 @@ public sealed class NativeFlowNodeViewModel
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? PolicyJson { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public List<string>? InputMessages { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NativeExpressionViewModel? SelectionExpression { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? ExceptionMessageVariable { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? ExceptionDetailsVariable { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public List<NativeExpressionViewModel>? TransformInputs { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Dictionary<string, NativeExpressionViewModel>? SettingExpressions { get; set; }
 }
 
 public sealed class NativeExpressionViewModel

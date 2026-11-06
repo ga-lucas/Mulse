@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Mulse.Billing;
+using Mulse.CompatibilityPack;
 using Mulse.Modules.Abstractions;
 using Mulse.Modules.BuiltIn.Augment;
 using Mulse.Modules.ControlFlow;
@@ -27,55 +28,10 @@ public sealed class BillingPluginTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "mulse-billing-plugin-" + Guid.NewGuid().ToString("N"));
     private readonly List<WeakReference> _unloadingContexts = [];
     private static readonly DateTimeOffset Instant = new(2026, 11, 5, 23, 45, 12, TimeSpan.Zero);
-    private static readonly Guid Identity = Guid.Parse("2ae6889b-0c99-491b-898d-ebc55ef9ab1d");
     private static Dictionary<string, string> EnvironmentSettings() => new() { ["timeZone"] = "UTC", ["culture"] = "Invariant" };
     private static FlowExecutionContext Context() => new("billing", Guid.NewGuid().ToString("N"), Instant);
     private static IntegrationBatch Input(string body = "<r />") => new([new("billing.xml", BinaryData.FromString(body), "application/xml", new Dictionary<string, string>
         { ["group"] = "A", ["messageId"] = "1", ["channel"] = "input", ["keep"] = "original" })]);
-    private static string Expand(string template) => BillingFilename.Expand(template, Instant, TimeZoneInfo.Utc, CultureInfo.InvariantCulture, Identity);
-
-    [Theory]
-    [InlineData("[DATE(yyyyMMdd)]", "20261105")]
-    [InlineData("[DATETIME(yyyyMMdd_HHmmss)]", "20261105_234512")]
-    [InlineData("[UTCDATETIME(yyyyMMdd_HHmmss)]", "20261105_234512")]
-    [InlineData("[TIME(HHmm)]_[UTCTIME(HHmm)]", "2345_2345")]
-    [InlineData("[DAY(0)]_[DAY(3)]_[DAY(7)]", "THURSDAY_THU_THURSDAY")]
-    [InlineData("[GUID]_[GUID]", "2ae6889b-0c99-491b-898d-ebc55ef9ab1d_2ae6889b-0c99-491b-898d-ebc55ef9ab1d")]
-    [InlineData("folder\\file.txt", "folder\\file.txt")]
-    [InlineData("[datetime(yyyy)]", "[datetime(yyyy)]")]
-    public void FilenameMacrosHaveExplicitSourceCompatibleSemantics(string template, string expected) => Assert.Equal(expected, Expand(template));
-
-    [Fact]
-    public void FilenameUsesExplicitZoneCultureAndSourceSecondsEpoch()
-    {
-        var zone = TimeZoneInfo.CreateCustomTimeZone("SyntheticPlus2", TimeSpan.FromHours(2), "SyntheticPlus2", "SyntheticPlus2");
-        Assert.Equal("20261106_0145_20261105_2345", BillingFilename.Expand("[DATETIME(yyyyMMdd_HHmm)]_[UTCDATETIME(yyyyMMdd_HHmm)]", Instant, zone, CultureInfo.InvariantCulture, Identity));
-        Assert.Equal(Instant.UtcDateTime.Ticks.ToString(CultureInfo.InvariantCulture), Expand("[TICKS]"));
-        Assert.Equal((Instant.UtcDateTime - new DateTime(2001, 1, 1)).TotalSeconds.ToString("0", CultureInfo.InvariantCulture), Expand("[SECONDS]"));
-        Assert.Equal("novembre", BillingFilename.Expand("[DATE(MMMM)]", Instant, TimeZoneInfo.Utc, CultureInfo.GetCultureInfo("fr-FR"), Identity));
-    }
-
-    [Theory]
-    [InlineData("[DAY(no)]")]
-    [InlineData("[DAY(-1)]")]
-    [InlineData("[DATE(yyyy/MM/dd)]")]
-    [InlineData("[GUID(bad)]")]
-    [InlineData("[DATE(yyyy)")]
-    public void InvalidKnownFilenameTokensFailInsteadOfProducingSuccessShapedPlaceholders(string template)
-        => Assert.Throws<ArgumentException>(() => Expand(template));
-
-    [Fact]
-    public async Task FilenameBoundariesInputTypesAndCancellationFailExplicitly()
-    {
-        Assert.Equal(4096, Expand(new string('x', 4096)).Length);
-        Assert.Throws<ArgumentException>(() => Expand(new string('x', 4097)));
-        Assert.Throws<ArgumentException>(() => Expand(new string('x', 4090) + "[GUID]"));
-        var module = new BillingFilenameTransformModule();
-        await Assert.ThrowsAsync<ArgumentException>(() => module.InvokeAsync(Context(), [JsonValue.Create(12)], new() { Settings = EnvironmentSettings() }, default));
-        await Assert.ThrowsAsync<ArgumentException>(() => module.InvokeAsync(Context(), [], new() { Settings = EnvironmentSettings() }, default));
-        await Assert.ThrowsAsync<ArgumentException>(() => module.InvokeAsync(Context(), [JsonValue.Create("[DATE(yyyy)]")], new(), default));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => module.InvokeAsync(Context(), [JsonValue.Create("x")], new(), new CancellationToken(true)));
-    }
 
     [Theory]
     [InlineData("CaseID", "Details", "CaseId")]
@@ -120,53 +76,12 @@ public sealed class BillingPluginTests : IDisposable
     }
 
     [Fact]
-    public async Task CommonBillingDoesNotPromoteCredentialsAndFilenameAugmentPreservesContent()
+    public async Task CommonBillingDoesNotPromoteCredentials()
     {
         var promotion = new BillingFieldAugmentModule();
         await Assert.ThrowsAsync<ArgumentException>(() => promotion.AugmentAsync(Context(), Input(), new() { Settings = new() { ["field"] = "Password", ["outputKey"] = "password" } }, default));
         Assert.DoesNotContain(promotion.Descriptor.Settings[0].Options!, option => option.Value is "Password" or "UserName" or "CertificateName");
-        var settings = EnvironmentSettings(); settings["source"] = "Metadata"; settings["template"] = "source"; settings["outputKey"] = "target";
-        var payload = Input().Payloads[0];
-        var metadata = new Dictionary<string, string>(payload.Metadata) { ["source"] = "file_[DATE(yyyyMMdd)].xml" };
-        var original = payload with { Metadata = metadata };
-        var module = new BillingFilenameAugmentModule();
-        var result = Assert.Single((await module.AugmentAsync(Context(), new([original]), new() { Settings = settings }, default)).Payloads);
-        Assert.Equal("file_20261105.xml", result.Metadata["target"]); Assert.Equal(original.Content, result.Content); Assert.Equal(original.Name, result.Name);
-        Assert.False(original.Metadata.ContainsKey("target"));
-        settings["template"] = "Source";
-        await Assert.ThrowsAsync<ArgumentException>(() => module.AugmentAsync(Context(), new([original]), new() { Settings = settings }, default));
-    }
-
-    [Fact]
-    public async Task NamespaceRemovalPreservesValuesNodesAndMetadataButRejectsCollisions()
-    {
-        var module = new BillingRemoveNamespacesRenderModule();
-        const string xml = "<?before keep?><a:r xmlns:a='urn:a' xmlns:b='urn:b' b:id='7'> before <b:i><![CDATA[value]]></b:i><!--keep--> after </a:r>";
-        var input = Input(xml);
-        var output = Assert.Single((await module.RenderAsync(Context(), input, new(), default)).Payloads);
-        var document = XDocument.Parse(output.GetText(), LoadOptions.PreserveWhitespace);
-        Assert.Equal("r", document.Root!.Name); Assert.Equal("7", document.Root.Attribute("id")!.Value);
-        Assert.Equal(" before value after ", document.Root.Value);
-        Assert.Contains("<?before keep?>", output.GetText()); Assert.Contains("<![CDATA[value]]>", output.GetText()); Assert.Contains("<!--keep-->", output.GetText());
-        Assert.All(document.Descendants(), element => Assert.Empty(element.Name.NamespaceName));
-        Assert.Equal("original", output.Metadata["keep"]); Assert.Equal(xml, input.Payloads[0].GetText());
-        await Assert.ThrowsAsync<ArgumentException>(() => module.RenderAsync(Context(), Input("<r xmlns:a='urn:a' id='a' a:id='b'/>"), new(), default));
-        await Assert.ThrowsAsync<ArgumentException>(() => module.RenderAsync(Context(), Input("<!DOCTYPE r [<!ENTITY x 'unsafe'>]><r>&x;</r>"), new(), default));
-    }
-
-    [Fact]
-    public async Task EmptyBatchesStillValidateFilenameConfigurationAndModulesHonorCancellation()
-    {
-        var module = new BillingFilenameAugmentModule();
-        var settings = EnvironmentSettings(); settings["source"] = "Literal"; settings["template"] = "file.txt"; settings["outputKey"] = "target";
-        Assert.Empty((await module.AugmentAsync(Context(), IntegrationBatch.Empty, new() { Settings = settings }, default)).Payloads);
-        settings["culture"] = "not a culture";
-        await Assert.ThrowsAsync<CultureNotFoundException>(() => module.AugmentAsync(Context(), IntegrationBatch.Empty, new() { Settings = settings }, default));
-        settings["culture"] = "Invariant"; settings["timeZone"] = "Mulse-not-an-installed-zone";
-        await Assert.ThrowsAsync<TimeZoneNotFoundException>(() => module.AugmentAsync(Context(), IntegrationBatch.Empty, new() { Settings = settings }, default));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => module.AugmentAsync(Context(), IntegrationBatch.Empty, new(), new CancellationToken(true)));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new BillingFieldAugmentModule().AugmentAsync(Context(), IntegrationBatch.Empty, new(), new CancellationToken(true)));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new BillingRemoveNamespacesRenderModule().RenderAsync(Context(), IntegrationBatch.Empty, new(), new CancellationToken(true)));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => promotion.AugmentAsync(Context(), IntegrationBatch.Empty, new(), new CancellationToken(true)));
     }
 
     [Fact]
@@ -185,27 +100,27 @@ public sealed class BillingPluginTests : IDisposable
         await catalog.UpsertManagedPackageAsync(new() { Id = "Mulse.Billing", AssemblyPath = assembly, Enabled = true }, default);
         try
         {
-            RecordTransformContext(catalog);
-            Assert.Equal(4, catalog.GetPackages().Single(package => package.Id == "Mulse.Billing").ModuleCount);
+            RecordPluginContext(catalog);
+            Assert.Equal(1, catalog.GetPackages().Single(package => package.Id == "Mulse.Billing").ModuleCount);
             using var invokers = new ServiceCollection().AddSingleton<IModuleCatalog>(catalog)
                 .AddSingleton<IAugmentModuleInvoker, Service.Modules.AugmentModuleInvoker>()
                 .AddSingleton<IRenderModuleInvoker, Service.Modules.RenderModuleInvoker>()
                 .AddSingleton<IModuleInvoker, Service.Modules.ModuleInvoker>().BuildServiceProvider();
             const string mapping = """
-                {"fields":[{"kind":"Transform","targetPath":"/filename","transformModule":"billing-filename-transform",
+                {"fields":[{"kind":"Transform","targetPath":"/filename","transformModule":"filename-template-transform",
                 "transformSettings":{"timeZone":"UTC","culture":"Invariant"},"transformInputs":[{"sourcePath":"/template"}]}]}
                 """;
             Assert.Equal("[{\"filename\":\"bill_20261105.txt\"}]", await ParsedDataMapping.MapAsync(mapping, "{\"template\":\"bill_[DATE(yyyyMMdd)].txt\"}", "Json", default, invokers.GetRequiredService<IModuleInvoker>(), Context()));
             await catalog.ReloadPackageAsync("Mulse.Billing", default);
-            RecordTransformContext(catalog);
+            RecordPluginContext(catalog);
             Assert.Equal("[{\"filename\":\"reloaded_2026\"}]", await ParsedDataMapping.MapAsync(mapping, "{\"template\":\"reloaded_[DATE(yyyy)]\"}", "Json", default, invokers.GetRequiredService<IModuleInvoker>(), Context()));
             var augments = invokers.GetRequiredService<IAugmentModuleInvoker>(); var renderers = invokers.GetRequiredService<IRenderModuleInvoker>();
             var settings = EnvironmentSettings(); settings["source"] = "Metadata"; settings["template"] = "billing.TargetLocation"; settings["outputKey"] = "expanded";
             var definition = new NativeFlowDefinition { Durable = true, Nodes = [
                 new() { Kind = NativeFlowNodeKind.Augment, Module = "billing-field-augment", Settings = new() { ["field"] = "TargetLocation", ["outputKey"] = "billing.TargetLocation" } },
-                new() { Kind = NativeFlowNodeKind.Augment, Module = "billing-filename-augment", Settings = settings },
+                new() { Kind = NativeFlowNodeKind.Augment, Module = "filename-template-augment", Settings = settings },
                 new() { Kind = NativeFlowNodeKind.Wait, DurationSeconds = 5 },
-                new() { Kind = NativeFlowNodeKind.Render, Module = "billing-remove-namespaces-render" }
+                new() { Kind = NativeFlowNodeKind.Render, Module = "xml-remove-namespaces-render" }
             ] };
             var step = new ModuleStepDefinition { Module = NativeFlowDefinition.ModuleId, Settings = new() { ["flowJson"] = JsonSerializer.Serialize(definition, JsonSerializerOptions.Web) } };
             var clock = new Clock();
@@ -227,12 +142,12 @@ public sealed class BillingPluginTests : IDisposable
             Assert.True((bool)new NativeMessageFact { Kind = NativeMessageFactKind.MetadataBoolean, MetadataKey = "{http://Shs.SpaceTrax2.Interfaces.Core.Schemas.Properties.CoreProperties}IsBatch" }.Read(projected).Read()!);
             await store.UpsertFlowAsync(new() { Id = "billing-helper-test", Enabled = false, Augments = [step] }, default);
             await Assert.ThrowsAsync<InvalidOperationException>(() => catalog.UpsertManagedPackageAsync(new() { Id = "Mulse.Billing", AssemblyPath = assembly, Enabled = false }, default));
-            var moduleViews = catalog.GetAll().Where(entry => entry.PackageId == "Mulse.Billing").Select(entry => View(entry.Descriptor)).ToArray();
+            var moduleViews = catalog.GetAll().Where(entry => entry.PackageId is "Mulse.Billing" or "builtin.compatibility").Select(entry => View(entry.Descriptor)).ToArray();
             var html = await Render<NativeFlowEditor>(new() { ["Value"] = step.Settings["flowJson"], ["Modules"] = moduleViews });
             Assert.Contains("Filename time zone", html); Assert.Contains("CommonBilling field", html); Assert.Contains("TargetLocation", html);
             Assert.Contains("Declared Billing context property", html); Assert.Contains("SourceProperty", html);
             Assert.DoesNotContain("Original JSON is preserved", html);
-            var descriptor = View(new BillingFilenameTransformModule().Descriptor);
+            var descriptor = View(new FilenameTemplateTransformModule().Descriptor);
             var fields = await Render<ModuleSettingsFields>(new() { ["Descriptor"] = descriptor, ["Settings"] = EnvironmentSettings() });
             Assert.Contains("Filename culture", fields); Assert.Contains("Filename time zone", fields);
         }
@@ -243,10 +158,30 @@ public sealed class BillingPluginTests : IDisposable
         }
     }
 
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private void RecordTransformContext(IModuleCatalog catalog)
+    [Fact]
+    public async Task NewMigrationModulesExposeExplicitLabeledFieldsInTheSettingsUi()
     {
-        var lease = catalog.LeaseTransformAsync("billing-filename-transform", default).GetAwaiter().GetResult();
+        var cases = new (ModuleDescriptor Descriptor, string[] Labels)[]
+        {
+            (new Mulse.Hl7.Hl7MessageTypeAugmentModule().Descriptor, ["Message type namespace", "Output metadata key", "Overwrite existing"]),
+            (new SetContextPropertyAugmentModule().Descriptor, ["Property name", "Property namespace", "Property value"]),
+            (new Mulse.Hl7.Hl7XmlRenderModule().Descriptor, ["Trim trailing delimiters", "Segment terminator", "CRLF"]),
+            (new Mulse.CompatibilityPack.SmtpEmailDeliverModule().Descriptor, ["Attachment name metadata key"])
+        };
+        foreach (var (descriptor, labels) in cases)
+        {
+            var html = await Render<ModuleSettingsFields>(new() { ["Descriptor"] = View(descriptor), ["Settings"] = new Dictionary<string, string>() });
+            foreach (var label in labels)
+            {
+                Assert.Contains(label, html);
+            }
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void RecordPluginContext(IModuleCatalog catalog)
+    {
+        var lease = catalog.LeaseOrchestrationAugmentAsync("billing-field-augment", default).GetAwaiter().GetResult();
         try
         {
             var context = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(lease.Module.GetType().Assembly)!;

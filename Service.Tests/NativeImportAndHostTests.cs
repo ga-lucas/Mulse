@@ -36,7 +36,7 @@ public sealed class NativeImportAndHostTests : IDisposable
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { MaxDepth = 128, Converters = { new JsonStringEnumConverter() } };
     private static XElement P(string name, string value) => new(Ns + "Property", new XAttribute("Name", name), new XAttribute("Value", value));
     private static XElement N(string kind, params object[] children) => new(Ns + "Element", new XAttribute("Type", kind), children);
-    private async Task<BizTalkFlowCandidateResponse> Import(bool unsupported = false, bool ambiguous = false)
+    private async Task<BizTalkFlowCandidateResponse> Import(bool unsupported = false, bool ambiguous = false, bool pipeline = false, string? delay = null)
     {
         Directory.CreateDirectory(_directory);
         var project = Path.Combine(_directory, "Example.btproj");
@@ -48,6 +48,7 @@ public sealed class NativeImportAndHostTests : IDisposable
             N("Send", P("PortName", "Out"), P("MessageName", "output")),
             N("Send", P("PortName", "In"), P("MessageName", "output"), P("OperationMessageName", "Response"))
         };
+        if (delay is not null) body.Insert(2, N("Delay", P("Name", "Pause"), P("Timeout", delay)));
         if (unsupported) body.Insert(2, N("AtomicTransaction", N("Expression", P("Expression", "Custom.Helper.Run();"))));
         var root = new XElement(Ns + "MetaModel", N("ServiceDeclaration", P("Name", "Flow"), N("ServiceBody", body.ToArray())));
         if (unsupported) root.Add(N("ExternalVariable", P("Name", "global-fact")));
@@ -58,7 +59,7 @@ public sealed class NativeImportAndHostTests : IDisposable
             <Port Name="In"><ReceivePortRef Name="Input"/></Port><Port Name="Out"><SendPortRef Name="Output"/>{(ambiguous ? "<SendPortRef Name='OtherOutput'/>" : "")}</Port>
             </Ports></Service></Services></ModuleRef></ModuleRefCollection>
             <ReceivePortCollection><ReceivePort Name="Input"><ReceiveLocations><ReceiveLocation Name="Source"><Address>C:\synthetic\input</Address><TransportType Name="FILE"/></ReceiveLocation></ReceiveLocations></ReceivePort></ReceivePortCollection>
-            <SendPortCollection><SendPort Name="Output"><PrimaryTransport><Address>C:\synthetic\output</Address><TransportType Name="FILE"/></PrimaryTransport></SendPort>
+            <SendPortCollection><SendPort Name="Output"><PrimaryTransport><Address>C:\synthetic\output</Address><TransportType Name="FILE"/></PrimaryTransport>{(pipeline ? "<TransmitPipeline Name='Example.CustomSend, Example'/>" : "")}</SendPort>
             <SendPort Name="OtherOutput"><PrimaryTransport><Address>C:\synthetic\other</Address><TransportType Name="FILE"/></PrimaryTransport></SendPort></SendPortCollection></BindingInfo>
             """);
         return Assert.Single((await new BizTalkImportService().AnalyzeAsync(new AnalyzeBizTalkSolutionRequest
@@ -92,6 +93,63 @@ public sealed class NativeImportAndHostTests : IDisposable
         Assert.Equal("{\"value\":42}", Assert.Single(result.ResponsePayloads!).GetText());
         Assert.True(Assert.Single(source.Outcomes).Succeeded); Assert.Empty(await checkpoints.GetAllAsync(flow.Id, default));
         Assert.Throws<Service.Flows.FlowMigrationBlockedException>(() => Service.Flows.FlowMigrationReadiness.EnsureReady(new() { Id = "imported", Migration = candidate.DraftFlow.Migration }));
+    }
+
+    [Fact]
+    public async Task ImportedTickWaitCanBeEditedAndReopenedInNativeEditor()
+    {
+        var candidate = await Import(delay: "TimeSpan.FromTicks(20000000L)");
+        var original = candidate.DraftFlow.Augments.Single().Settings["flowJson"];
+        string saved = "";
+        var modules = new ModuleViewModel[] { new("file-system-deliver", "File", "Deliver", "Test", [], [], [], []) };
+        await using var services = new ServiceCollection().AddLogging().AddSingleton<Microsoft.JSInterop.IJSRuntime, NoJs>().BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        await renderer.Dispatcher.InvokeAsync(async () => await renderer.RenderComponentAsync<ImportedWaitEditHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            { ["Value"] = original, ["Modules"] = modules, ["ValueChanged"] = EventCallback.Factory.Create<string>(this, value => saved = value) })));
+        Assert.Equal(3, Assert.Single(NativeFlowDefinition.Read(saved).AllNodes(), node => node.Kind == NativeFlowNodeKind.Wait).DurationSeconds);
+        var html = await renderer.Dispatcher.InvokeAsync(async () => (await renderer.RenderComponentAsync<NativeFlowEditor>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            { ["Value"] = saved, ["Modules"] = modules }))).ToHtmlString());
+        Assert.Contains("Wait seconds", html); Assert.DoesNotContain("Original JSON is preserved", html); Assert.DoesNotContain("Some nodes are incomplete", html);
+        Assert.False(candidate.DraftFlow.Enabled);
+        Assert.Throws<Service.Flows.FlowMigrationBlockedException>(() => Service.Flows.FlowMigrationReadiness.EnsureReady(new() { Id = "imported", Migration = candidate.DraftFlow.Migration }));
+    }
+
+    [Fact]
+    public async Task ImportedTickWaitSuspendsAndResumesWithoutRefetchOrEarlyDelivery()
+    {
+        var candidate = await Import(delay: "new System.TimeSpan(20000000L)");
+        var step = Assert.Single(candidate.DraftFlow.Augments);
+        Assert.Equal(2, Assert.Single(NativeFlowDefinition.Read(step.Settings["flowJson"]).AllNodes(), node => node.Kind == NativeFlowNodeKind.Wait).DurationSeconds);
+        var observed = new List<IntegrationBatch>(); var source = new Source(); var clock = new Clock();
+        var checkpoints = new InMemoryFlowOrchestrationStateStore(); var retries = new InMemoryFlowRetryStateStore();
+        var catalog = new FakeExecutableModuleCatalog().AddFetch(source).AddParse(DelegateModuleFactory.PassthroughParse("parse"))
+            .AddDeliver(DelegateModuleFactory.Deliver("file-system-deliver", observed));
+        await using var provider = new ServiceCollection().AddSingleton<IModuleCatalog>(catalog).BuildServiceProvider();
+        catalog.AddAugment(new NativeControlFlowAugmentModule(new AugmentModuleInvoker(provider), new RenderModuleInvoker(provider), checkpoints, clock, new DeliverModuleInvoker(provider)));
+        var flow = Flow(new() { Module = step.Module, Settings = new(step.Settings) });
+        var runtime = Runtime(flow, catalog, checkpoints, retries, clock);
+        Assert.Equal(FlowExecutionOutcome.Suspended, (await runtime.ExecuteAsync(flow.Id, default)).Outcome);
+        Assert.Empty(observed); Assert.Empty(source.Outcomes);
+        clock.Now = clock.Now.AddSeconds(1); Assert.Null(await runtime.ReleaseDueBatchAsync(flow.Id, default));
+        clock.Now = clock.Now.AddSeconds(1);
+        var completed = await Runtime(flow, catalog, checkpoints, retries, clock).ReleaseDueBatchAsync(flow.Id, default);
+        Assert.Equal(FlowExecutionOutcome.Completed, completed!.Outcome);
+        Assert.Equal(1, source.Fetches); Assert.Single(observed); Assert.True(Assert.Single(source.Outcomes).Succeeded);
+        Assert.Empty(await checkpoints.GetAllAsync(flow.Id, default));
+    }
+
+    [Fact]
+    public async Task TransmitPipelineRemainsBlockedWithEditableDeliveryAndNamedMessageGuidance()
+    {
+        var candidate = await Import(pipeline: true);
+        var json = candidate.DraftFlow.Augments.Single().Settings["flowJson"];
+        var definition = NativeFlowDefinition.Read(json, allowBlocked: true);
+        var blocker = Assert.Single(definition.AllNodes(), node => node.Kind == NativeFlowNodeKind.Blocked && node.BlockReason.Contains("Example.CustomSend"));
+        Assert.Contains("named-message augment/render", blocker.BlockReason);
+        var deliver = Assert.Single(blocker.Children);
+        Assert.Equal(NativeFlowNodeKind.Deliver, deliver.Kind); Assert.Equal("output", deliver.MessageName);
+        Assert.Contains(candidate.DraftFlow.Migration!.Diagnostics, diagnostic => diagnostic.Code == "BT-NATIVE-UNRESOLVED" && diagnostic.Message.Contains("Example.CustomSend"));
+        Assert.Throws<NotSupportedException>(() => NativeFlowDefinition.Read(json));
     }
 
     [Theory]
@@ -215,6 +273,27 @@ public sealed class NativeImportAndHostTests : IDisposable
         }
         finally { await app.StopAsync(); }
     }
+    public sealed class ImportedWaitEditHost : NativeFlowEditor
+    {
+        protected override async Task OnParametersSetAsync()
+        {
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var model = (NativeFlowEditorModel)typeof(NativeFlowEditor).GetField("_model", flags)!.GetValue(this)!;
+            static IEnumerable<NativeFlowNodeViewModel> All(IEnumerable<NativeFlowNodeViewModel> nodes)
+            {
+                foreach (var node in nodes)
+                {
+                    yield return node;
+                    foreach (var child in All(node.Children)) yield return child;
+                    foreach (var child in All(node.Otherwise)) yield return child;
+                }
+            }
+            var wait = Assert.Single(All(model.Nodes), node => node.Kind == "Wait");
+            Assert.Equal(2, wait.DurationSeconds); wait.DurationSeconds = 3;
+            await (Task)typeof(NativeFlowEditor).GetMethod("Persist", flags)!.Invoke(this, null)!;
+        }
+    }
+
     public sealed class RecoveryHost : NativeEffectRecoveryEditor
     {
         protected override async Task OnParametersSetAsync()

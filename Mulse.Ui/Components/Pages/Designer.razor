@@ -151,7 +151,7 @@
             {
                 <details><summary>Native map replacement choices (optional)</summary>
                     <p class="field-hint">Use the exact map-name String returned by the selected policy, including any assembly qualification. Choices explicitly select native replacements, not verified deployed map equivalents. Complete supported dynamic transform statements use these choices; unsupported statements remain blocked. Reanalyze after editing choices.</p>
-                    <RenderDispatchEditor Settings="_nativeMapSettings" Modules="_modules" NativeSelectionMode="true" />
+                    <RenderDispatchEditor Settings="_nativeMapSettings" Modules="_modules" NativeSelectionMode="true" Changed="BizTalkMapChoicesChanged" />
                 </details>
                 <label class="field-label">Host configuration test snapshot (optional)
                     <input class="mapping-input" @bind="_nativeHostConfigurationPath" placeholder="C:\Exports\BTSNTSvc64.exe.config" />
@@ -168,6 +168,10 @@
 
             @if (_bizTalkAnalysis is not null)
             {
+                @if (!BizTalkAnalysisIsCurrent)
+                {
+                    <p class="status-banner error" role="alert">Import settings changed since analysis. Analyze again before loading or downloading a candidate.</p>
+                }
                 <dl class="summary-grid summary-metadata">
                     <div>
                         <dt>Source</dt>
@@ -237,7 +241,7 @@
                                             <p class="test-artifact-badge">? Looks like a test/debug artifact - confirm before migrating</p>
                                         }
                                     </div>
-                                    <button class="run-button" @onclick="() => ApplyBizTalkCandidate(candidate)">Load onto canvas</button>
+                                    <button class="run-button" disabled="@(!BizTalkAnalysisIsCurrent)" @onclick="() => ApplyBizTalkCandidate(candidate)">Load onto canvas</button>
                                 </div>
                                 <p>@candidate.Summary</p>
                                 @if (candidate.DraftFlow.Migration is { } migration)
@@ -254,7 +258,7 @@
                                 }
                                 @if (candidate.DraftFlow.Migration?.SourceOrchestration is not null)
                                 {
-                                    <p><button class="secondary-button" @onclick="() => DownloadBizTalkControlFlowAsync(candidate)">Download developer control-flow model (.json)</button></p>
+                                    <p><button class="secondary-button" disabled="@(!BizTalkAnalysisIsCurrent)" @onclick="() => DownloadBizTalkControlFlowAsync(candidate)">Download developer control-flow model (.json)</button></p>
                                     <p class="field-hint">Explicit source export includes expressions and literal property values. Handle as private source code. The SDK can execute bound branches/loops/local catches, but activities, durable waits and transaction boundaries require developer implementation. Downloading does not approve execution.</p>
                                 }
                                 @if (candidate.ScaffoldedModules.Count > 0)
@@ -262,14 +266,14 @@
                                     <div class="scaffolded-modules">
                                         <p>
                                             <strong>Scaffolded modules:</strong> @candidate.ScaffoldedModules.Count starter artifact(s): C# stubs, automatically bound ODX source, per-node translation reports and partial map stylesheets. ODX C# includes original expressions and literals; handle as private source code. C# stubs fail until implemented; unsupported bindings still block execution. Downloading/building does not approve execution.
-                                            <button class="run-button" @onclick="() => DownloadBizTalkScaffoldedModulesAsync(candidate)">Download all (.zip)</button>
+                                            <button class="run-button" disabled="@(!BizTalkAnalysisIsCurrent)" @onclick="() => DownloadBizTalkScaffoldedModulesAsync(candidate)">Download all (.zip)</button>
                                         </p>
                                         <ul>
                                             @foreach (var module in candidate.ScaffoldedModules)
                                             {
                                                 <li>
                                                     @module.FileName <span class="muted">(@module.SourceArtifactName)</span>
-                                                    <button class="run-button" @onclick="() => DownloadBizTalkScaffoldedModuleAsync(candidate, module)">Download</button>
+                                                    <button class="run-button" disabled="@(!BizTalkAnalysisIsCurrent)" @onclick="() => DownloadBizTalkScaffoldedModuleAsync(candidate, module)">Download</button>
                                                 </li>
                                             }
                                         </ul>

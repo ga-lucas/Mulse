@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace Mulse.Modules.ControlFlow;
 
@@ -7,7 +8,8 @@ namespace Mulse.Modules.ControlFlow;
 public enum NativeScalarType { String, Int32, Boolean, Null }
 
 [JsonConverter(typeof(JsonStringEnumConverter<NativeExpressionKind>))]
-public enum NativeExpressionKind { Literal, Variable, Not, And, Or, Equal, NotEqual, Less, LessOrEqual, Greater, GreaterOrEqual, Add, Subtract, Multiply, Divide, Remainder, Negate, MessageValue, InstanceId }
+public enum NativeExpressionKind { Literal, Variable, Not, And, Or, Equal, NotEqual, Less, LessOrEqual, Greater, GreaterOrEqual, Add, Subtract, Multiply, Divide, Remainder, Negate, MessageValue, InstanceId,
+    Length, IndexOf, LastIndexOf, Substring, SubstringLength, RegexIsMatch, ToInt32, ToText }
 
 public sealed record NativeScalar(NativeScalarType Type, string Value)
 {
@@ -35,6 +37,7 @@ public sealed class NativeExpression
     public List<NativeExpression> Operands { get; set; } = [];
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NativeMessageFact? Fact { get; set; }
     [JsonIgnore] public bool RequiresInstance => Kind == NativeExpressionKind.InstanceId || Operands.Any(operand => operand.RequiresInstance);
+    [JsonIgnore] public bool UsesOrdinalSearch => Kind is NativeExpressionKind.IndexOf or NativeExpressionKind.LastIndexOf || Operands.Any(operand => operand.UsesOrdinalSearch);
 
     public static void Validate(NativeExpression expression)
     {
@@ -44,7 +47,8 @@ public sealed class NativeExpression
             if (node is null || depth > 32 || !seen.Add(node) || seen.Count > 256 || !Enum.IsDefined(node.Kind) || node.Operands is null)
                 throw new ArgumentException("Native expressions require an acyclic tree of at most 256 values and 32 levels.");
             var arity = node.Kind is NativeExpressionKind.Literal or NativeExpressionKind.Variable or NativeExpressionKind.MessageValue or NativeExpressionKind.InstanceId ? 0
-                : node.Kind is NativeExpressionKind.Not or NativeExpressionKind.Negate ? 1 : 2;
+                : node.Kind is NativeExpressionKind.Not or NativeExpressionKind.Negate or NativeExpressionKind.Length or NativeExpressionKind.ToInt32 or NativeExpressionKind.ToText ? 1
+                : node.Kind == NativeExpressionKind.SubstringLength ? 3 : 2;
             if (node.Operands.Count != arity || (node.Kind == NativeExpressionKind.Literal) != (node.Literal is not null)
                 || (node.Kind == NativeExpressionKind.Variable) != (node.Variable is not null)
                 || (node.Kind == NativeExpressionKind.MessageValue) != (node.Fact is not null))
@@ -84,9 +88,17 @@ public sealed class NativeExpression
             if (node.Kind == NativeExpressionKind.Negate) return checked(-Integer(left));
             if (node.Kind == NativeExpressionKind.And) return Boolean(left) && Boolean(Run(node.Operands[1]));
             if (node.Kind == NativeExpressionKind.Or) return Boolean(left) || Boolean(Run(node.Operands[1]));
+            if (node.Kind == NativeExpressionKind.Length) return Text(left).Length;
+            if (node.Kind == NativeExpressionKind.ToInt32) return ToInt32(left);
+            if (node.Kind == NativeExpressionKind.ToText) return left is null ? null : Format(left);
             var right = Run(node.Operands[1]);
+            if (node.Kind == NativeExpressionKind.SubstringLength) return Substring(Text(left), Integer(right), Integer(Run(node.Operands[2])));
             return node.Kind switch
             {
+                NativeExpressionKind.IndexOf => Text(left).IndexOf(Text(right), StringComparison.Ordinal),
+                NativeExpressionKind.LastIndexOf => Text(left).LastIndexOf(Text(right), StringComparison.Ordinal),
+                NativeExpressionKind.Substring => Substring(Text(left), Integer(right), null),
+                NativeExpressionKind.RegexIsMatch => IsMatch(Text(left), Text(right)),
                 NativeExpressionKind.Equal => Equal(left, right), NativeExpressionKind.NotEqual => !Equal(left, right),
                 NativeExpressionKind.Less => Integer(left) < Integer(right), NativeExpressionKind.LessOrEqual => Integer(left) <= Integer(right),
                 NativeExpressionKind.Greater => Integer(left) > Integer(right), NativeExpressionKind.GreaterOrEqual => Integer(left) >= Integer(right),
@@ -101,6 +113,32 @@ public sealed class NativeExpression
     }
     public static bool Boolean(object? value) => value is bool result ? result : throw new InvalidOperationException("Native predicate requires Boolean operands; no coercion is performed.");
     private static int Integer(object? value) => value is int result ? result : throw new InvalidOperationException("Native arithmetic requires Int32 operands.");
+    private static string Text(object? value) => value as string ?? throw new InvalidOperationException("Native string operations require non-null String operands; no coercion is performed.");
+    private static string Substring(string text, int start, int? length)
+    {
+        try { return length is { } count ? text.Substring(start, count) : text.Substring(start); }
+        catch (ArgumentOutOfRangeException exception) { throw new InvalidOperationException("Native Substring range is outside the string; no clamping is performed.", exception); }
+    }
+    private static bool IsMatch(string input, string pattern)
+    {
+        try { return Regex.IsMatch(input, pattern, RegexOptions.None, TimeSpan.FromSeconds(2)); }
+        catch (Exception exception) when (exception is ArgumentException or RegexMatchTimeoutException)
+        { throw new InvalidOperationException("Native regular expression is invalid or exceeded its 2-second evaluation limit.", exception); }
+    }
+    private static int ToInt32(object? value)
+    {
+        try
+        {
+            return value switch
+            {
+                null => 0, int number => number, bool flag => flag ? 1 : 0,
+                string text => int.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture),
+                _ => throw new InvalidOperationException("Native ToInt32 requires a String, Int32, Boolean or null operand.")
+            };
+        }
+        catch (Exception exception) when (exception is FormatException or OverflowException)
+        { throw new InvalidOperationException("Native ToInt32 operand is not a valid Int32 value.", exception); }
+    }
     private static bool Equal(object? left, object? right)
     {
         if (left is null || right is null) return left is null && right is null;

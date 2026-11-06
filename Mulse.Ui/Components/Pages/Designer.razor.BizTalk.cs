@@ -16,21 +16,38 @@ public partial class Designer
         }
     }
 
+    private AnalyzeBizTalkSolutionRequestViewModel CurrentBizTalkAnalysisRequest() => new(
+        _sourcePath, SplitPaths(_additionalBindingPaths), SplitPaths(_additionalSourcePaths), SplitPaths(_additionalRulePaths), _generateNativeBizTalkFlow,
+        _generateNativeBizTalkFlow ? _nativePolicyVersions.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal) : null,
+        _generateNativeBizTalkFlow && !string.IsNullOrWhiteSpace(_nativeHostConfigurationPath) ? _nativeHostConfigurationPath : null,
+        _generateNativeBizTalkFlow ? SplitPaths(_nativeConfigurationHelperPaths) : null,
+        _generateNativeBizTalkFlow ? _nativeMapSettings["casesJson"] : null);
+
+    private string? _bizTalkAnalysisFingerprint;
+    private static string BizTalkFingerprint(AnalyzeBizTalkSolutionRequestViewModel request) => System.Text.Json.JsonSerializer.Serialize(request);
+    private bool BizTalkAnalysisIsCurrent => !_isAnalyzingBizTalk && _bizTalkAnalysis is not null
+        && _bizTalkAnalysisFingerprint == BizTalkFingerprint(CurrentBizTalkAnalysisRequest());
+
+    private void RequireCurrentBizTalkAnalysis()
+    {
+        if (!BizTalkAnalysisIsCurrent) throw new InvalidOperationException("Import settings changed or analysis failed. Analyze the source again before loading or downloading a candidate.");
+    }
+
+    private void BizTalkMapChoicesChanged() { }
+
     private async Task AnalyzeBizTalkAsync()
     {
+        var request = CurrentBizTalkAnalysisRequest();
         _isAnalyzingBizTalk = true;
+        _bizTalkAnalysis = null;
+        _bizTalkAnalysisFingerprint = null;
         _statusMessage = null;
         _errorMessage = null;
 
         try
         {
-            _bizTalkAnalysis = await ApiClient.AnalyzeBizTalkSolutionAsync(
-                new AnalyzeBizTalkSolutionRequestViewModel(_sourcePath, SplitPaths(_additionalBindingPaths), SplitPaths(_additionalSourcePaths), SplitPaths(_additionalRulePaths), _generateNativeBizTalkFlow,
-                    _generateNativeBizTalkFlow ? new Dictionary<string, string>(_nativePolicyVersions, StringComparer.Ordinal) : null,
-                    _generateNativeBizTalkFlow && !string.IsNullOrWhiteSpace(_nativeHostConfigurationPath) ? _nativeHostConfigurationPath : null,
-                    _generateNativeBizTalkFlow ? SplitPaths(_nativeConfigurationHelperPaths) : null,
-                    _generateNativeBizTalkFlow ? _nativeMapSettings["casesJson"] : null),
-                CancellationToken.None);
+            _bizTalkAnalysis = await ApiClient.AnalyzeBizTalkSolutionAsync(request, CancellationToken.None);
+            _bizTalkAnalysisFingerprint = BizTalkFingerprint(request);
             _statusMessage = $"Loaded {_bizTalkAnalysis.BizTalkProjectCount} BizTalk project(s), {_bizTalkAnalysis.BindingFiles.Count} binding file(s), {_bizTalkAnalysis.RulePolicies.Count} rule policy version(s), and {_bizTalkAnalysis.FlowCandidates.Count} draft flow candidate(s).";
         }
         catch (Exception exception)
@@ -47,6 +64,7 @@ public partial class Designer
     {
         try
         {
+            RequireCurrentBizTalkAnalysis();
             var request = CreateBizTalkImportRequest(candidate);
             var file = await ApiClient.DownloadBizTalkScaffoldedModulesAsync(request, CancellationToken.None);
             await TriggerBrowserDownloadAsync(file);
@@ -61,6 +79,7 @@ public partial class Designer
     {
         try
         {
+            RequireCurrentBizTalkAnalysis();
             var request = CreateBizTalkImportRequest(candidate);
             await TriggerBrowserDownloadAsync(await ApiClient.DownloadBizTalkControlFlowAsync(request, CancellationToken.None));
         }
@@ -74,6 +93,7 @@ public partial class Designer
     {
         try
         {
+            RequireCurrentBizTalkAnalysis();
             var request = CreateBizTalkImportRequest(candidate);
             var file = await ApiClient.DownloadBizTalkScaffoldedModuleAsync(module.ModuleId, request, CancellationToken.None);
             await TriggerBrowserDownloadAsync(file);
@@ -111,6 +131,11 @@ public partial class Designer
 
     private void ApplyBizTalkCandidate(BizTalkFlowCandidateViewModel candidate)
     {
+        if (!BizTalkAnalysisIsCurrent)
+        {
+            _errorMessage = "Import settings changed or analysis failed. Analyze the source again before loading a candidate.";
+            return;
+        }
         var draft = candidate.DraftFlow;
 
         _nodes.Clear();
@@ -187,5 +212,6 @@ public partial class Designer
         _nativePolicyVersions.Clear();
         _nativeMapSettings["casesJson"] = "[]";
         _bizTalkAnalysis = null;
+        _bizTalkAnalysisFingerprint = null;
     }
 }

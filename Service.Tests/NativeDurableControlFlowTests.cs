@@ -1,4 +1,7 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Mulse.CompatibilityPack;
+using Mulse.Modules.Abstractions;
 using Mulse.Modules.BuiltIn.Augment;
 using Mulse.Modules.ControlFlow;
 using Mulse.Modules.Decisions;
@@ -529,5 +532,217 @@ public sealed class NativeDurableControlFlowTests
             Assert.Single(context.CapturedResponses); Assert.Single(invoker.Calls); Assert.NotNull(context.PendingCheckpointCompletion);
         }
         finally { File.Delete(path); }
+    }
+
+    private static NativeExpression Variable(string name) => new() { Kind = NativeExpressionKind.Variable, Variable = name };
+    private static NativeExpression Text(string value) => new() { Literal = NativeScalar.From(value) };
+    private static NativeFlowNode Declare(string name, NativeScalarType type, NativeExpression initial) => new()
+    { Kind = NativeFlowNodeKind.DeclareVariable, Variable = name, VariableType = type, Expression = initial };
+    private static NativeFlowNode Failing() => new()
+    { Kind = NativeFlowNodeKind.SetVariable, Variable = "n", Expression = new() { Kind = NativeExpressionKind.Length, Operands = [new() { Literal = NativeScalar.From(5) }] } };
+    private static NativeFlowNode Try(NativeFlowNode[] body, NativeFlowNode[] handler, string? message = "ex_Message", string? details = null) => new()
+    { Kind = NativeFlowNodeKind.Try, Children = [.. body], Otherwise = [.. handler], ExceptionMessageVariable = message, ExceptionDetailsVariable = details };
+
+    [Fact]
+    public async Task TryHandlerRunsAfterABodyFaultWithExceptionVariablesAndSkipsRestOfBody()
+    {
+        var store = new InMemoryFlowOrchestrationStateStore(); var clock = new Clock(); var invoker = new Invoker();
+        var flow = Flow(Declare("n", NativeScalarType.Int32, new() { Literal = NativeScalar.From(0) }), Render("before"),
+            Try([Render("body"), Failing(), Render("skipped")],
+                [new() { Kind = NativeFlowNodeKind.If, Expression = new() { Kind = NativeExpressionKind.Greater, Operands = [new() { Kind = NativeExpressionKind.Length, Operands = [Variable("ex_Message")] }, new() { Literal = NativeScalar.From(0) }] },
+                    Children = [Render("handled")] },
+                 new() { Kind = NativeFlowNodeKind.If, Expression = new() { Kind = NativeExpressionKind.Greater, Operands = [new() { Kind = NativeExpressionKind.Length, Operands = [Variable("ex_Details")] }, new() { Literal = NativeScalar.From(0) }] },
+                    Children = [Render("detailed")] }], details: "ex_Details"),
+            Render("after"));
+        var context = Context(clock);
+        await Run(store, clock, invoker, flow, context, Input("one"));
+        Assert.Equal(new[] { "before:one.json", "body:one.json", "handled:one.json", "detailed:one.json", "after:one.json" }, invoker.Calls);
+        Assert.NotNull(context.PendingCheckpointCompletion);
+    }
+
+    [Fact]
+    public async Task TryDoesNotCatchTerminateAndOuterTryHandlesFaultsInsideAHandler()
+    {
+        var clock = new Clock();
+        var terminated = Flow(Try([new() { Kind = NativeFlowNodeKind.Terminate, TerminateMessage = "stop" }], [Render("handled")]));
+        var invoker = new Invoker();
+        await Assert.ThrowsAsync<NativeTerminationException>(() => Run(new InMemoryFlowOrchestrationStateStore(), clock, invoker, terminated, Context(clock), Input("one")));
+        Assert.Empty(invoker.Calls);
+
+        var nested = Flow(Declare("n", NativeScalarType.Int32, new() { Literal = NativeScalar.From(0) }),
+            Try([Try([Failing()], [Failing(), Render("inner-skipped")], "inner")], [Render("outer")], "outer"));
+        invoker = new();
+        await Run(new InMemoryFlowOrchestrationStateStore(), clock, invoker, nested, Context(clock), Input("one"));
+        Assert.Equal(new[] { "outer:one.json" }, invoker.Calls);
+    }
+
+    [Fact]
+    public async Task TryNeverCatchesAFailedEffectAndFaultsWithAmbiguousIntent()
+    {
+        var clock = new Clock(); var invoker = new Invoker { Action = (_, _, _) => throw new InvalidOperationException("send failed") };
+        var flow = Flow(Try([new() { Kind = NativeFlowNodeKind.Deliver, Module = "send" }], [Render("handled")]));
+        await Assert.ThrowsAsync<NativeAmbiguousEffectException>(() => Run(new InMemoryFlowOrchestrationStateStore(), clock, invoker, flow, Context(clock), Input("one")));
+        Assert.Equal(new[] { "send:one.json" }, invoker.Calls);
+    }
+
+    [Fact]
+    public async Task TryHandlerStateSurvivesAWaitInsideTheHandler()
+    {
+        var store = new InMemoryFlowOrchestrationStateStore(); var clock = new Clock(); var invoker = new Invoker();
+        var flow = Flow(Declare("n", NativeScalarType.Int32, new() { Literal = NativeScalar.From(0) }), Try([Failing()], [Wait(5), Render("handled")]), Render("after"));
+        var first = Context(clock);
+        await Run(store, clock, invoker, flow, first, Input("one"));
+        Assert.Equal(2, store.Checkpoints.Single().Native!.State.Stack.Count(cursor => cursor.NodeId.Length != 0));
+        Assert.Equal(2, store.Checkpoints.Single().Native!.State.Stack[1].Phase);
+        clock.Now += TimeSpan.FromSeconds(5);
+        await Run(store, clock, invoker, flow, Context(clock, first.OrchestrationCorrelationKey), IntegrationBatch.Empty);
+        Assert.Equal(new[] { "handled:one.json", "after:one.json" }, invoker.Calls);
+    }
+
+    [Fact]
+    public void TryRequiresDurableValidNamesAndCannotBeUsedOnOtherKinds()
+    {
+        _ = NativeFlowDefinition.Read(JsonSerializer.Serialize(Flow(Try([], [], "ex", "details")), JsonSerializerOptions.Web));
+        Assert.Throws<ArgumentException>(() => NativeFlowDefinition.Read(JsonSerializer.Serialize(Flow(Try([], [], "1bad")), JsonSerializerOptions.Web)));
+        Assert.Throws<ArgumentException>(() => NativeFlowDefinition.Read(JsonSerializer.Serialize(Flow(Try([], [], "same", "same")), JsonSerializerOptions.Web)));
+        Assert.Throws<ArgumentException>(() => NativeFlowDefinition.Read(JsonSerializer.Serialize(new NativeFlowDefinition { Nodes = [Try([], [])] }, JsonSerializerOptions.Web)));
+        Assert.Throws<ArgumentException>(() => NativeFlowDefinition.Read(JsonSerializer.Serialize(Flow(new NativeFlowNode { Kind = NativeFlowNodeKind.Sequence, ExceptionMessageVariable = "ex" }), JsonSerializerOptions.Web)));
+    }
+
+    [Fact]
+    public async Task TerminateFaultsTheInstanceWithItsMessageAndSkipsLaterNodes()
+    {
+        var path = DiskPath();
+        try
+        {
+            var clock = new Clock(); var invoker = new Invoker();
+            var flow = Flow(Render("before"), new() { Kind = NativeFlowNodeKind.If, Conditions = [Condition("kind", "accepted")],
+                Children = [new() { Id = "stop", Name = "Invalid Address", Kind = NativeFlowNodeKind.Terminate, TerminateMessage = "Invalid SFTP Address" }] }, Render("after"));
+            var context = Context(clock);
+            var failure = await Assert.ThrowsAsync<NativeTerminationException>(() => Run(new DiskStore(path), clock, invoker, flow, context, Input("one")));
+            Assert.Contains("Invalid SFTP Address", failure.Message);
+            Assert.Equal(new[] { "before:one.json" }, invoker.Calls);
+            var saved = (await new DiskStore(path).GetAsync("native", "", default))!;
+            Assert.Equal("Faulted", saved.Native!.State.Status);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task NamedAugmentPreservesWorkingBatchAndOtherMessagesAcrossWait()
+    {
+        var store = new InMemoryFlowOrchestrationStateStore(); var clock = new Clock(); var invoker = new Invoker();
+        invoker.Action = (module, _, batch) => Task.FromResult(module == "augment" ? Input("modified") : batch);
+        var flow = Flow(new() { Kind = NativeFlowNodeKind.SaveMessage, MessageName = "original" },
+            new() { Kind = NativeFlowNodeKind.Augment, Module = "augment", InputMessages = ["original"], MessageName = "output" },
+            Wait(1), new() { Kind = NativeFlowNodeKind.Deliver, Module = "send", MessageName = "output" });
+        var first = Context(clock); await Run(store, clock, invoker, flow, first, Input("one"));
+        var saved = store.Checkpoints.Single();
+        Assert.Equal("one.json", saved.Payloads.Single().Name);
+        Assert.Equal("one.json", saved.Native!.State.Messages["original"].Single().Name);
+        Assert.Equal("modified.json", saved.Native.State.Messages["output"].Single().Name);
+        clock.Now += TimeSpan.FromSeconds(1);
+        await Run(store, clock, invoker, flow, Context(clock, first.OrchestrationCorrelationKey), IntegrationBatch.Empty);
+        Assert.Equal(new[] { "augment:one.json", "send:modified.json" }, invoker.Calls);
+    }
+
+    [Fact]
+    public async Task RealNamedBillingAugmentsComposeOnCopyInOrder()
+    {
+        var catalog = new FakeExecutableModuleCatalog().AddAugment(new SetContextPropertyAugmentModule());
+        using var services = new ServiceCollection().AddSingleton<IModuleCatalog>(catalog).BuildServiceProvider();
+        var augment = new Service.Modules.AugmentModuleInvoker(services); var invoker = new Invoker();
+        var store = new InMemoryFlowOrchestrationStateStore(); var clock = new Clock();
+        NativeFlowNode Set(string input, string value) => new() { Kind = NativeFlowNodeKind.Augment, Module = "set-context-property-augment",
+            InputMessages = [input], MessageName = "outbound", Settings = new() { ["propertyName"] = "FileName", ["propertyNamespace"] = "urn:mime", ["propertyValue"] = value } };
+        var flow = Flow(new() { Kind = NativeFlowNodeKind.SaveMessage, MessageName = "original" }, Set("original", "first"), Set("outbound", "second"), Wait(1));
+        var module = new NativeControlFlowAugmentModule(augment, invoker, store, clock, invoker);
+        await module.AugmentAsync(Context(clock), Input("one"), Step(flow), default);
+        var checkpoint = store.Checkpoints.Single();
+        Assert.Equal("second", checkpoint.Native!.State.Messages["outbound"].Single().Metadata["{urn:mime}FileName"]);
+        Assert.False(checkpoint.Native.State.Messages["original"].Single().Metadata.ContainsKey("{urn:mime}FileName"));
+        Assert.False(checkpoint.Payloads.Single().Metadata.ContainsKey("{urn:mime}FileName"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NamedAugmentLostOutcomeOnDiskNeverReplays(bool committed)
+    {
+        var path = DiskPath();
+        try
+        {
+            var clock = new Clock(); var invoker = new Invoker();
+            invoker.Action = (_, _, _) => Task.FromResult(Input("modified"));
+            var effect = new NativeFlowNode { Id = "augment", Kind = NativeFlowNodeKind.Augment, Module = "augment", InputMessages = ["original"], MessageName = "output" };
+            var flow = Flow(new() { Kind = NativeFlowNodeKind.SaveMessage, MessageName = "original" }, effect, Wait(1));
+            var first = Context(clock); var failingStore = new DiskStore(path) { FailOutcomeBeforeCommit = !committed, FailOutcomeAfterCommit = committed };
+            await Assert.ThrowsAsync<NativePersistenceException>(() => Run(failingStore, clock, invoker, flow, first, Input("one")));
+            var store = new DiskStore(path); var saved = (await store.GetAsync("native", "", default))!;
+            if (!committed)
+            {
+                await Assert.ThrowsAsync<NativeAmbiguousEffectException>(() => Run(store, clock, invoker, flow, Context(clock, saved.CorrelationKey), IntegrationBatch.Empty));
+                await new NativeDurableRecovery(store, clock).ConfirmCommittedAsync("native", saved.CorrelationKey, flow, effect.Id, "verified output", Input("modified"), default);
+            }
+            saved = (await store.GetAsync("native", "", default))!;
+            Assert.Equal("modified.json", saved.Native!.State.Messages["output"].Single().Name);
+            Assert.Equal("one.json", saved.Payloads.Single().Name);
+            await Run(store, clock, invoker, flow, Context(clock, saved.CorrelationKey), IntegrationBatch.Empty);
+            Assert.Single(invoker.Calls);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task NamedAugmentAmbiguousEffectRequiresVerifiedRecoveryWithoutReplay()
+    {
+        var store = new InMemoryFlowOrchestrationStateStore(); var clock = new Clock(); var invoker = new Invoker();
+        invoker.Action = (_, _, _) => throw new IOException("Uncertain augment outcome");
+        var effect = new NativeFlowNode { Id = "augment", Kind = NativeFlowNodeKind.Augment, Module = "augment", InputMessages = ["original"], MessageName = "output" };
+        var flow = Flow(new() { Kind = NativeFlowNodeKind.SaveMessage, MessageName = "original" }, effect, Wait(1));
+        var first = Context(clock);
+        await Assert.ThrowsAsync<NativeAmbiguousEffectException>(() => Run(store, clock, invoker, flow, first, Input("one")));
+        var saved = store.Checkpoints.Single(); var recovery = new NativeDurableRecovery(store, clock);
+        Assert.Equal(NativeFlowNodeKind.Augment, NativeDurableRecovery.Inspect(saved)!.Kind);
+        await Assert.ThrowsAsync<ArgumentException>(() => recovery.ConfirmCommittedAsync("native", saved.CorrelationKey, flow, effect.Id, "verified", IntegrationBatch.Empty, default));
+        await recovery.ConfirmCommittedAsync("native", saved.CorrelationKey, flow, effect.Id, "verified output", Input("modified"), default);
+        saved = store.Checkpoints.Single();
+        Assert.Equal("one.json", saved.Payloads.Single().Name);
+        Assert.Equal("one.json", saved.Native!.State.Messages["original"].Single().Name);
+        Assert.Equal("modified.json", saved.Native.State.Messages["output"].Single().Name);
+        await Run(store, clock, invoker, flow, Context(clock, first.OrchestrationCorrelationKey), IntegrationBatch.Empty);
+        Assert.Single(invoker.Calls);
+    }
+
+    [Theory]
+    [InlineData("multiple")]
+    [InlineData("empty")]
+    [InlineData("non-durable")]
+    [InlineData("no-output")]
+    [InlineData("no-input")]
+    public void NamedAugmentRejectsInvalidConfigurations(string variation)
+    {
+        var node = new NativeFlowNode { Kind = NativeFlowNodeKind.Augment, Module = "augment", InputMessages = ["input"], MessageName = "output" };
+        var flow = Flow(node);
+        switch (variation)
+        {
+            case "multiple": node.InputMessages = ["input", "other"]; break;
+            case "empty": node.InputMessages = []; break;
+            case "non-durable": flow.Durable = false; break;
+            case "no-output": node.MessageName = ""; break;
+            case "no-input": node.InputMessages = null; break;
+        }
+        Assert.Throws<ArgumentException>(() => NativeFlowDefinition.Read(JsonSerializer.Serialize(flow, JsonSerializerOptions.Web)));
+    }
+
+    [Fact]
+    public void TerminateRequiresAMessageAndDurableExecution()
+    {
+        string Json(NativeFlowNode node, bool durable) => JsonSerializer.Serialize(new NativeFlowDefinition { Durable = durable, Nodes = [node] }, JsonSerializerOptions.Web);
+        _ = NativeFlowDefinition.Read(Json(new() { Kind = NativeFlowNodeKind.Terminate, TerminateMessage = "stop" }, true));
+        Assert.Throws<ArgumentException>(() => NativeFlowDefinition.Read(Json(new() { Kind = NativeFlowNodeKind.Terminate, TerminateMessage = " " }, true)));
+        Assert.Throws<ArgumentException>(() => NativeFlowDefinition.Read(Json(new() { Kind = NativeFlowNodeKind.Terminate }, true)));
+        Assert.Throws<ArgumentException>(() => NativeFlowDefinition.Read(Json(new() { Kind = NativeFlowNodeKind.Terminate, TerminateMessage = "stop" }, false)));
+        Assert.Throws<ArgumentException>(() => NativeFlowDefinition.Read(Json(new() { Kind = NativeFlowNodeKind.Sequence, TerminateMessage = "stop" }, true)));
     }
 }

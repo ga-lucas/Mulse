@@ -207,6 +207,9 @@ public sealed partial class BizTalkImportService
             "This draft is disabled by default so imported addresses, credentials, and map paths can be reviewed safely before execution."
         };
         draftWarnings.AddRange(project.DependencyWarnings);
+        relatedBindings = relatedBindings
+            .Select(binding => ApplyPipelineFileDefaults(binding, effectiveProject.Artifacts.Concat(effectiveProject.ReferencedArtifacts), draftWarnings))
+            .ToArray();
         if (relatedBindings.Any(binding => binding.Services.Count > 0))
             draftWarnings.Add("Physical ports were scoped using explicit assembly/orchestration references in the binding export. Direct MessageBox receive subscriptions, dynamic destinations, distribution lists, and unreferenced send-port filters are not inferred; review them in the original export.");
         if (!string.Equals(flowId, suggestedId, StringComparison.Ordinal))
@@ -222,7 +225,8 @@ public sealed partial class BizTalkImportService
         var fetchStep = CreateFetchStep(flowId, relatedBindings, requirements, draftWarnings);
         var parseStep = CreateParseStep(flowId, effectiveProject, requirements, draftWarnings);
         var deliveries = CreateDeliveryRoutes(flowId, effectiveProject, relatedBindings, requirements, draftWarnings);
-        var augments = CreateAugments(flowId, effectiveProject, relatedAssemblies, deliveries.Count, requirements, draftWarnings);
+        var augments = CreateAugments(flowId, effectiveProject, relatedAssemblies, deliveries.Count, requirements, draftWarnings).ToList();
+        augments.AddRange(CreatePipelineComponentAugments(relatedBindings, draftWarnings));
 
         var isPushTriggeredFetch = string.Equals(fetchStep.Module, "http-inbound-fetch", StringComparison.OrdinalIgnoreCase)
             || string.Equals(fetchStep.Module, "file-system-watcher-fetch", StringComparison.OrdinalIgnoreCase);
@@ -272,10 +276,20 @@ public sealed partial class BizTalkImportService
             draftWarnings.Add("The source orchestration or project name looks like a test, debug, or scratch artifact rather than a production process. Confirm it is worth migrating before spending review effort on this draft.");
         }
 
+        var polling = fetchStep.Module == "file-system-fetch"
+            && relatedBindings.SelectMany(static binding => binding.ReceivePorts).SelectMany(static port => port.ReceiveLocations).FirstOrDefault() is { } pollingLocation
+            && int.TryParse(TryGetTransportProperty(pollingLocation.TransportProperties, "PollingInterval"), out var pollingMs) && pollingMs > 0
+                ? TimeSpan.FromMilliseconds(pollingMs)
+                : (TimeSpan?)null;
+        if (polling is not null)
+        {
+            draftWarnings.Add($"The FILE receive location polled every {polling.Value.TotalSeconds:0.#}s; the draft uses an Interval trigger with that period. Adjust the trigger in the flow UI as needed.");
+        }
+
         var draftFlow = new BizTalkDraftFlowResponse(
             flowId,
             false,
-            new BizTalkDraftTriggerResponse(isPushTriggeredFetch ? PipelineTriggerMode.Push : PipelineTriggerMode.OnDemand, null, false),
+            new BizTalkDraftTriggerResponse(isPushTriggeredFetch ? PipelineTriggerMode.Push : polling is not null ? PipelineTriggerMode.Interval : PipelineTriggerMode.OnDemand, polling, false),
             [new BizTalkDraftFetchResponse(PrimaryFetchId, fetchStep, [])],
             [new BizTalkDraftParseResponse(PrimaryParseId, parseStep, [PrimaryFetchId])],
             augments,

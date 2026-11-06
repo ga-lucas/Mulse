@@ -28,6 +28,11 @@ internal static class FlowModuleDependencies
                 var native = Mulse.Modules.ControlFlow.NativeFlowDefinition.Read(nativeJson, allowBlocked: !flow.Enabled);
                 foreach (var node in native.AllNodes())
                 {
+                    if (node.Kind == Mulse.Modules.ControlFlow.NativeFlowNodeKind.InvokeTransform)
+                    {
+                        yield return (node.Module, ModuleKind.Transform);
+                        continue;
+                    }
                     if (node.Kind == Mulse.Modules.ControlFlow.NativeFlowNodeKind.Deliver)
                     {
                         yield return (node.Module, ModuleKind.Deliver);

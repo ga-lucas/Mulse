@@ -181,9 +181,12 @@ public sealed partial class BizTalkImportService
                     var pipelineEvidence = BizTalkPipelineInventoryAnalyzer.Analyze(path);
                     pipelineInventory = pipelineEvidence.Inventory;
                     issues.AddRange(pipelineEvidence.Diagnostics);
+                    foreach (var hint in PipelineComponentHints(pipelineInventory))
+                    {
+                        issues.Add(Diagnostic("BT-PIPELINE-COMPONENT-HINT", MigrationDiagnosticSeverity.Review, path, hint.Message, hint.Remediation));
+                    }
                     issues.Add(Diagnostic("BT-PIPELINE-UNTRANSLATED", MigrationDiagnosticSeverity.Blocking, path,
-                        "Pipeline stages, component identities and property names are source evidence only; component behavior and property values were not translated.",
-                        "Implement equivalent decoding, parsing, context promotion, preprocessing, and multipart behavior using native Mulse modules."));
+                        "Pipeline stages, component identities and property names are source evidence only; component behavior and property values were not translated.",                        "Implement equivalent decoding, parsing, context promotion, preprocessing, and multipart behavior using native Mulse modules."));
                     break;
                 case "Schema":
                     issues.Add(Diagnostic("BT-SCHEMA-REVIEW", MigrationDiagnosticSeverity.Review, path,
@@ -197,6 +200,40 @@ public sealed partial class BizTalkImportService
                     break;
             }
             return new(artifact.Kind, path, status, issues) { Orchestration = inventory, Pipeline = pipelineInventory };
+        }
+    }
+
+    private static readonly (string Match, string Message, string Remediation)[] ComponentHintTable =
+    [
+        ("HL7TypeCaster", "Component 'HL7TypeCaster' promotes the HL7 MessageType from the XML root.",
+            "Add the 'hl7-message-type-augment' step (Mulse.Hl7 package) before the HL7 render step; namespace and output key are configurable in the flow editor."),
+        ("SetProperty", "Component 'SetProperty' promotes a configured context property (name/namespace/value).",
+            "Add the 'set-context-property-augment' step and enter the property name, namespace and value from the pipeline component properties."),
+        ("BTAHL7", "BTAHL7 assembler/disassembler component detected.",
+            "Use 'hl7-parse'/'hl7-render'; assembler fidelity (acks, delimiters, segment validation) must be verified against synthetic messages."),
+        ("MIME", "MIME/S-MIME encoder component detected.",
+            "No native MIME/S-MIME module exists; use the SMTP deliver attachment settings, and document signing/encryption as an open gap."),
+        ("FFAsm", "Flat-file assembler component detected.", "Use 'flat-file-render' with the schema-derived layout."),
+        ("FFDasm", "Flat-file disassembler component detected.", "Use 'flat-file-parse' with the schema-derived layout.")
+    ];
+
+    private static IEnumerable<(string Message, string Remediation)> PipelineComponentHints(PipelineMigrationInventory? inventory)
+    {
+        if (inventory is null)
+        {
+            yield break;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var component in inventory.Stages.SelectMany(static stage => stage.Components))
+        {
+            foreach (var (match, message, remediation) in ComponentHintTable)
+            {
+                if (component.ClassName.Contains(match, StringComparison.OrdinalIgnoreCase) && seen.Add(match))
+                {
+                    yield return (message, remediation);
+                }
+            }
         }
     }
 

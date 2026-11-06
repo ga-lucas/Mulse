@@ -37,6 +37,15 @@ public static class DesignerEndpoints
             .Produces<XmlMappingPreviewResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest);
 
+        app.MapPost("/api/flow-designer/native/test", async (NativeFlowTestRequest request, CancellationToken cancellationToken) =>
+                TypedResults.Ok(await Service.Execution.NativeFlowTestRunner.RunAsync(request, cancellationToken).ConfigureAwait(false)))
+            .WithName("TestNativeFlowIsolated")
+            .WithSummary("Test a native control-flow definition using synthetic input and explicit mocks")
+            .WithDescription("No real modules or workspace checkpoints are accessed. Suspended tests cannot be resumed; unresolved nodes remain blocked. Results do not approve migration.")
+            .WithTags("Designer")
+            .Produces<NativeFlowTestResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest);
+
         app.MapPost("/api/flow-designer/analyze", async Task<Ok<FlowDesignResponse>> (AnalyzeFlowDesignRequest request, IFlowDesignService flowDesignService, CancellationToken cancellationToken) =>
             {
                 var response = await flowDesignService.AnalyzeAsync(request, cancellationToken).ConfigureAwait(false);

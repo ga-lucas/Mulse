@@ -33,6 +33,7 @@ public sealed partial class BizTalkImportService
         }
 
         var fetchStep = CreateFetchSettings(portLocation.Location, flowId, includeConfigPlaceholders: true, requirements, "fetch.settings");
+        AddReceiveLocationOperationalWarnings(portLocation.Location, draftWarnings);
         if (fetchStep.Settings.ContainsKey("afterProcessing"))
         {
             AddArchiveAfterProcessingWarning(draftWarnings);
@@ -327,7 +328,16 @@ public sealed partial class BizTalkImportService
         List<string> draftWarnings)
     {
         var renderStep = CreateRenderStepForProject(referencePrefix, project, sendPort, routeIndex, requirements, draftWarnings);
-        var deliverSettings = CreateDeliverSettings(sendPort, referencePrefix, routeIndex, requirements, renderStep.Module, includeConfigPlaceholders: requirements is not null);
+        var deliverSettings = CreateDeliverSettings(sendPort, referencePrefix, routeIndex, requirements, renderStep.Module, includeConfigPlaceholders: requirements is not null, draftWarnings);
+        AddSendPortOperationalWarnings(sendPort, draftWarnings);
+        if (TryCreateFilterConditionJson(sendPort.FilterExpression, out var filterProblems) is { } filterConditionJson)
+        {
+            draftWarnings.Add($"Send port '{sendPort.Name}' subscribes with a BizTalk filter. Equivalent route conditionJson (not applied automatically because the promoted-property metadata keys must be populated by your parse/augment steps first): {filterConditionJson}");
+        }
+        else if (!string.IsNullOrWhiteSpace(sendPort.FilterExpression))
+        {
+            draftWarnings.Add($"Send port '{sendPort.Name}' has a subscription filter that could not be converted automatically{(filterProblems.Count > 0 ? $" ({string.Join(", ", filterProblems)})" : string.Empty)}. Recreate it as route conditions in the flow UI.");
+        }
 
         if (deliverSettings.Retry is { } importedRetry)
         {
@@ -382,6 +392,15 @@ public sealed partial class BizTalkImportService
                         : $"A starter XSLT stylesheet ('{generatedStylesheet.ScaffoldedModuleFileName}') was auto-generated from map '{generatedStylesheet.MapName}' ({generatedStylesheet.DirectLinkCount} direct link(s), {generatedStylesheet.ConstantValueCount} constant(s), {generatedStylesheet.FunctoidInvolvedLinkCount} functoid-involved link(s) left untranslated). Download it from the scaffolded-module endpoints, save it, then set this path to the saved file.",
                     appliedToDraft: true);
                 settings["outputExtension"] = ".xml";
+                break;
+            case "hl7-xml-render":
+                var assembler = sendPort!.Operational.PipelineComponents.First(static component => IsBtaHl7Assembler(component.ClassName));
+                var trailingAllowed = assembler.Properties.GetValueOrDefault("TrailingDelimiterAllowed");
+                settings["trimTrailingDelimiters"] = trailingAllowed is not null && !IsTrue(trailingAllowed) && trailingAllowed != "-1" ? "true" : "false";
+                if (project.MapCount > 0)
+                {
+                    draftWarnings.Add($"Send port '{sendPort.Name}' assembles HL7 from XML, but the project also has BizTalk maps. The map output must be produced (xslt-render step, ordered before this renderer) as HL7 XML before ER7 rendering.");
+                }
                 break;
             case "xml-render":
                 settings["rootElement"] = NormalizeArtifactName(project.Name);
@@ -455,9 +474,7 @@ public sealed partial class BizTalkImportService
                 settings.TryAdd("deleteAfterRead", "true");
                 break;
             case "file-system-fetch":
-                settings["path"] = ResolveConfigValue(requirements, referencePrefix, $"{settingPathPrefix}.path", address, "File-system fetch path imported from BizTalk should usually be externalized to configuration.", includeConfigPlaceholders);
-                settings["searchPattern"] = "*.*";
-                settings["afterProcessing"] = nameof(FetchPostProcessingAction.MoveToArchive);
+                MapFileFetch(location, referencePrefix, includeConfigPlaceholders, requirements, settingPathPrefix, settings);
                 break;
             case "http-inbound-fetch":
                 settings["route"] = ResolveConfigValue(requirements, referencePrefix, $"{settingPathPrefix}.route", CreateSlug(location.Name), "Inbound route segment imported from a BizTalk WCF/HTTP receive location. Exposed at /api/inbound/{route}; the original endpoint must be repointed here during cutover.", includeConfigPlaceholders);
@@ -490,7 +507,8 @@ public sealed partial class BizTalkImportService
         int routeIndex,
         List<BizTalkSettingRequirementResponse>? requirements,
         string renderModule,
-        bool includeConfigPlaceholders)
+        bool includeConfigPlaceholders,
+        List<string>? warnings = null)
     {
         var module = SelectDeliverModule(sendPort.TransportType, sendPort.Address);
         var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -506,20 +524,19 @@ public sealed partial class BizTalkImportService
                     settings["contentType"] = ResolveContentType(renderModule);
                 }
                 break;
+            case "sftp-deliver":
+            case "ftp-deliver":
+                MapRemoteDeliver(module, sendPort, referencePrefix, settingPathPrefix, requirements, warnings, settings);
+                break;
             case "file-system-deliver":
-                settings["path"] = ResolveConfigValue(requirements, referencePrefix, $"{settingPathPrefix}.path", sendPort.Address, "File-system destination imported from BizTalk should usually be externalized to configuration.", includeConfigPlaceholders);
-                settings["extension"] = ResolveExtension(renderModule);
+                MapFileDeliver(sendPort, referencePrefix, settingPathPrefix, requirements, warnings, includeConfigPlaceholders, settings);
+                if (!settings.ContainsKey("extension"))
+                {
+                    settings["extension"] = ResolveExtension(renderModule);
+                }
                 break;
             case "smtp-email-deliver":
-                var host = TryGetTransportProperty(sendPort.TransportProperties, "SMTPServer") ?? ExtractHost(sendPort.Address);
-                settings["host"] = string.IsNullOrWhiteSpace(host)
-                    ? AddRequirement(requirements, referencePrefix, $"{settingPathPrefix}.host", "Config", "Enter the SMTP host for the migrated send port.", appliedToDraft: includeConfigPlaceholders)
-                    : ResolveConfigValue(requirements, referencePrefix, $"{settingPathPrefix}.host", host, "SMTP host imported from BizTalk should usually be externalized to configuration.", includeConfigPlaceholders);
-                settings["port"] = TryGetTransportProperty(sendPort.TransportProperties, "SMTPServerPort") ?? "25";
-                settings["from"] = AddRequirement(requirements, referencePrefix, $"{settingPathPrefix}.from", "Config", "Set the SMTP sender address for the migrated send port.", appliedToDraft: includeConfigPlaceholders);
-                settings["to"] = AddRequirement(requirements, referencePrefix, $"{settingPathPrefix}.to", "Config", "Set the SMTP recipient addresses for the migrated send port.", appliedToDraft: includeConfigPlaceholders);
-                settings["subject"] = $"Imported BizTalk delivery {sendPort.Name}";
-                settings["attachPayload"] = "true";
+                MapSmtpDeliver(sendPort, referencePrefix, settingPathPrefix, requirements, includeConfigPlaceholders, settings);
                 break;
             default:
                 settings["path"] = AddRequirement(requirements, referencePrefix, $"{settingPathPrefix}.path", "Config", "Choose a repository output path for this migrated send port.", appliedToDraft: includeConfigPlaceholders, actualValue: sendPort.Address);

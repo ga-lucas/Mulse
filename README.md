@@ -495,7 +495,7 @@ Choose **InstanceId** in the native expression editor for the stable durable ins
 and is not the run ID or a newly generated value per evaluation. Exact source RootService.InstanceId string reads
 translate to this new native identity, never to an alleged legacy BizTalk ID. Durable execution is required.
 
-### Optional Billing helper plugin
+### Optional Billing helper plugin (CommonBilling field read only)
 
 `Mulse.Billing` is a separate hot-loadable `net10.0` project referencing only the module SDK, not BizTalk or
 `Service`. Building the solution places it under `Service\plugins\Mulse.Billing`. In **Modules**, load/enable
@@ -508,11 +508,18 @@ controls are available for both scratch flows and native node authoring:
   do not reproject after intentional context changes. The exact Billing root namespace and unqualified
   section/field names are required. Missing, duplicate, complex, nil/attributed and oversized values fail.
   Username/password/certificate fields are not exposed.
-- **Expand Billing target filename**: choose literal or exact metadata template, explicit time zone/culture,
-  and an output key. It changes metadata only, not the payload name, destination or body.
-- **Billing filename macros**: the same expansion as a one-text-input function in **Map parsed data**.
-- **Billing XML - remove namespaces**: select this renderer directly or as an **Ordered renderer pipeline**
-  stage. Text, CDATA, comments and processing instructions survive; attribute local-name collisions fail.
+- **Expand filename template** (`filename-template-augment`, built-in Compatibility Pack): choose literal or exact metadata
+  template, explicit time zone/culture, and an output key. It changes metadata only, not the payload name, destination or body.
+- **Filename template macros** (`filename-template-transform`, built-in): the same expansion as a one-text-input function in
+  **Map parsed data** and the native `InvokeTransform` node.
+- **XML - remove namespaces** (`xml-remove-namespaces-render`, built-in): select this renderer directly or as an
+  **Ordered renderer pipeline** stage. Text, CDATA, comments and processing instructions survive; attribute local-name collisions fail.
+- **Set context property** (`set-context-property-augment`, built-in) and **Promote HL7 message type**
+  (`hl7-message-type-augment`, `Mulse.Hl7` package; enable it like `hl7-xml-render`) replace the BizTalk `SetProperty` and
+  `HL7TypeCaster` pipeline components.
+
+Only **Read CommonBilling field** is Billing-specific. The generic modules above were renamed from `billing-*` IDs with no
+alias, so a saved flow that still references an old ID fails closed until it is re-selected.
 
 Filename macros are case-sensitive `[DATE(format)]`, `[DATETIME(format)]`, `[TIME(format)]`,
 `[UTCDATETIME(format)]`, `[UTCTIME(format)]`, `[DAY(length)]`, `[GUID]`, `[TICKS]`, `[SECONDS]`.
@@ -521,7 +528,8 @@ and hyphen. DAY uses uppercase English names (0 or greater than 6 = full name); 
 local wall-clock seconds since **2001-01-01**, not Unix time. Unlike the original helper, time is one execution-start
 snapshot and zone/culture are explicit; invalid known tokens/formats fail rather than returning placeholders.
 Identical GUID tokens within one expansion agree. Use the augment inside a durable native block to retain its
-successful result across waits/restarts; an independently retried mapping is not a deterministic GUID generator.
+successful result across waits/restarts; an independently retried mapping or `InvokeTransform` call is not a deterministic GUID
+generator, so checkpoint the result before a Deliver that must be replay-stable.
 
 Synthetic tests verify actual plugin loading/unloading, host mapper invocation, UI controls and persisted native
 field-read → GUID filename → wait/restart → namespace-removal composition. This is not imported Billing parity:

@@ -1,13 +1,15 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Mulse.Modules.Abstractions;
 using Mulse.Modules.Decisions;
 
 namespace Mulse.Modules.ControlFlow;
 
 /// <summary>A persisted native continuation. The caller must serialize executions for each flow/instance.</summary>
 public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, TimeProvider clock,
-    IAugmentModuleInvoker augments, IRenderModuleInvoker renderers, IDeliverModuleInvoker? deliveries = null)
+    IAugmentModuleInvoker augments, IRenderModuleInvoker renderers, IDeliverModuleInvoker? deliveries = null, IModuleInvoker? transforms = null)
 {
     private const int MaxCharacters = 24_000_000;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { MaxDepth = 128 };
@@ -23,6 +25,8 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
         if (incoming.Count > 1) throw new ArgumentException("Native durable activation requires exactly one incoming message or an empty timer resume.");
         if (definition.AllNodes().Any(node => node.Kind == NativeFlowNodeKind.Deliver) && deliveries is null)
             throw new NotSupportedException("Native Deliver requires a leased delivery invoker.");
+        if (definition.AllNodes().Any(node => node.Kind == NativeFlowNodeKind.InvokeTransform) && transforms is null)
+            throw new NotSupportedException("Native InvokeTransform requires a module invoker.");
         string? incomingId = null;
         var key = context.OrchestrationCorrelationKey;
         if (incoming.Count == 1)
@@ -157,6 +161,39 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
             return output;
         }
         if (state.Status == "Completed") return await Complete().ConfigureAwait(false);
+        // Index of the innermost Try still executing its body that may handle this exception, or -1 when it must fault the instance.
+        // Terminate, persistence/unmatched/ambiguous-effect faults, cancellation, effects with unresolved intent, receive/wait boundaries
+        // and loops that would lose their per-item batch (ForEach) are never caught.
+        int CatchTarget(Exception exception)
+        {
+            if (exception is NativePersistenceException or NativeUnmatchedMessageException or NativeAmbiguousEffectException or NativeTerminationException or OperationCanceledException
+                || state.EffectNodeId is not null || state.Status != "Running") return -1;
+            for (var index = state.Stack.Count - 1; index > 0; index--)
+            {
+                var candidate = nodes[state.Stack[index].NodeId];
+                if (candidate.Kind is NativeFlowNodeKind.ForEach or NativeFlowNodeKind.Receive or NativeFlowNodeKind.Wait) return -1;
+                if (candidate.Kind != NativeFlowNodeKind.Try || state.Stack[index].Phase == 2) continue;
+                foreach (var variable in new[] { candidate.ExceptionMessageVariable, candidate.ExceptionDetailsVariable })
+                    if (variable is not null && (state.VariableTypes.TryGetValue(variable, out var type) ? type != NativeScalarType.String : state.Variables.Count >= 128)) return -1;
+                return index;
+            }
+            return -1;
+        }
+        void Unwind(Exception exception, int index)
+        {
+            var handler = nodes[state.Stack[index].NodeId];
+            state.Stack.RemoveRange(index + 1, state.Stack.Count - index - 1);
+            state.Stack[index].Phase = 2; state.Stack[index].Position = 0;
+            void SetText(string? variable, string text)
+            {
+                if (variable is null) return;
+                state.Variables[variable] = NativeScalar.From(text.Length > 2000 ? text[..2000] : text);
+                state.VariableTypes[variable] = NativeScalarType.String;
+            }
+            SetText(handler.ExceptionMessageVariable, exception.Message);
+            SetText(handler.ExceptionDetailsVariable, exception.GetType().Name + ": " + exception.Message);
+        }
+    resume:
         try
         {
             while (state.Stack.Count != 0)
@@ -174,6 +211,12 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
                 else if (node.Kind == NativeFlowNodeKind.If)
                 {
                     if (cursor.Phase == 0) cursor.Phase = Matches(node) ? 1 : 2;
+                    var children = cursor.Phase == 1 ? node.Children : node.Otherwise;
+                    if (cursor.Position == children.Count) Pop(); else Push(children[cursor.Position++]);
+                }
+                else if (node.Kind == NativeFlowNodeKind.Try)
+                {
+                    if (cursor.Phase == 0) cursor.Phase = 1;
                     var children = cursor.Phase == 1 ? node.Children : node.Otherwise;
                     if (cursor.Position == children.Count) Pop(); else Push(children[cursor.Position++]);
                 }
@@ -244,11 +287,20 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
                 }
                 else
                 {
-                    if (node.Kind is not (NativeFlowNodeKind.DeclareVariable or NativeFlowNodeKind.SetVariable or NativeFlowNodeKind.CreateXmlMessage or NativeFlowNodeKind.SetMessageValue or NativeFlowNodeKind.SaveMessage or NativeFlowNodeKind.UseMessage or NativeFlowNodeKind.CreateXmlRoot or NativeFlowNodeKind.AppendXmlMessage or NativeFlowNodeKind.ApplyXmlRules)) Accept();
+                    if (node.Kind is not (NativeFlowNodeKind.DeclareVariable or NativeFlowNodeKind.SetVariable or NativeFlowNodeKind.InvokeTransform or NativeFlowNodeKind.CreateXmlMessage or NativeFlowNodeKind.SetMessageValue or NativeFlowNodeKind.SaveMessage or NativeFlowNodeKind.UseMessage or NativeFlowNodeKind.CreateXmlRoot or NativeFlowNodeKind.AppendXmlMessage or NativeFlowNodeKind.ApplyXmlRules)) Accept();
                     switch (node.Kind)
                     {
                         case NativeFlowNodeKind.DeclareVariable:
                         case NativeFlowNodeKind.SetVariable: NativeVariables.Apply(node, state.Variables, state.VariableTypes, Fact, instance); Pop(); break;
+                        case NativeFlowNodeKind.InvokeTransform:
+                            // A transform is a pure value function, not an external effect: after a crash before the next checkpoint it simply runs again.
+                            if (!state.VariableTypes.TryGetValue(node.Variable!, out var resultType) || resultType != NativeScalarType.String)
+                                throw new InvalidOperationException("Native transform result requires a declared String variable: " + node.Variable);
+                            var arguments = node.TransformInputs!.Select(input => ToJson(input.Evaluate(state.Variables, Fact, instance))).ToArray();
+                            var transformed = await transforms!.InvokeTransformAsync(node.Module, context, arguments, node.Settings, cancellationToken).ConfigureAwait(false);
+                            if (transformed is not JsonValue transformedValue || !transformedValue.TryGetValue<string>(out var transformedText) || transformedText.Length > 65_536)
+                                throw new InvalidOperationException($"Native transform '{node.Module}' must return one String of at most 65,536 characters.");
+                            state.Variables[node.Variable!] = NativeScalar.From(transformedText); Pop(); break;
                         case NativeFlowNodeKind.CreateXmlMessage:
                             state.Messages[node.MessageName] = Capture(NativeMessageOperations.CreateXml(node.MessageName, node.Expression!.Evaluate(state.Variables, Fact, instance))); Pop(); break;
                         case NativeFlowNodeKind.CreateXmlRoot:
@@ -263,6 +315,8 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
                         case NativeFlowNodeKind.SaveMessage: state.Messages[node.MessageName] = Capture(batch); Pop(); break;
                         case NativeFlowNodeKind.UseMessage: batch = Message(node.MessageName); Pop(); break;
                         case NativeFlowNodeKind.Reply: context.CaptureResponse(Message(node.MessageName)); Pop(); break;
+                        case NativeFlowNodeKind.Terminate:
+                            throw new NativeTerminationException($"Native flow terminated by '{node.Name}' ({node.Id}): {node.TerminateMessage}");
                         case NativeFlowNodeKind.Augment:
                         case NativeFlowNodeKind.Render:
                         case NativeFlowNodeKind.Deliver:
@@ -270,12 +324,25 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
                                 ? new IntegrationBatch(inputs.Select(name =>
                                 {
                                     var input = Message(name);
-                                    if (input.Count != 1) throw new InvalidOperationException($"Native renderer input '{name}' requires exactly one payload.");
+                                    if (input.Count != 1) throw new InvalidOperationException($"Native named transform input '{name}' requires exactly one payload.");
                                     return input.Payloads[0];
                                 }).ToArray())
                                 : node.Kind == NativeFlowNodeKind.Deliver && node.MessageName.Length != 0 ? Message(node.MessageName) : batch;
                             var rendererModule = node.Module;
                             IReadOnlyDictionary<string, string> rendererSettings = node.Settings;
+                            IReadOnlyDictionary<string, string> deliverSettings = node.Settings;
+                            if (node.SettingExpressions is { } settingExpressions)
+                            {
+                                var effective = new Dictionary<string, string>(node.Settings, StringComparer.OrdinalIgnoreCase);
+                                foreach (var (settingKey, settingExpression) in settingExpressions)
+                                    effective[settingKey] = settingExpression.Evaluate(state.Variables, Fact, instance).Read() switch
+                                    {
+                                        string text => text, int number => number.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                        bool flag => flag ? "true" : "false",
+                                        _ => throw new InvalidOperationException($"Native deliver setting '{settingKey}' requires a String, Int32 or Boolean value; no setting was sent.")
+                                    };
+                                deliverSettings = effective;
+                            }
                             if (node.SelectionExpression is { } selection)
                             {
                                 if (selection.Evaluate(state.Variables, Fact, instance).Read() is not string identity)
@@ -289,9 +356,9 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
                             await Save(cancellationToken).ConfigureAwait(false);
                             var result = node.Kind switch
                             {
-                                NativeFlowNodeKind.Augment => await augments.AugmentAsync(node.Module, context, batch, node.Settings, cancellationToken).ConfigureAwait(false),
+                                NativeFlowNodeKind.Augment => await augments.AugmentAsync(node.Module, context, effectBatch, node.Settings, cancellationToken).ConfigureAwait(false),
                                 NativeFlowNodeKind.Render => await renderers.RenderAsync(rendererModule, context, effectBatch, rendererSettings, cancellationToken).ConfigureAwait(false),
-                                _ => await deliveries!.DeliverAsync(node.Module, context, effectBatch, node.Settings, cancellationToken).ConfigureAwait(false)
+                                _ => await deliveries!.DeliverAsync(node.Module, context, effectBatch, deliverSettings, cancellationToken).ConfigureAwait(false)
                             };
                             if (context.Disposition != FlowExecutionDisposition.Continue || context.DeliveryFailures.Count != 0)
                                 throw new InvalidOperationException($"Native effect '{node.Id}' suspended or reported delivery failure; its intent requires reconciliation.");
@@ -299,7 +366,7 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
                             { if (result.Count != 0) context.CaptureResponse(result); }
                             else if (node.InputMessages is not null)
                             {
-                                if (result.Count != 1) throw new InvalidOperationException("Native named renderer output requires exactly one payload.");
+                                if (result.Count != 1) throw new InvalidOperationException("Native named transform output requires exactly one payload.");
                                 state.Messages[node.MessageName] = Capture(result);
                             }
                             else batch = result;
@@ -315,6 +382,12 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
             Accept();
             return await Complete().ConfigureAwait(false);
         }
+        catch (Exception exception) when (CatchTarget(exception) >= 0)
+        {
+            Unwind(exception, CatchTarget(exception));
+            await Save(cancellationToken).ConfigureAwait(false);
+            goto resume;
+        }
         catch (Exception exception) when (exception is not NativePersistenceException && exception is not NativeUnmatchedMessageException)
         {
             state.Status = "Faulted"; state.Failure = exception.GetType().Name + ": " + exception.Message;
@@ -326,6 +399,11 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
     }
 
     private static List<FlowOrchestrationPayloadSnapshot> Capture(IntegrationBatch batch) => batch.Payloads.Select(payload => FlowOrchestrationPayloadSnapshot.Capture(payload, preserveMetadataCase: true)).ToList();
+    private static JsonNode? ToJson(NativeScalar scalar) => scalar.Read() switch
+    {
+        null => null, string text => JsonValue.Create(text), int number => JsonValue.Create(number), bool flag => JsonValue.Create(flag),
+        _ => throw new InvalidOperationException("Native transform arguments support only String, Int32, Boolean or null.")
+    };
     private static IntegrationBatch Restore(IEnumerable<FlowOrchestrationPayloadSnapshot> snapshots) => new(snapshots.Select(snapshot => snapshot.Restore()).ToArray());
     internal static string DefinitionHash(NativeFlowDefinition definition) => Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes("native-durable-v1\n" + JsonSerializer.Serialize(definition, Json))));
@@ -387,13 +465,13 @@ public sealed class NativeDurableExecutor(IFlowOrchestrationStateStore store, Ti
                 throw new InvalidOperationException("Invalid persisted native cursor.");
             var node = cursor.NodeId.Length == 0 ? null : nodes.GetValueOrDefault(cursor.NodeId);
             if (index == 0 ? cursor.NodeId.Length != 0 : node is null) throw new InvalidOperationException("Invalid native cursor node identity.");
-            IReadOnlyList<NativeFlowNode> children = node is null ? definition.Nodes : node.Kind == NativeFlowNodeKind.If && cursor.Phase == 2 ? node.Otherwise : node.Children;
+            IReadOnlyList<NativeFlowNode> children = node is null ? definition.Nodes : node.Kind is NativeFlowNodeKind.If or NativeFlowNodeKind.Try && cursor.Phase == 2 ? node.Otherwise : node.Children;
             if (cursor.Position > children.Count || node is null && (cursor.Phase != 0 || cursor.Iterations != 0)
                 || node?.Kind == NativeFlowNodeKind.Sequence && (cursor.Phase != 0 || cursor.Iterations != 0)
-                || node?.Kind == NativeFlowNodeKind.If && (cursor.Iterations != 0 || cursor.Phase == 0 && cursor.Position != 0)
+                || node?.Kind is NativeFlowNodeKind.If or NativeFlowNodeKind.Try && (cursor.Iterations != 0 || cursor.Phase == 0 && cursor.Position != 0)
                 || node?.Kind == NativeFlowNodeKind.ForEach && (cursor.Phase > 1 || cursor.Inputs.Count > node.MaxIterations || cursor.Iterations > cursor.Inputs.Count
                     || cursor.Phase == 0 && (cursor.Position != 0 || cursor.Iterations != 0 || cursor.Inputs.Count != 0 || cursor.Outputs.Count != 0))
-                || node is not null && node.Kind is not (NativeFlowNodeKind.Sequence or NativeFlowNodeKind.If or NativeFlowNodeKind.ForEach or NativeFlowNodeKind.While or NativeFlowNodeKind.Wait or NativeFlowNodeKind.Receive)
+                || node is not null && node.Kind is not (NativeFlowNodeKind.Sequence or NativeFlowNodeKind.If or NativeFlowNodeKind.Try or NativeFlowNodeKind.ForEach or NativeFlowNodeKind.While or NativeFlowNodeKind.Wait or NativeFlowNodeKind.Receive)
                     && (cursor.Position != 0 || cursor.Phase != 0 || cursor.Iterations != 0)
                 || node?.Kind == NativeFlowNodeKind.While && (cursor.Phase > 1 || cursor.Iterations > node.MaxIterations)
                 || node?.Kind is NativeFlowNodeKind.Wait or NativeFlowNodeKind.Receive && (cursor.Phase > 1 || cursor.Position != 0 || cursor.Iterations != 0)
