@@ -11,13 +11,17 @@ public sealed class XmlMappingEngine
 {
     public const int MaxSampleCharacters = 1_000_000;
     private static readonly XNamespace Xsl = "http://www.w3.org/1999/XSL/Transform";
+    private const string FunctionPrefix = "mulse-fn";
     private readonly XslCompiledTransform _transform = new();
     private readonly System.Xml.Schema.XmlSchemaSet? _sourceSchemas;
     private readonly System.Xml.Schema.XmlSchemaSet? _targetSchemas;
+    private readonly TimeProvider _timeProvider;
     public string Xslt { get; }
 
-    public XmlMappingEngine(string mappingJson)
+    /// <param name="timeProvider">Clock for the current-date functions (defaults to the system clock, local time like BizTalk).</param>
+    public XmlMappingEngine(string mappingJson, TimeProvider? timeProvider = null)
     {
+        _timeProvider = timeProvider ?? TimeProvider.System;
         if (string.IsNullOrWhiteSpace(mappingJson) || mappingJson.Length > 1_048_576)
             throw new ArgumentException("XML mapping JSON is required and must not exceed 1 MiB characters.");
         XmlMappingDefinition map;
@@ -51,8 +55,10 @@ public sealed class XmlMappingEngine
             if (_sourceSchemas is not null) XmlMappingSchemas.Validate(xml, _sourceSchemas, "Source", cancellationToken);
             using var reader = XmlReader.Create(new StringReader(xml), ReaderSettings());
             using var output = new BoundedWriter(cancellationToken);
+            var arguments = new XsltArgumentList();
+            arguments.AddExtensionObject(XmlMappingFunctions.Namespace, new XmlMappingFunctions(_timeProvider));
             using (var writer = XmlWriter.Create(output, _transform.OutputSettings))
-                _transform.Transform(reader, arguments: null, writer);
+                _transform.Transform(reader, arguments, writer);
             var result = output.ToString();
             if (_targetSchemas is not null) XmlMappingSchemas.Validate(result, _targetSchemas, "Target", cancellationToken);
             return result;
@@ -78,10 +84,14 @@ public sealed class XmlMappingEngine
         foreach (var (prefix, uri) in map.Namespaces)
         {
             VerifyName(prefix);
-            if (prefix.StartsWith("xml", StringComparison.OrdinalIgnoreCase) || prefix == "xsl" || string.IsNullOrWhiteSpace(uri)
+            if (prefix.StartsWith("xml", StringComparison.OrdinalIgnoreCase) || prefix == "xsl" || prefix == FunctionPrefix || string.IsNullOrWhiteSpace(uri) || uri == XmlMappingFunctions.Namespace
                 || !Uri.TryCreate(uri, UriKind.Absolute, out _) || uri == Xsl.NamespaceName || uri == XNamespace.Xml.NamespaceName || uri == XNamespace.Xmlns.NamespaceName)
                 throw new ArgumentException($"Invalid or reserved XML namespace prefix/URI '{prefix}'. Use explicit, non-reserved prefixes and absolute URIs.");
             stylesheet.Add(new XAttribute(XNamespace.Xmlns + prefix, uri));
+        }
+        if (map.Fields.Any(field => field is { Expression: not null }))
+        {
+            stylesheet.Add(new XAttribute(XNamespace.Xmlns + FunctionPrefix, XmlMappingFunctions.Namespace), new XAttribute("exclude-result-prefixes", FunctionPrefix));
         }
         if (map.Repeats is null || map.Repeats.Count > 256 || (map.Version == 1 && map.Repeats.Count > 0))
             throw new ArgumentException("Repeating records require version 2 and at most 256 repeats.");
@@ -127,15 +137,25 @@ public sealed class XmlMappingEngine
                 || (field.Constant is not null && (field.MissingValueBehavior != MissingXmlValueBehavior.Error || field.DefaultValue is not null))
                 || (field.MissingValueBehavior == MissingXmlValueBehavior.Default ? field.DefaultValue is null : field.DefaultValue is not null))
                 throw new ArgumentException($"Mapping '{field.TargetPath}' has an invalid missing-value policy. Omit/default requires version 2, a source path, and a default value only for the Default policy.");
-            if (field.Constant is null)
+            var sourcePaths = new List<string>();
+            if (field.Expression is not null)
             {
-                ParsePath(field.SourcePath, absolute: true, map);
-                var enclosing = new HashSet<XmlRepeatMappingDefinition>(repeatTargets
-                    .Where(item => item.Segments.Count <= segments.Count && item.Segments.Zip(segments).All(pair => pair.First == pair.Second))
-                    .Select(item => item.Repeat));
+                if (map.Version != 2 || !string.IsNullOrEmpty(field.SourcePath) || field.Constant is not null
+                    || field.MissingValueBehavior != MissingXmlValueBehavior.Error || field.DefaultValue is not null)
+                    throw new ArgumentException($"Mapping '{field.TargetPath}' uses an expression, which requires version 2 and no source path, constant or missing-value policy.");
+                var nodes = 0;
+                ValidateExpression(field.Expression, field.TargetPath, 1, ref nodes, sourcePaths);
+            }
+            else if (field.Constant is null) sourcePaths.Add(field.SourcePath);
+            var enclosing = new HashSet<XmlRepeatMappingDefinition>(repeatTargets
+                .Where(item => item.Segments.Count <= segments.Count && item.Segments.Zip(segments).All(pair => pair.First == pair.Second))
+                .Select(item => item.Repeat));
+            foreach (var sourcePath in sourcePaths)
+            {
+                ParsePath(sourcePath, absolute: true, map);
                 foreach (var repeat in map.Repeats)
-                    if ((field.SourcePath == repeat.SourcePath || field.SourcePath.StartsWith(repeat.SourcePath + "/", StringComparison.Ordinal)) && !enclosing.Contains(repeat))
-                        throw new ArgumentException($"Mapping '{field.TargetPath}' reads '{field.SourcePath}' inside repeat '{repeat.SourcePath}' but is not below the repeat's target '{repeat.TargetPath}'.");
+                    if ((sourcePath == repeat.SourcePath || sourcePath.StartsWith(repeat.SourcePath + "/", StringComparison.Ordinal)) && !enclosing.Contains(repeat))
+                        throw new ArgumentException($"Mapping '{field.TargetPath}' reads '{sourcePath}' inside repeat '{repeat.SourcePath}' but is not below the repeat's target '{repeat.TargetPath}'.");
             }
             var current = target;
             foreach (var segment in segments)
@@ -168,6 +188,67 @@ public sealed class XmlMappingEngine
         template.Add(body);
         stylesheet.Add(new XElement(Xsl + "output", new XAttribute("method", "xml"), new XAttribute("omit-xml-declaration", "yes"), new XAttribute("indent", "yes")), template);
         return stylesheet.ToString();
+    }
+
+    private static void ValidateExpression(XmlValueExpression? expression, string target, int depth, ref int nodes, List<string> sourcePaths)
+    {
+        if (expression is null || depth > XmlMappingFunctionCatalog.MaxDepth || ++nodes > XmlMappingFunctionCatalog.MaxNodes)
+            throw new ArgumentException($"Expression for '{target}' is missing a node or exceeds {XmlMappingFunctionCatalog.MaxDepth} levels / {XmlMappingFunctionCatalog.MaxNodes} nodes.");
+        if (!Enum.IsDefined(expression.Kind) || expression.Arguments is null)
+            throw new ArgumentException($"Expression for '{target}' has an invalid node.");
+        switch (expression.Kind)
+        {
+            case XmlValueExpressionKind.Source:
+                if (string.IsNullOrEmpty(expression.SourcePath) || expression.Constant is not null || expression.Function is not null || expression.Arguments.Count > 0)
+                    throw new ArgumentException($"Expression for '{target}' has a source node that is not just a source path.");
+                sourcePaths.Add(expression.SourcePath);
+                break;
+            case XmlValueExpressionKind.Constant:
+                if (expression.Constant is null || expression.Constant.Length > XmlMappingFunctionCatalog.MaxConstantLength
+                    || expression.SourcePath is not null || expression.Function is not null || expression.Arguments.Count > 0)
+                    throw new ArgumentException($"Expression for '{target}' has an invalid constant (at most {XmlMappingFunctionCatalog.MaxConstantLength} characters, no other settings).");
+                break;
+            default:
+                if (expression.Function is null || !Enum.IsDefined(expression.Function.Value) || expression.SourcePath is not null || expression.Constant is not null)
+                    throw new ArgumentException($"Expression for '{target}' has a function node without a supported function.");
+                var function = expression.Function.Value;
+                var (min, max) = XmlMappingFunctionCatalog.Arity(function);
+                if (expression.Arguments.Count < min || expression.Arguments.Count > max)
+                    throw new ArgumentException($"Function {function} in '{target}' takes {(min == max ? min.ToString(CultureInfo.InvariantCulture) : $"{min} to {max}")} argument(s), not {expression.Arguments.Count}.");
+                foreach (var argument in expression.Arguments) ValidateExpression(argument, target, depth + 1, ref nodes, sourcePaths);
+                break;
+        }
+    }
+
+    // Arguments are passed as XPath strings (like BizTalk's string(...) wrappers); results of logical functions become the text true/false.
+    private static string Compile(XmlValueExpression expression, IReadOnlyList<string> scopes)
+    {
+        switch (expression.Kind)
+        {
+            case XmlValueExpressionKind.Source: return SourceExpression(expression.SourcePath!, scopes);
+            case XmlValueExpressionKind.Constant: return Literal(expression.Constant!);
+        }
+        string Text(XmlValueExpression argument) => argument.Kind == XmlValueExpressionKind.Constant ? Compile(argument, scopes) : $"string({Compile(argument, scopes)})";
+        var function = expression.Function!.Value;
+        var arguments = expression.Arguments.Select(Text).ToArray();
+        switch (function)
+        {
+            case XmlMappingFunction.StringConcat: return $"concat({string.Join(", ", arguments)})";
+            case XmlMappingFunction.LogicalExistence: return $"{FunctionPrefix}:LogicalExistence(boolean({Compile(expression.Arguments[0], scopes)}))";
+            case XmlMappingFunction.LogicalAnd:
+                var result = arguments[0];
+                for (var index = 1; index < arguments.Length; index++)
+                    result = $"{FunctionPrefix}:LogicalAnd(string({result}), {arguments[index]})";
+                return result;
+            default: return $"{FunctionPrefix}:{function}({string.Join(", ", arguments)})";
+        }
+    }
+
+    private static string Literal(string text)
+    {
+        if (!text.Contains('\'')) return $"'{text}'";
+        if (!text.Contains('"')) return $"\"{text}\"";
+        return "concat(" + string.Join(", \"'\", ", text.Split('\'').Select(part => $"'{part}'")) + ")";
     }
 
     private static XmlRepeatMappingDefinition? EnclosingRepeat(
@@ -203,7 +284,7 @@ public sealed class XmlMappingEngine
         string? source = null;
         if (node.Assignment is { } field)
         {
-            if (field.Constant is null)
+            if (field.Constant is null && field.Expression is null)
             {
                 source = SourceExpression(field.SourcePath, inner);
                 var cardinality = field.MissingValueBehavior == MissingXmlValueBehavior.Error ? "!= 1" : "> 1";
@@ -212,9 +293,11 @@ public sealed class XmlMappingEngine
                         ? $"Source '{field.SourcePath}' must select exactly one scalar element or attribute that is not xsi:nil. Missing, repeating, complex, or nil values are not supported."
                         : $"Source '{field.SourcePath}' must select at most one scalar element or attribute that is not xsi:nil. Repeating, complex, or nil values are not supported.")));
             }
-            var value = field.Constant is null
-                ? new XElement(Xsl + "value-of", new XAttribute("select", source!))
-                : new XElement(Xsl + "text", field.Constant);
+            var value = field.Expression is not null
+                ? new XElement(Xsl + "value-of", new XAttribute("select", Compile(field.Expression, inner)))
+                : field.Constant is null
+                    ? new XElement(Xsl + "value-of", new XAttribute("select", source!))
+                    : new XElement(Xsl + "text", field.Constant);
             var initial = field.MissingValueBehavior == MissingXmlValueBehavior.Default
                 ? new XElement(Xsl + "choose",
                     new XElement(Xsl + "when", new XAttribute("test", $"count({source}) = 0"), new XElement(Xsl + "text", field.DefaultValue)),

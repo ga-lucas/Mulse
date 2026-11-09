@@ -31,9 +31,53 @@ public sealed record XmlFieldMappingDefinition
     public string SourcePath { get; init; } = string.Empty;
     public string TargetPath { get; init; } = string.Empty;
     public string? Constant { get; init; }
+    /// <summary>A computed value (source paths, constants and catalog functions). Mutually exclusive with SourcePath/Constant; the target is always emitted, like a BizTalk functoid output.</summary>
+    public XmlValueExpression? Expression { get; init; }
     public MissingXmlValueBehavior MissingValueBehavior { get; init; } = MissingXmlValueBehavior.Error;
     public string? DefaultValue { get; init; }
     public IReadOnlyList<XmlStringOperation> Operations { get; init; } = [];
+}
+
+/// <summary>One node of a value expression: a source path, a literal, or a call of a fixed catalog function.</summary>
+public sealed record XmlValueExpression
+{
+    public XmlValueExpressionKind Kind { get; init; } = XmlValueExpressionKind.Source;
+    /// <summary>Absolute named source path (Kind Source). A missing node reads as empty text.</summary>
+    public string? SourcePath { get; init; }
+    public string? Constant { get; init; }
+    public XmlMappingFunction? Function { get; init; }
+    public IReadOnlyList<XmlValueExpression> Arguments { get; init; } = [];
+}
+
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<XmlValueExpressionKind>))]
+public enum XmlValueExpressionKind
+{
+    Source,
+    Constant,
+    Function
+}
+
+/// <summary>
+/// Pure functions with the exact semantics of the matching BizTalk functoid (the compiled map's helper body). Each entry
+/// names the functoid it was verified against. Logical functions yield the text true/false.
+/// </summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<XmlMappingFunction>))]
+public enum XmlMappingFunction
+{
+    StringLeft,
+    StringRight,
+    StringSize,
+    StringConcat,
+    StringUpperCase,
+    MathInt,
+    MathDivide,
+    DateCurrentDate,
+    DateCurrentDateTime,
+    LogicalGt,
+    LogicalEq,
+    LogicalNe,
+    LogicalAnd,
+    LogicalExistence
 }
 
 public sealed record XmlStringOperation

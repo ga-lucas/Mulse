@@ -25,6 +25,7 @@ public sealed class XmlFieldMappingViewModel
     public string SourcePath { get; set; } = string.Empty;
     public string TargetPath { get; set; } = string.Empty;
     public string? Constant { get; set; }
+    public XmlValueExpressionViewModel? Expression { get; set; }
     public string MissingValueBehavior { get; set; } = "Error";
     public string? DefaultValue { get; set; }
     public List<XmlStringOperationViewModel> Operations { get; set; } = [];

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -15,7 +16,18 @@ public static class BizTalkNativeMapConverter
     private static readonly HashSet<string> Elements = new(StringComparer.Ordinal)
     {
         "mapsource", "SrcTree", "TrgTree", "Reference", "TreeValues", "TestValues", "ConstantValues", "Value",
-        "Pages", "Page", "Links", "Link", "Functoids", "ScriptTypePrecedence", "CSharp", "ExternalAssembly", "VbNet", "JScript", "XsltCallTemplate", "Xslt"
+        "Pages", "Page", "Links", "Link", "Functoids", "ScriptTypePrecedence", "CSharp", "ExternalAssembly", "VbNet", "JScript", "XsltCallTemplate", "Xslt",
+        "Functoid", "Input-Parameters", "Parameter", "ScripterCode", "Script"
+    };
+
+    /// <summary>Functoids whose BizTalk helper bodies were verified against compiled maps (*.btm.cs). Anything else stays unconverted and is named in the error.</summary>
+    private static readonly IReadOnlyDictionary<int, XmlMappingFunction> FunctoidCatalog = new Dictionary<int, XmlMappingFunction>
+    {
+        [102] = XmlMappingFunction.StringLeft, [104] = XmlMappingFunction.StringRight, [105] = XmlMappingFunction.StringSize,
+        [107] = XmlMappingFunction.StringConcat, [110] = XmlMappingFunction.StringUpperCase, [112] = XmlMappingFunction.MathInt,
+        [121] = XmlMappingFunction.MathDivide, [123] = XmlMappingFunction.DateCurrentDate, [125] = XmlMappingFunction.DateCurrentDateTime,
+        [311] = XmlMappingFunction.LogicalGt, [315] = XmlMappingFunction.LogicalEq, [316] = XmlMappingFunction.LogicalNe,
+        [321] = XmlMappingFunction.LogicalAnd, [701] = XmlMappingFunction.LogicalExistence
     };
     private static readonly HashSet<string> MetadataAttributes = new(StringComparer.Ordinal)
     {
@@ -48,11 +60,15 @@ public static class BizTalkNativeMapConverter
                 "Links" or "Functoids" => (new[] { "Page" }, Array.Empty<string>()),
                 "Link" => (new[] { "Links" }, new[] { "LinkID", "LinkFrom", "LinkTo", "Label" }),
                 "Value" => (new[] { "TestValues", "ConstantValues" }, new[] { "Query", "value" }),
+                "Functoid" => (new[] { "Functoids" }, new[] { "FunctoidID", "Functoid-FID", "X-Cell", "Y-Cell", "Label", "Comments", "Functoid-Name" }),
+                "Input-Parameters" or "ScripterCode" => (new[] { "Functoid" }, Array.Empty<string>()),
+                "Parameter" => (new[] { "Input-Parameters" }, new[] { "Type", "Value", "Guid", "linkIndex" }),
+                "Script" => (new[] { "ScripterCode" }, new[] { "Language" }),
                 _ => (new[] { "ScriptTypePrecedence" }, new[] { "Enabled" })
             };
             if (!parents.Contains(element.Parent!.Name.LocalName, StringComparer.Ordinal)
                 || element.Attributes().Any(attribute => attribute.Name.NamespaceName.Length != 0 || !attributes.Contains(attribute.Name.LocalName, StringComparer.Ordinal))
-                || element.Nodes().OfType<XText>().Any(text => !string.IsNullOrWhiteSpace(text.Value)))
+                || (element.Name.LocalName != "Script" && element.Nodes().OfType<XText>().Any(text => !string.IsNullOrWhiteSpace(text.Value))))
                 throw new ArgumentException($"Unsupported content, placement, or setting on '{element.Name}'. No partial native map was produced.");
         }
         if (root.Attribute("Version") is { Value: not ("1" or "2") })
@@ -74,12 +90,27 @@ public static class BizTalkNativeMapConverter
         var namespaces = source.Namespaces.ToDictionary(entry => "s" + entry.Key, entry => entry.Value, StringComparer.Ordinal);
         foreach (var entry in target.Namespaces) namespaces.Add("t" + entry.Key, entry.Value);
         var links = new List<(XmlSchemaField From, XmlSchemaField To)>();
+        var functoids = ReadFunctoids(root);
+        var functoidOutputs = new List<(int Functoid, XmlSchemaField To)>();
         foreach (var link in root.Descendants("Link"))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (link.Parent?.Name != "Links") throw new ArgumentException("A map Link is outside a Links collection.");
-            var from = Find(sourceRoot, (string?)link.Attribute("LinkFrom"));
-            var to = Find(targetRoot, (string?)link.Attribute("LinkTo"));
+            var fromText = (string?)link.Attribute("LinkFrom");
+            var toText = (string?)link.Attribute("LinkTo");
+            var toFunctoid = FunctoidReference(toText, functoids);
+            var fromFunctoid = FunctoidReference(fromText, functoids);
+            if (toFunctoid is not null) continue; // input wiring is resolved from the functoid's own parameters
+            if (fromFunctoid is { } producer)
+            {
+                var output = Find(targetRoot, toText);
+                if (!output.Scalar || output.Path == targetRoot.Path)
+                    throw new ArgumentException($"Functoid {producer} is linked to record '{output.Path}'; conditional record creation is not supported. No partial native map was produced.");
+                functoidOutputs.Add((producer, output));
+                continue;
+            }
+            var from = Find(sourceRoot, fromText);
+            var to = Find(targetRoot, toText);
             if (from.Scalar != to.Scalar)
                 throw new ArgumentException($"Link '{from.Path}' -> '{to.Path}' connects a record to a scalar field. No partial native map was produced.");
             if (from.UnsupportedReason is not null || from.HasDefaultOrFixed)
@@ -128,6 +159,14 @@ public static class BizTalkNativeMapConverter
                 DefaultValue = sourceRequired ? string.Empty : null
             }));
         }
+        var resolver = new FunctoidResolver(functoids, root.Descendants("Link").ToArray(), sourceRoot);
+        foreach (var (producer, to) in functoidOutputs)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var resolved = resolver.Resolve(producer);
+            foreach (var field in resolved.Sources) RequireRepeatCoverage(field, to);
+            assignments.Add((to, new() { Expression = resolved.Expression, TargetPath = TargetPath(to) }));
+        }
         foreach (var value in root.Descendants("ConstantValues").Elements())
         {
             if (value.Name != "Value" || value.Attribute("value") is null)
@@ -173,6 +212,10 @@ public static class BizTalkNativeMapConverter
         };
         if (optionalToRequired.Count > 0)
             warnings.Add($"{optionalToRequired.Count} link(s) feed a required target from an optional source (for example {string.Join("; ", optionalToRequired.Take(3))}). Like BizTalk, the target element is omitted when the source is absent, so the output can then violate the target schema.");
+        if (resolver.Used.Count > 0)
+            warnings.Add($"Functoid formulas were converted for {functoidOutputs.Count} target(s) (FID {string.Join(", ", resolver.Used.Order())}). Their behavior ports the helper code BizTalk compiled into other maps; it has not been compared with this map's compiled output. Current-date functions use the Mulse host's local time. Compare trusted expected outputs before use.");
+        if (functoids.Count > 0 && resolver.Contributing.Count < functoids.Count)
+            warnings.Add($"{functoids.Count - resolver.Contributing.Count} functoid(s) (for example unconnected sample script stubs) are not connected to any target and were ignored, as BizTalk generates no output for them.");
         return new(json, engine.Xslt, warnings);
 
         bool RequiredWithin(XmlSchemaRoot tree, string scope, XmlSchemaField field)
@@ -224,4 +267,142 @@ public static class BizTalkNativeMapConverter
             && !segment.StartsWith("@xml:", StringComparison.Ordinal)
                 ? segment.StartsWith('@') ? "@" + side + segment[1..] : side + segment
                 : segment));
+
+    private sealed record Functoid(int Id, int Fid, XElement Element);
+
+    private sealed record ResolvedFunctoid(XmlValueExpression Expression, IReadOnlyList<XmlSchemaField> Sources, int Nodes, int Depth);
+
+    private static Dictionary<int, Functoid> ReadFunctoids(XElement root)
+    {
+        var result = new Dictionary<int, Functoid>();
+        foreach (var element in root.Descendants("Functoid"))
+        {
+            if (!int.TryParse((string?)element.Attribute("FunctoidID"), NumberStyles.None, CultureInfo.InvariantCulture, out var id)
+                || !int.TryParse((string?)element.Attribute("Functoid-FID"), NumberStyles.None, CultureInfo.InvariantCulture, out var fid))
+                throw new ArgumentException("A functoid has a missing or invalid FunctoidID or Functoid-FID. No partial native map was produced.");
+            if (!result.TryAdd(id, new Functoid(id, fid, element)))
+                throw new ArgumentException($"FunctoidID {id} is declared more than once. No partial native map was produced.");
+            if (element.Elements("Input-Parameters").Count() > 1 || element.Elements("ScripterCode").Count() > 1)
+                throw new ArgumentException($"Functoid {id} has repeated parameter or script sections. No partial native map was produced.");
+            if (element.Elements("ScripterCode").Elements("Script").Any(script => (string?)script.Attribute("Language") != "CSharp"))
+                throw new ArgumentException($"Functoid {id} contains inline XSLT; custom XSLT cannot be imported as a native map, even when unconnected. No partial native map was produced.");
+        }
+        return result;
+    }
+
+    private static int? FunctoidReference(string? text, Dictionary<int, Functoid> functoids)
+    {
+        if (text is null || text.StartsWith(Sentinel, StringComparison.Ordinal)
+            || !int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var id)) return null;
+        return functoids.ContainsKey(id) ? id : throw new ArgumentException($"A link references unknown functoid {id}. No partial native map was produced.");
+    }
+
+    private sealed class FunctoidResolver
+    {
+        private static readonly Regex ScriptMethod = new(@"\bpublic\s+[\w.<>\[\]]+\s+(\w+)\s*\(", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        private readonly Dictionary<int, Functoid> functoids;
+        private readonly XElement[] links;
+        private readonly Dictionary<string, XElement> linksById = new(StringComparer.Ordinal);
+        private readonly XmlSchemaRoot sourceRoot;
+        private readonly Dictionary<int, ResolvedFunctoid> cache = [];
+        private readonly HashSet<int> active = [];
+
+        public FunctoidResolver(Dictionary<int, Functoid> functoids, XElement[] links, XmlSchemaRoot sourceRoot)
+        {
+            this.functoids = functoids;
+            this.links = links;
+            this.sourceRoot = sourceRoot;
+            if (functoids.Count == 0) return;
+            foreach (var link in links.Where(link => link.Attribute("LinkID") is not null))
+                if (!linksById.TryAdd((string)link.Attribute("LinkID")!, link))
+                    throw new ArgumentException($"LinkID '{(string)link.Attribute("LinkID")!}' is declared more than once. No partial native map was produced.");
+        }
+
+        public IReadOnlyCollection<int> Contributing => cache.Keys;
+        public HashSet<int> Used { get; } = [];
+
+        public ResolvedFunctoid Resolve(int id)
+        {
+            if (cache.TryGetValue(id, out var known)) return known;
+            if (!active.Add(id)) throw new ArgumentException($"Functoid {id} feeds itself through a cycle. No partial native map was produced.");
+            try
+            {
+                var functoid = functoids[id];
+                if (!FunctoidCatalog.TryGetValue(functoid.Fid, out var function)) throw Unsupported(functoid);
+                var idText = id.ToString(CultureInfo.InvariantCulture);
+                var parameters = functoid.Element.Elements("Input-Parameters").Elements("Parameter")
+                    .Select(parameter => (Parameter: parameter, Index: int.TryParse((string?)parameter.Attribute("linkIndex"), NumberStyles.None, CultureInfo.InvariantCulture, out var index) ? index : -1))
+                    .OrderBy(entry => entry.Index).ToArray();
+                if (!parameters.Select(entry => entry.Index).SequenceEqual(Enumerable.Range(0, parameters.Length)))
+                    throw new ArgumentException($"Functoid {id} (FID {functoid.Fid}) has missing or duplicate input positions. No partial native map was produced.");
+                var arguments = new List<XmlValueExpression>();
+                var sources = new List<XmlSchemaField>();
+                var nodes = 1;
+                var childDepth = 0;
+                var linkInputs = 0;
+                foreach (var (parameter, _) in parameters)
+                {
+                    var value = (string?)parameter.Attribute("Value") ?? throw new ArgumentException($"Functoid {id} has an input without a value. No partial native map was produced.");
+                    switch ((string?)parameter.Attribute("Type"))
+                    {
+                        case "constant":
+                            arguments.Add(new XmlValueExpression { Kind = XmlValueExpressionKind.Constant, Constant = value });
+                            nodes++;
+                            childDepth = Math.Max(childDepth, 1);
+                            break;
+                        case "link":
+                            linkInputs++;
+                            if (!linksById.TryGetValue(value, out var link) || (string?)link.Attribute("LinkTo") != idText)
+                                throw new ArgumentException($"Functoid {id} input refers to link '{value}', which is missing or not wired to this functoid. No partial native map was produced.");
+                            var fromText = (string?)link.Attribute("LinkFrom");
+                            if (FunctoidReference(fromText, functoids) is { } inner)
+                            {
+                                var child = Resolve(inner);
+                                arguments.Add(child.Expression);
+                                sources.AddRange(child.Sources);
+                                nodes += child.Nodes;
+                                childDepth = Math.Max(childDepth, child.Depth);
+                            }
+                            else
+                            {
+                                var field = Find(sourceRoot, fromText);
+                                if (!field.Scalar || field.SelfRepeating || field.UnsupportedReason is not null || field.HasDefaultOrFixed)
+                                    throw new ArgumentException($"Functoid {id} reads '{field.Path}', which is a record, a repeating value, or otherwise unsupported as a functoid input. No partial native map was produced.");
+                                arguments.Add(new XmlValueExpression { Kind = XmlValueExpressionKind.Source, SourcePath = Prefix(field.Path, "s") });
+                                sources.Add(field);
+                                nodes++;
+                                childDepth = Math.Max(childDepth, 1);
+                            }
+                            break;
+                        default:
+                            throw new ArgumentException($"Functoid {id} has an input of unsupported type '{(string?)parameter.Attribute("Type")}'. No partial native map was produced.");
+                    }
+                }
+                if (links.Count(link => (string?)link.Attribute("LinkTo") == idText) != linkInputs)
+                    throw new ArgumentException($"Functoid {id} has links that its input list does not account for. No partial native map was produced.");
+                var (min, max) = XmlMappingFunctionCatalog.Arity(function);
+                if (arguments.Count < min || arguments.Count > max)
+                    throw new ArgumentException($"Functoid {id} (FID {functoid.Fid}, {function}) has {arguments.Count} input(s); the native function accepts {min}..{max}. No partial native map was produced.");
+                if (nodes > XmlMappingFunctionCatalog.MaxNodes || childDepth + 1 > XmlMappingFunctionCatalog.MaxDepth)
+                    throw new ArgumentException($"Functoid {id} produces a formula larger than the native limit ({XmlMappingFunctionCatalog.MaxNodes} nodes, depth {XmlMappingFunctionCatalog.MaxDepth}). No partial native map was produced.");
+                Used.Add(functoid.Fid);
+                var resolved = new ResolvedFunctoid(new XmlValueExpression { Kind = XmlValueExpressionKind.Function, Function = function, Arguments = arguments }, sources, nodes, childDepth + 1);
+                cache[id] = resolved;
+                return resolved;
+            }
+            finally
+            {
+                active.Remove(id);
+            }
+        }
+
+        private static ArgumentException Unsupported(Functoid functoid)
+        {
+            if (functoid.Fid != 260)
+                return new($"Functoid {functoid.Id} (FID {functoid.Fid}) has no verified native equivalent and requires explicit translation. No partial native map was produced.");
+            var code = functoid.Element.Elements("ScripterCode").Elements("Script").Select(script => script.Value).FirstOrDefault() ?? string.Empty;
+            var name = ScriptMethod.Match(code) is { Success: true } match ? match.Groups[1].Value : "unnamed";
+            return new($"Functoid {functoid.Id} is a scripting functoid with inline C# ('{name}'). Scripts are never auto-translated; translate it explicitly or configure a replacement. No partial native map was produced.");
+        }
+    }
 }

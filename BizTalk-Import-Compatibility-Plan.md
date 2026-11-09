@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,724 service tests passed and the solution built.
+Latest verification: 1,837 service tests passed and the solution built.
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -480,6 +480,15 @@ Direct scalar links, constants and **repeating record links** (see the repeats i
 - **Statuses (per value, shown in the UI):** `Converted`, `ExplicitChoice` (manual choice always wins and is kept byte for byte), `NoMatchingMap`, `AmbiguousMap`, `SchemaUnresolved`, `ConversionFailed`, `CapExceeded`. Unconverted values get no case and fail closed at run time (unknown value). Derived choices are not verified equivalents of the BizTalk maps.
 - **UI:** import-panel checkbox (on by default when native generation and rule exports are selected), a result table, and a button that copies the converted choices into the editable choices.
 - **Real Billing measurement (rules.xml + the whole Interfaces repo as source):** 93 distinct values: 2 converted, 12 no matching map (including one value that is a typo in the export, "Set Map Name Shs.…ODataTestingMap"), 39 functoid maps, 40 schemas unresolved or importing outside the allowed relative imports. The 52 map blockers in 9 flows disappear, but only 2 of 93 map values have a native choice: the others fail closed at run time. Next steps for this gap: functoid translation in the map converter, and resolving the BTAHL7Schemas / other-solution schemas.
+
+### Completed increment: native map functoids (expression engine)
+
+- **Engine:** a mapping field may carry an `Expression` (version 2; mutually exclusive with `SourcePath`/`Constant`/`DefaultValue`): a tree of source paths, constants and catalog functions (max depth 16, 128 nodes, 4,096-character constants). The functions run in an XSLT extension object whose bodies are ports of the helper C# that BizTalk compiled into the repo's `*.btm.cs` files. The target is always emitted, like a BizTalk functoid output; a missing source reads as empty text. The generated XSLT needs the extension object at run time and is not standalone.
+- **Verified catalog (FID -> function):** 102 StringLeft, 104 StringRight, 105 StringSize, 107 StringConcat, 110 StringUpperCase, 112 MathInt (floor), 121 MathDivide, 123 DateCurrentDate, 125 DateCurrentDateTime, 311 LogicalGt, 315 LogicalEq, 316 LogicalNe, 321 LogicalAnd, 701 LogicalExistence. Comparisons are numeric when both sides parse, otherwise ordinal; date functions use the host's local time; logical results are the text true/false. Each was verified against compiled XSLT/helper bodies, not documentation.
+- **Converter:** functoid graphs are resolved from each functoid's ordered parameters (link or constant), with cycle, arity, node-count and depth limits. Scalar, non-repeating sources only; functoid-to-record links (conditional record creation), record/repeating inputs, duplicate IDs and inconsistent wiring reject the whole map. Unsupported FIDs are named in the error (for example 374, 375, 424, 474 are unidentified). Connected scripting functoids (FID 260) are **never auto-translated**; the error names the script method. Unconnected functoids are ignored with a warning, and inline-XSLT scripts are always rejected.
+- **UI:** the Mapping Designer field editor has a third value kind, "Formula (functions)", with a text formula such as `StringConcat(/a/b, '-', StringUpperCase(/a/c))`, parse errors with positions, a function list tooltip, and formula-aware lines and titles in the visual designer. A test keeps the UI function table identical to the engine catalog.
+- **Measured over all 292 repo `.btm` files:** 236 have functoids; 1,882 functoids are connected and 54 are not (52 are default FID 260 stubs). Only 2 maps use supported FIDs alone. Maps blocked per unsupported FID: 260 scripts 220, 374 74, 424 28, 474 26, 375 26, 802 11, 322 8, 111/120 7 each. The next big gaps are therefore scripting functoids (needs a per-script native replacement or configured helper) and identifying FIDs 374/375/424/474 (needs `Microsoft.BizTalk.BaseFunctoids.dll` or sample input/output pairs). Value Mapping, looping and cumulative functoids are out of scope.
+- **Verification:** 67 engine tests, 21 converter tests, 27 UI tests; 1,837 service tests passed and the solution built. Billing map-choice conversion was not re-run against the owner's rule export.
 
 ### Verification results: schema/map/script increments
 

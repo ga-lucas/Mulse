@@ -7,6 +7,11 @@ public sealed record XmlMappingGraphNode(string Path, string Key, int Depth, Xml
 
 public static class XmlMappingGraph
 {
+    /// <summary>Every source path a field reads: its formula's sources, nothing for a constant, otherwise its own path.</summary>
+    public static IReadOnlyList<string> SourcePaths(XmlFieldMappingViewModel field)
+        => field.Expression is not null ? XmlFormula.SourcePaths(field.Expression).Distinct(StringComparer.Ordinal).ToArray()
+            : field.Constant is null ? [field.SourcePath] : [];
+
     public static string Key(string? path, IReadOnlyDictionary<string, string> namespaces)
         => string.Join("/", (path ?? string.Empty).Split('/').Select(segment =>
         {
@@ -40,10 +45,8 @@ public static class XmlMappingGraph
                 foreach (var field in root.Fields) Add(field.Path, tree.Namespaces, new(root, field, tree.Namespaces));
             }
         foreach (var field in map.Fields)
-        {
-            var path = source ? field.Constant is null ? field.SourcePath : null : "/" + map.TargetRoot + "/" + field.TargetPath;
-            if (!string.IsNullOrWhiteSpace(path)) Add(path, map.Namespaces, null);
-        }
+            foreach (var path in source ? SourcePaths(field) : ["/" + map.TargetRoot + "/" + field.TargetPath])
+                if (!string.IsNullOrWhiteSpace(path)) Add(path, map.Namespaces, null);
         var children = nodes.Values.ToLookup(node =>
         {
             var parent = node.Key[..node.Key.LastIndexOf('/')];

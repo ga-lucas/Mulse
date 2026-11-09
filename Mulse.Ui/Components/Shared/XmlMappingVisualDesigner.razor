@@ -35,14 +35,17 @@
             <svg class="mapping-lines" width="1100" height="@height" aria-label="Field connection lines">
                 @foreach (var card in cards)
                 {
-                    var sourceKey = XmlMappingGraph.Key(card.Field.SourcePath, Map.Namespaces);
                     var targetKey = XmlMappingGraph.Key("/" + Map.TargetRoot + "/" + card.Field.TargetPath, Map.Namespaces);
-                    var sourceIndex = sources.ToList().FindIndex(node => node.Key == sourceKey);
                     var targetIndex = targets.ToList().FindIndex(node => node.Key == targetKey);
                     var middle = card.Y + 24;
-                    if (card.Field.Constant is null && sourceIndex >= 0)
+                    foreach (var sourcePath in XmlMappingGraph.SourcePaths(card.Field))
                     {
-                        <path class="@(ReferenceEquals(SelectedField, card.Field) ? "selected-line" : null)" d="@($"M 290 {62 + sourceIndex * 36} C 335 {62 + sourceIndex * 36}, 335 {middle}, 380 {middle}")" />
+                        var sourceKey = XmlMappingGraph.Key(sourcePath, Map.Namespaces);
+                        var sourceIndex = sources.ToList().FindIndex(node => node.Key == sourceKey);
+                        if (sourceIndex >= 0)
+                        {
+                            <path class="@(ReferenceEquals(SelectedField, card.Field) ? "selected-line" : null)" d="@($"M 290 {62 + sourceIndex * 36} C 335 {62 + sourceIndex * 36}, 335 {middle}, 380 {middle}")" />
+                        }
                     }
                     if (targetIndex >= 0)
                     {
@@ -63,7 +66,7 @@
             @foreach (var card in cards)
             {
                 <div @key="card.Field" class="connection-node @(ReferenceEquals(SelectedField, card.Field) ? "chosen" : null)" style="top: @(card.Y)px" aria-label="@($"Mapping connection to {card.Field.TargetPath}")">
-                    <button class="connection-title" @onclick="() => Selected.InvokeAsync(card.Field)">@(card.Field.Constant is null ? card.Field.SourcePath : "Constant: " + card.Field.Constant) to @card.Field.TargetPath</button>
+                    <button class="connection-title" @onclick="() => Selected.InvokeAsync(card.Field)">@(card.Field.Expression is not null ? "Formula: " + XmlFormula.Format(card.Field.Expression) : card.Field.Constant is null ? card.Field.SourcePath : "Constant: " + card.Field.Constant) to @card.Field.TargetPath</button>
                     @foreach (var operation in card.Field.Operations)
                     {
                         <button class="operation-node" @onclick="() => Selected.InvokeAsync(card.Field)">@operation.Kind @(operation.Argument is null ? null : ": " + operation.Argument)</button>
