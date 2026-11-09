@@ -127,6 +127,7 @@ public partial class Designer : IAsyncDisposable
     private string _nativeHostConfigurationPath = string.Empty;
     private string _nativeConfigurationHelperPaths = string.Empty;
     private bool _generateNativeBizTalkFlow = true;
+    private bool _deriveNativeMapChoices = true;
     private readonly Dictionary<string, string> _nativePolicyVersions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _nativeMapSettings = new() { ["casesJson"] = "[]" };
     private BizTalkSolutionAnalysisViewModel? _bizTalkAnalysis;

@@ -19,4 +19,10 @@ public sealed record BizTalkSolutionAnalysisResponse(
     IReadOnlyList<string> Warnings)
 {
     public IReadOnlyList<BizTalkRulePolicyResponse> RulePolicies { get; init; } = [];
+
+    /// <summary>Per-value outcome of deriving native map choices from policy map-name literals; empty unless requested.</summary>
+    public IReadOnlyList<BizTalkDerivedMapChoiceResponse> DerivedMapChoices { get; init; } = [];
+
+    /// <summary>The effective render-dispatch casesJson used for native generation (explicit choices plus derived ones); null unless derivation was requested.</summary>
+    public string? EffectiveMapChoicesJson { get; init; }
 }

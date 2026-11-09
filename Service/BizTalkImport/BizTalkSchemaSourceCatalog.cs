@@ -119,9 +119,10 @@ internal sealed class BizTalkSchemaSourceCatalog
         if (_warnings.Count < 32) _warnings.Add(message);
     }
 
-    private static bool Conditional(XElement element) => element.AncestorsAndSelf().Any(parent =>
+    internal static bool Conditional(XElement element) => element.AncestorsAndSelf().Any(parent =>
         !string.IsNullOrWhiteSpace((string?)parent.Attribute("Condition")) || parent.Name.LocalName is "Target" or "Choose" or "When" or "Otherwise");
-    private static bool Literal(string? value) => !string.IsNullOrWhiteSpace(value) && value.IndexOfAny(['$', '%', '@', '*', '?', ';']) < 0;
-    private static bool DottedName(string value, bool allowEmpty) => value.Length == 0 ? allowEmpty : value.Split('.').All(Identifier.IsMatch);
-    private static int Line(XElement element) => ((IXmlLineInfo)element).LineNumber;
+    internal static bool Literal(string? value) => !string.IsNullOrWhiteSpace(value) && value.IndexOfAny(['$', '%', '@', '*', '?', ';']) < 0;
+    internal static bool DottedName(string value, bool allowEmpty) => value.Length == 0 ? allowEmpty : value.Split('.').All(Identifier.IsMatch);
+    internal static bool IsIdentifier(string value) => Identifier.IsMatch(value);
+    internal static int Line(XElement element) => ((IXmlLineInfo)element).LineNumber;
 }

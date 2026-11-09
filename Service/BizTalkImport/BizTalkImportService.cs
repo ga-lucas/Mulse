@@ -58,6 +58,8 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             throw new ArgumentException("Native configuration snapshots require native generation, one host configuration path and 1-16 explicit helper .cs paths (at most 4096 characters each).");
         var nativeConfiguration = request.NativeHostConfigurationPath is { } configurationPath
             ? NativeSourceConfigurationCatalog.Read(configurationPath, request.NativeConfigurationHelperPaths) : null;
+        if (request.DeriveNativeMapChoices && (!request.GenerateNativeFlow || request.AdditionalRulePaths.Count == 0))
+            throw new ArgumentException("Deriving native map choices requires native generation and at least one rule export path.");
         if (request.NativeMapChoicesJson is not null)
         {
             if (!request.GenerateNativeFlow) throw new ArgumentException("Native map choices require native generation.");
@@ -260,12 +262,22 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             warnings.Add($"{rulePolicies.Length} rule policy versions were inventoried. Select versions explicitly; exports do not prove which version is deployed. Native XML rule proposals do not translate CallRules wiring or approve orchestration execution.");
         var mapInventory = CreateMigrationMapInventory(hydratedAnalyses);
         var nativeSchemas = request.GenerateNativeFlow ? BizTalkSchemaSourceCatalog.Read(hydratedProjects.Select(project => project.ProjectPath)) : null;
+        var mapChoicesJson = request.NativeMapChoicesJson;
+        DerivedMapChoices? derivedChoices = null;
+        if (request.DeriveNativeMapChoices)
+        {
+            var literals = request.AdditionalRulePaths.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase)
+                .SelectMany(path => BizTalkRulePolicyAnalyzer.ReadMapNameLiterals(path, request.NativePolicyVersions, cancellationToken)).ToArray();
+            derivedChoices = BizTalkNativeMapChoiceDeriver.Derive(hydratedProjects.Select(project => project.ProjectPath), literals, nativeSchemas!, request.NativeMapChoicesJson, cancellationToken);
+            mapChoicesJson = derivedChoices.CasesJson;
+            warnings.Add($"{derivedChoices.Report.Count(static item => item.Status == "Converted")} of {derivedChoices.Report.Count} policy map-name values were converted to native map choices; the rest are listed with reasons and stay fail-closed. Derived choices are not verified equivalents of the BizTalk maps.");
+        }
         var reservedFlowIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var flowCandidates = candidateProjects
             .OrderBy(static project => project.Response.ProjectPath, StringComparer.OrdinalIgnoreCase)
             .SelectMany(project => CreateFlowCandidates(project, customAssemblies, bindingAnalyses, mapInventory, reservedFlowIds))
             .Select(candidate => AttachRuleEvidence(candidate, rulePolicies))
-            .Select(candidate => request.GenerateNativeFlow ? AttachNativeFlow(candidate, bindingAnalyses, rulePolicies, nativeSchemas!, request.NativePolicyVersions, nativeConfiguration, request.NativeMapChoicesJson) : candidate)
+            .Select(candidate => request.GenerateNativeFlow ? AttachNativeFlow(candidate, bindingAnalyses, rulePolicies, nativeSchemas!, request.NativePolicyVersions, nativeConfiguration, mapChoicesJson) : candidate)
             .ToArray();
 
         return Task.FromResult(new BizTalkSolutionAnalysisResponse(
@@ -283,7 +295,7 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
             hydratedProjects,
             customAssemblies,
             flowCandidates,
-            warnings) { RulePolicies = rulePolicies });
+            warnings) { RulePolicies = rulePolicies, DerivedMapChoices = derivedChoices?.Report ?? [], EffectiveMapChoicesJson = derivedChoices?.CasesJson });
     }
 
     private static AnalysisScope ResolveScope(string sourcePath)

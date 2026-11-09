@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,717 service tests passed and the solution built.
+Latest verification: 1,724 service tests passed and the solution built.
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -23,7 +23,7 @@ Report-bearing imports remain disabled and fail closed until verified translatio
 Typed or multiple catches, fault-message catches and assignments to `ex.*` remain Blocked. A `CorrelationDeclaration` that is only initialized by Sends and never followed becomes named "(not enforced)" evidence (see the correlation increment); followed or unproven sets stay visible blockers.
 - **Editor fix:** the native flow editor validated expressions against a stale hard-coded kind list and would have refused flows using the string functions; it now shares the expression editor's kind/arity list. A truncated `AppendChild` consumption in the XML-root reader was also restored.
 - **Measured Billing effect (re-measured with a stand-in config helper; indicative only):** unresolved nodes BillingServiceProcess 136 -> 126, BatchDoubleBody 54 -> 46, BatchWithTrailer 60 -> 48. The original `GlobalInterfaceAppSettings` source was not found on disk, so helper-derived values differ from a real run. Flows stay disabled; no BizTalk equivalence is claimed.
-- **Next measured gaps (Billing):** dynamic transforms needing map choices (28; the map type names come from rule-engine output at run time. **Correction:** they are present in the Business Rules export `rules.xml` as `MapName`/`HeaderMapName`/`PreprocessingMapName` constants, and each is a `.btm` map type; deriving native map choices from them automatically is still open, until then enter them as **Native map choices** in the import panel), 9 Sends without a unique physical binding, 6 Distinguished scalars beyond string/int/boolean, part-level `MIME.FileName` (1), followed correlation sets with `StatementRef`/`Listen` (batch flows), transmit-pipeline wrappers around translated Sends (the translated delivery is kept as a child; the pipeline component order must still be configured by hand), delivery modules reading the recorded adapter-property metadata (recorded only, not wired), DateTime values and `Subtract(DateTime.Now)` delays, and dynamic SFTP/other transports without a native adapter.
+- **Next measured gaps (Billing):** native map choices are now derived from the rule exports (see "Completed increment: map choices derived from policy exports"); the remaining work there is the maps that cannot convert (functoids, unresolved schemas, maps in projects not supplied), 9 Sends without a unique physical binding,
 - **Verification:** 1,550 service tests passed and the solution built.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
@@ -471,6 +471,15 @@ Direct scalar links, constants and **repeating record links** (see the repeats i
 - **Run-time rule inferred from a real case:** a link from a schema-required source whose element is absent produced an empty target element in BizTalk's real output, so the converter emits `MissingValueBehavior=Default` with an empty default for such fields; optional sources emit only when present. This is observed from one case, so the import warning tells reviewers to confirm it per field (it is editable in the UI).
 - **UI:** the XML mapping editor has a **Repeating records** section (list, add, remove, edit source/target paths), two validation checkboxes and the 512-field cap. Dragging record-to-record connections in the visual designer is not yet available; use the list.
 - **Verification:** the real TestOneTwoSingleOutMap (129 links, 96 mapped fields, no functoids) converts and, run against a real BizTalk input exported by the owner, reproduces BizTalk's real output semantically (only prefixes/indentation/BOM differ). The sample messages contain patient-like data and are not stored in the repository; the repository tests use synthetic schemas. 1,717 service tests pass and the solution builds.
+
+### Completed increment: map choices derived from policy exports
+
+- **Source of the values:** the `MapName`/`HeaderMapName`/`PreprocessingMapName`/`TrailerMapName` string constants set by rules in the exported `rules.xml` (raw BRL scan, independent of whether a policy converts to a native proposal; honors the selected native policy versions). Each value is an assembly-qualified type name and stays the exact `Value` of a `render-dispatch` case.
+- **Matching:** the type name (ordinal) and assembly simple name (case-insensitive) are matched against `Map` items in the analyzed `.btproj` files (namespace/type from item metadata, assembly from `AssemblyName`). Version and public key cannot be verified from source and are ignored. Two projects declaring the same class are `AmbiguousMap`.
+- **Conversion:** the map's source/target schema references must resolve to exactly one source candidate; the map must be a pure link/constant map (the existing converter). Derived mappings are stored **without embedded schemas** (real base schemas exceed the 256 KiB `casesJson` cap); validation stays off. Up to 128 cases / 256 KiB; the rest are `CapExceeded`.
+- **Statuses (per value, shown in the UI):** `Converted`, `ExplicitChoice` (manual choice always wins and is kept byte for byte), `NoMatchingMap`, `AmbiguousMap`, `SchemaUnresolved`, `ConversionFailed`, `CapExceeded`. Unconverted values get no case and fail closed at run time (unknown value). Derived choices are not verified equivalents of the BizTalk maps.
+- **UI:** import-panel checkbox (on by default when native generation and rule exports are selected), a result table, and a button that copies the converted choices into the editable choices.
+- **Real Billing measurement (rules.xml + the whole Interfaces repo as source):** 93 distinct values: 2 converted, 12 no matching map (including one value that is a typo in the export, "Set Map Name Shs.…ODataTestingMap"), 39 functoid maps, 40 schemas unresolved or importing outside the allowed relative imports. The 52 map blockers in 9 flows disappear, but only 2 of 93 map values have a native choice: the others fail closed at run time. Next steps for this gap: functoid translation in the map converter, and resolving the BTAHL7Schemas / other-solution schemas.
 
 ### Verification results: schema/map/script increments
 

@@ -150,6 +150,8 @@
             @if (_generateNativeBizTalkFlow)
             {
                 <details><summary>Native map replacement choices (optional)</summary>
+                    <label class="field-label"><input type="checkbox" id="derive-native-map-choices" @bind="_deriveNativeMapChoices" /> Derive choices from the policy exports</label>
+                    <p class="field-hint">Matches each literal *MapName value in the rule exports to a map in the analyzed projects and converts maps that contain only direct links and constants. Values that cannot be proven are listed after analysis with the reason and stay fail-closed; add them manually below. Explicit choices below win over derived ones. Needs rule exports and the project that owns the maps in the source paths.</p>
                     <p class="field-hint">Use the exact map-name String returned by the selected policy, including any assembly qualification. Choices explicitly select native replacements, not verified deployed map equivalents. Complete supported dynamic transform statements use these choices; unsupported statements remain blocked. Reanalyze after editing choices.</p>
                     <RenderDispatchEditor Settings="_nativeMapSettings" Modules="_modules" NativeSelectionMode="true" Changed="BizTalkMapChoicesChanged" />
                 </details>
@@ -214,6 +216,7 @@
 
                 <BizTalkDependencyReport Projects="_bizTalkAnalysis.BizTalkProjects" />
 
+                <BizTalkDerivedMapChoices Choices="_bizTalkAnalysis.DerivedMapChoices" CanUse="@(_bizTalkAnalysis.EffectiveMapChoicesJson is not null)" OnUseAsExplicit="UseDerivedMapChoicesAsExplicit" />
                 <BizTalkRulePolicies Policies="_bizTalkAnalysis.RulePolicies" OnAddPolicy="AddImportedRulePolicy" EnableNativeTargets="@(_generateNativeBizTalkFlow && !_isAnalyzingBizTalk)" OnSelectNativeTarget="SelectNativePolicyTarget" />
                 @if (_generateNativeBizTalkFlow && _nativePolicyVersions.Count > 0)
                 {

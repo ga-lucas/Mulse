@@ -21,7 +21,8 @@ public partial class Designer
         _generateNativeBizTalkFlow ? _nativePolicyVersions.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal) : null,
         _generateNativeBizTalkFlow && !string.IsNullOrWhiteSpace(_nativeHostConfigurationPath) ? _nativeHostConfigurationPath : null,
         _generateNativeBizTalkFlow ? SplitPaths(_nativeConfigurationHelperPaths) : null,
-        _generateNativeBizTalkFlow ? _nativeMapSettings["casesJson"] : null);
+        _generateNativeBizTalkFlow ? _nativeMapSettings["casesJson"] : null,
+        _generateNativeBizTalkFlow && _deriveNativeMapChoices && SplitPaths(_additionalRulePaths).Length > 0);
 
     private string? _bizTalkAnalysisFingerprint;
     private static string BizTalkFingerprint(AnalyzeBizTalkSolutionRequestViewModel request) => System.Text.Json.JsonSerializer.Serialize(request);
@@ -34,6 +35,12 @@ public partial class Designer
     }
 
     private void BizTalkMapChoicesChanged() { }
+
+    // Copies the derived choices into the editable explicit choices; the analysis becomes stale until reanalyzed.
+    private void UseDerivedMapChoicesAsExplicit()
+    {
+        if (_bizTalkAnalysis?.EffectiveMapChoicesJson is { } json) _nativeMapSettings["casesJson"] = json;
+    }
 
     private async Task AnalyzeBizTalkAsync()
     {
@@ -109,7 +116,8 @@ public partial class Designer
         _generateNativeBizTalkFlow ? new Dictionary<string, string>(_nativePolicyVersions, StringComparer.Ordinal) : null,
         _generateNativeBizTalkFlow && !string.IsNullOrWhiteSpace(_nativeHostConfigurationPath) ? _nativeHostConfigurationPath : null,
         _generateNativeBizTalkFlow ? SplitPaths(_nativeConfigurationHelperPaths) : null,
-        _generateNativeBizTalkFlow ? _nativeMapSettings["casesJson"] : null);
+        _generateNativeBizTalkFlow ? _nativeMapSettings["casesJson"] : null,
+        _generateNativeBizTalkFlow && _deriveNativeMapChoices && SplitPaths(_additionalRulePaths).Length > 0);
 
     private async Task SelectNativePolicyTarget(BizTalkRulePolicyViewModel policy)
     {

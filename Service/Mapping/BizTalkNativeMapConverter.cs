@@ -23,8 +23,9 @@ public static class BizTalkNativeMapConverter
         "OptimizeValueMapping", "GenerateDefaultFixedNodes", "PreserveSequenceOrder", "IgnoreNamespacesForLinks", "method", "CopyPIs", "xmlVersion", "UseXSLTransform"
     };
 
+    /// <param name="embedSchemas">Persist the XSD documents in the mapping (default). Disable for compact derived choices; the persisted map never validates against them either way, and keeps its source-root assertion.</param>
     public static NativeMapConversion Convert(string mapXml, IReadOnlyList<string> sourceSchemas, IReadOnlyList<string> targetSchemas,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool embedSchemas = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var document = XmlMappingSchemas.ReadXml(mapXml);
@@ -156,7 +157,7 @@ public static class BizTalkNativeMapConverter
             Version = 2,
             SourceRoot = Prefix(sourceRoot.Path[1..], "s"),
             TargetRoot = Prefix(targetRoot.Path[1..], "t"), Namespaces = namespaces,
-            SourceSchemas = sourceSchemas.ToArray(), TargetSchemas = targetSchemas.ToArray(),
+            SourceSchemas = embedSchemas ? sourceSchemas.ToArray() : [], TargetSchemas = embedSchemas ? targetSchemas.ToArray() : [],
             ValidateSource = false, ValidateTarget = false,
             Fields = assignments.OrderBy(assignment => Order(assignment.Target)).Select(assignment => assignment.Mapping).ToArray(),
             Repeats = repeatLinks.OrderBy(repeat => Order(repeat.To)).Select(repeat => new XmlRepeatMappingDefinition

@@ -18,4 +18,14 @@ public sealed record BizTalkSolutionAnalysisViewModel(
     IReadOnlyList<string> Warnings)
 {
     public IReadOnlyList<BizTalkRulePolicyViewModel> RulePolicies { get; init; } = [];
+    public IReadOnlyList<BizTalkDerivedMapChoiceViewModel> DerivedMapChoices { get; init; } = [];
+    public string? EffectiveMapChoicesJson { get; init; }
 }
+
+public sealed record BizTalkDerivedMapChoiceViewModel(
+    string Value,
+    string Status,
+    string? MapPath,
+    string Detail,
+    IReadOnlyList<string> Policies,
+    IReadOnlyList<string> Warnings);

@@ -24,6 +24,7 @@ public sealed record CreateImportedBizTalkFlowRequest
     public string? NativeHostConfigurationPath { get; init; }
     public IReadOnlyList<string> NativeConfigurationHelperPaths { get; init; } = [];
     public string? NativeMapChoicesJson { get; init; }
+    public bool DeriveNativeMapChoices { get; init; }
 
     /// <summary>The suggested flow id of the generated draft flow to import.</summary>
     [Required]

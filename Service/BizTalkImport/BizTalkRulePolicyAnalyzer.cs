@@ -8,6 +8,8 @@ using Service.Models;
 
 namespace Service.BizTalkImport;
 
+internal sealed record PolicyMapNameLiteral(string Policy, string Version, string Field, string Value);
+
 public static class BizTalkRulePolicyAnalyzer
 {
     public const int MaxExportCharacters = 32_000_000;
@@ -198,6 +200,40 @@ public static class BizTalkRulePolicyAnalyzer
                 .Any(group => group.Select(field => (field.Type, field.Value)).Distinct().Count() > 1)) count++;
         }
         return count;
+    }
+
+    /// <summary>
+    /// Reads literal string setters of fields whose name ends with "MapName" (for example MapName, HeaderMapName), independent of whether the
+    /// whole policy converts to a native proposal. Values are exact policy strings; they are evidence of map selection, not proof of deployment.
+    /// </summary>
+    internal static IReadOnlyList<PolicyMapNameLiteral> ReadMapNameLiterals(string path, IReadOnlyDictionary<string, string>? selectedVersions, CancellationToken cancellationToken = default)
+    {
+        using var reader = XmlReader.Create(System.IO.Path.GetFullPath(path), new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = MaxExportCharacters
+        });
+        XDocument document;
+        try { document = XDocument.Load(reader, LoadOptions.None); }
+        catch (XmlException ex) { throw new ArgumentException("Invalid or oversized BizTalk rules XML export.", ex); }
+        var found = new List<PolicyMapNameLiteral>();
+        foreach (var ruleset in document.Root?.Elements(Brl + "ruleset") ?? [])
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var name = ruleset.Attribute("name")?.Value;
+            var version = ruleset.Element(Brl + "version");
+            if (string.IsNullOrWhiteSpace(name) || version is null) continue;
+            var label = $"{version.Attribute("major")?.Value}.{version.Attribute("minor")?.Value}";
+            if (selectedVersions is { Count: > 0 } && !(selectedVersions.TryGetValue(name, out var selected) && selected == label)) continue;
+            foreach (var member in ruleset.Descendants(Brl + "xmldocumentmember").Where(member => member.Attribute("sideeffects")?.Value == "true"))
+            {
+                var field = member.Element(Brl + "field")?.Value;
+                var match = field is null ? null : FieldPath.Match(field);
+                if (match is not { Success: true } || !match.Groups["name"].Value.EndsWith("MapName", StringComparison.Ordinal)) continue;
+                var literal = member.Element(Brl + "argument")?.Element(Brl + "constant")?.Element(Brl + "string")?.Value;
+                if (!string.IsNullOrWhiteSpace(literal)) found.Add(new(name, label, match.Groups["name"].Value, literal));
+            }
+        }
+        return found;
     }
 
     private static (string Name, string Namespace) ParsePath(string path)

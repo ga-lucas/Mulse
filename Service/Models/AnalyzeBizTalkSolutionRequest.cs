@@ -39,6 +39,13 @@ public sealed record AnalyzeBizTalkSolutionRequest
     public IReadOnlyList<string> NativeConfigurationHelperPaths { get; init; } = [];
     public string? NativeMapChoicesJson { get; init; }
 
+    /// <summary>
+    /// Derive native map choices from the literal "*MapName" values in <see cref="AdditionalRulePaths"/> by matching each assembly-qualified type name to an analyzed
+    /// map and converting it with the native map converter. Explicit <see cref="NativeMapChoicesJson"/> entries win. Unmatched or unconvertible values get no
+    /// choice and stay fail-closed; every value is reported.
+    /// </summary>
+    public bool DeriveNativeMapChoices { get; init; }
+
     /// <summary>Generate a native control-flow review draft rather than heuristic augment proposals. Unsupported semantics remain explicit blockers.</summary>
     public bool GenerateNativeFlow { get; init; }
 }

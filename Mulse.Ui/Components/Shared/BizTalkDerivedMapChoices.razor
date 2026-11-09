@@ -1,0 +1,34 @@
+@if (Choices.Count > 0)
+{
+    <section aria-label="Derived native map choices">
+        <h3>Native map choices from policy (@Choices.Count(choice => choice.Status == "Converted") of @Choices.Count converted)</h3>
+        <p class="field-hint">Each row is an exact map-name value found in the rule exports. Converted rows were turned into native map choices; they are not verified equivalents of the BizTalk maps. Every other row has no native choice and fails closed at run time: fix the cause (for example add the owning project to the source paths) or add a manual choice in the choices editor.</p>
+        <table class="data-table">
+            <thead><tr><th>Status</th><th>Map-name value</th><th>Detail</th></tr></thead>
+            <tbody>
+                @foreach (var choice in Choices)
+                {
+                    <tr>
+                        <td>@choice.Status</td>
+                        <td><code>@choice.Value</code><br /><small>@string.Join("; ", choice.Policies)</small></td>
+                        <td>
+                            @choice.Detail
+                            @if (choice.MapPath is not null) { <br /><small class="path-value">@choice.MapPath</small> }
+                            @foreach (var warning in choice.Warnings) { <br /><small>@warning</small> }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        @if (CanUse)
+        {
+            <button class="secondary-button" @onclick="OnUseAsExplicit">Copy converted choices into the editable choices</button>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<BizTalkDerivedMapChoiceViewModel> Choices { get; set; } = [];
+    [Parameter] public bool CanUse { get; set; }
+    [Parameter] public EventCallback OnUseAsExplicit { get; set; }
+}
