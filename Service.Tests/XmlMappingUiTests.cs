@@ -198,7 +198,7 @@ public sealed class XmlMappingUiTests
         await using var services = new ServiceCollection().AddLogging().AddSingleton<IMulseApiClient>(new MulseApiClient(http))
             .AddSingleton<Microsoft.JSInterop.IJSRuntime>(new NoJs()).BuildServiceProvider();
         await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
-        var json = System.Text.Json.JsonSerializer.Serialize(new Mulse.Modules.Mapping.XmlMappingDefinition
+        var json = System.Text.Json.JsonSerializer.Serialize(new Mulse.CompatibilityPack.Mapping.XmlMappingDefinition
         {
             Version = 2, TargetRoot = "Out",
             Fields = [new() { SourcePath = "/In/Item/V", TargetPath = "Line/V" }],

@@ -106,7 +106,7 @@ public sealed class NativeMapRepeatImportTests
     [Fact]
     public void ConvertedRepeats_AreSerializedWithMappingAndStayEditable()
     {
-        var map = System.Text.Json.JsonSerializer.Deserialize<Mulse.Modules.Mapping.XmlMappingDefinition>(Convert(Standard).MappingJson,
+        var map = System.Text.Json.JsonSerializer.Deserialize<Mulse.CompatibilityPack.Mapping.XmlMappingDefinition>(Convert(Standard).MappingJson,
             new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
         Assert.Equal(5, map.Repeats.Count);
         Assert.All(map.Repeats, repeat => Assert.DoesNotContain("local-name", repeat.TargetPath));

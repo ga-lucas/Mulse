@@ -6,3 +6,4 @@ global using Service.Flows;
 global using Service.Modules;
 global using Service.Execution;
 global using Service.Triggers;
+global using Mulse.CompatibilityPack.Mapping;

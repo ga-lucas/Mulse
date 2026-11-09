@@ -42,9 +42,9 @@ public sealed class XmlMappingApiTests
                 new ModuleStepDefinition { Module = module.Descriptor.Id, Settings = new() { ["mappingJson"] = XmlMappingTests.Json() } }, default);
             Assert.Equal(Assert.Single(rendered.Payloads).GetText(), preview.OutputXml);
             Assert.Equal(new XmlMappingEngine(XmlMappingTests.Json()).Xslt, preview.Xslt);
-            var operations = XmlMappingTests.Json(new Mulse.Modules.Mapping.XmlMappingDefinition
+            var operations = XmlMappingTests.Json(new Mulse.CompatibilityPack.Mapping.XmlMappingDefinition
             {
-                Version = 2, Fields = [new() { SourcePath = "/Input/Value", TargetPath = "Value", Operations = [new() { Kind = Mulse.Modules.Mapping.XmlStringOperationKind.UppercaseAscii }] }]
+                Version = 2, Fields = [new() { SourcePath = "/Input/Value", TargetPath = "Value", Operations = [new() { Kind = Mulse.CompatibilityPack.Mapping.XmlStringOperationKind.UppercaseAscii }] }]
             });
             var operationPreview = await client.PreviewXmlMappingAsync(new(operations, "<Input><Value>abc</Value></Input>"), default);
             Assert.Equal(new XmlMappingEngine(operations).Transform("<Input><Value>abc</Value></Input>"), operationPreview.OutputXml);

@@ -18,3 +18,4 @@ global using Mulse.Modules.Sdk;
 global using Mulse.Modules.Security;
 global using Mulse.Modules.Triggers;
 global using Mulse.Modules.Workflow;
+global using Mulse.CompatibilityPack.Mapping;

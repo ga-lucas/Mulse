@@ -1,4 +1,4 @@
-namespace Mulse.Modules.Mapping;
+namespace Mulse.CompatibilityPack.Mapping;
 
 public sealed record XmlMappingDefinition
 {
@@ -8,6 +8,8 @@ public sealed record XmlMappingDefinition
     public Dictionary<string, string> Namespaces { get; init; } = new(StringComparer.Ordinal);
     public IReadOnlyList<XmlFieldMappingDefinition> Fields { get; init; } = [];
     public IReadOnlyList<XmlRepeatMappingDefinition> Repeats { get; init; } = [];
+    /// <summary>Reusable functions (version 2). Imported script stubs live here until implemented.</summary>
+    public IReadOnlyList<XmlCustomFunctionDefinition> CustomFunctions { get; init; } = [];
     public IReadOnlyList<string> SourceSchemas { get; init; } = [];
     public IReadOnlyList<string> TargetSchemas { get; init; } = [];
     /// <summary>When false the schemas still describe the map for editing, but source messages are not XSD-validated at run time.</summary>
@@ -46,6 +48,8 @@ public sealed record XmlValueExpression
     public string? SourcePath { get; init; }
     public string? Constant { get; init; }
     public XmlMappingFunction? Function { get; init; }
+    /// <summary>Kind Custom: the called custom function. Kind Parameter: the custom function parameter being read.</summary>
+    public string? Name { get; init; }
     public IReadOnlyList<XmlValueExpression> Arguments { get; init; } = [];
 }
 
@@ -54,7 +58,11 @@ public enum XmlValueExpressionKind
 {
     Source,
     Constant,
-    Function
+    Function,
+    /// <summary>A call of a map-level custom function (for example an imported script stub).</summary>
+    Custom,
+    /// <summary>A custom function parameter; only valid inside a custom function body.</summary>
+    Parameter
 }
 
 /// <summary>
@@ -77,7 +85,44 @@ public enum XmlMappingFunction
     LogicalEq,
     LogicalNe,
     LogicalAnd,
-    LogicalExistence
+    LogicalExistence,
+    // Mulse-native functions (not BizTalk functoids): the building blocks for replacing imported script stubs.
+    NewGuid,
+    DateNow,
+    DateReformat,
+    DateValid,
+    Conditional,
+    LogicalOr,
+    LogicalNot,
+    StringLowerCase,
+    StringTrim,
+    StringReplace,
+    StringSubstring,
+    StringContains
+}
+
+/// <summary>
+/// A map-level function with named parameters and an expression body built only from parameters, constants and catalog
+/// functions. A function without a body is a stub (for example an imported BizTalk script): a map that calls it fails closed
+/// until the body is supplied. The original code is evidence for the author, never executed.
+/// </summary>
+public sealed record XmlCustomFunctionDefinition
+{
+    public string Name { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+    public IReadOnlyList<XmlCustomFunctionParameter> Parameters { get; init; } = [];
+    /// <summary>The implementation; null while the function is a stub.</summary>
+    public XmlValueExpression? Body { get; init; }
+    public string? OriginalSource { get; init; }
+    public string? OriginalSourceLanguage { get; init; }
+    /// <summary>Where the original was used: one entry per functoid, with its inputs and target.</summary>
+    public IReadOnlyList<string> Usages { get; init; } = [];
+}
+
+public sealed record XmlCustomFunctionParameter
+{
+    public string Name { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
 }
 
 public sealed record XmlStringOperation
