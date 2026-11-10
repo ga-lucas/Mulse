@@ -8,6 +8,7 @@ public sealed class XmlMappingViewModel
     public Dictionary<string, string> Namespaces { get; set; } = new(StringComparer.Ordinal);
     public List<XmlFieldMappingViewModel> Fields { get; set; } = [];
     public List<XmlRepeatMappingViewModel> Repeats { get; set; } = [];
+    public List<XmlRecordConditionViewModel> RecordConditions { get; set; } = [];
     public List<XmlCustomFunctionViewModel> CustomFunctions { get; set; } = [];
     public List<string> SourceSchemas { get; set; } = [];
     public List<string> TargetSchemas { get; set; } = [];
@@ -37,6 +38,13 @@ public sealed class XmlRepeatMappingViewModel
 {
     public string SourcePath { get; set; } = string.Empty;
     public string TargetPath { get; set; } = string.Empty;
+}
+
+/// <summary>The target record (and everything below it) is written only when the condition formula yields the text 'true'. Imported BizTalk logical functoids linked to a record become this.</summary>
+public sealed class XmlRecordConditionViewModel
+{
+    public string TargetPath { get; set; } = string.Empty;
+    public XmlValueExpressionViewModel? Condition { get; set; }
 }
 
 public sealed class XmlFieldMappingViewModel

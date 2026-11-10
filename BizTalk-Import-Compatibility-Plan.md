@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,051 service tests
+Latest verification: 2,065 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -66,6 +66,15 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Importer:** an optional record with at least one directly written field below it (no repeating level in between, fixed schema values excluded) now converts, with a warning that it is always created and that the target schema may reject an empty record. Records reached only through record links or across a repeating level are still refused, with a clearer message.
 - **Measured effect (292 real maps):** converting maps rose from 107 to 114. Next: required targets not produced (23), functoid/field inputs below a repeating record (18), functoids linked to records (15), schema paths still missing (10), functoids without a verified equivalent (9).
 - **Verification:** 2,051 service tests passed and the solution built.
+
+### Increment: Records created only when a logical functoid is true
+
+- **Evidence:** compiled output of the Norton item sync, Heartland Cerner Row and `PreProcessing` maps wraps a record in a test on the result of a logical functoid (Greater Than, Not Equal, And, Equal) linked to that record. When the record has a loop, the test sits inside the loop, so it is evaluated once per source record and reads that record's fields.
+- **Native engine and UI:** new map-level `recordConditions` (target record path plus a condition formula). The record, with everything below it, is written only when the formula equals `true`; the record's own source checks run inside the gate, so a skipped record never fails on sources it does not read. Editable under "Conditional records" in the XML mapping editor and covered by custom-function references and validation.
+- **Importer:** a logical functoid linked to a record becomes a record condition, with the same repeat-scope checks as other functoids. Refused: a non-logical functoid linked to a record, more than one logical functoid on the same record, a record with nothing mapped below it, and conditions that read a repeating field outside the record's own record link. A warning states that the behavior matches compiled partner output but was not compared with the map's own compiled output, and notes when the gated record is required by the target schema.
+- **Not handled:** a zero-input scripting functoid (an empty-string helper) linked to records, which compiled output turns into an empty record (6 maps). Those still stop with the "only a logical functoid" message.
+- **Measured effect (292 real maps):** converting maps stayed at 114. The maps that were blocked on a record condition now reach their next blocker, mainly functoid/field inputs below a repeating record with no record link (18 to 26). Next: that blocker (26), required targets not produced (23), schema paths still missing (10), functoids without a verified equivalent (9).
+- **Verification:** 2,065 service tests passed and the solution built.
 
 ### Increment: DLL-verified functoid IDs, cheap functoids and Value Mapping
 

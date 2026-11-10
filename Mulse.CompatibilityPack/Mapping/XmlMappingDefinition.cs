@@ -8,6 +8,8 @@ public sealed record XmlMappingDefinition
     public Dictionary<string, string> Namespaces { get; init; } = new(StringComparer.Ordinal);
     public IReadOnlyList<XmlFieldMappingDefinition> Fields { get; init; } = [];
     public IReadOnlyList<XmlRepeatMappingDefinition> Repeats { get; init; } = [];
+    /// <summary>Version 2: records that are written only when a condition holds, like a BizTalk logical functoid linked to a record.</summary>
+    public IReadOnlyList<XmlRecordConditionDefinition> RecordConditions { get; init; } = [];
     /// <summary>Reusable functions (version 2). Imported script stubs live here until implemented.</summary>
     public IReadOnlyList<XmlCustomFunctionDefinition> CustomFunctions { get; init; } = [];
     public IReadOnlyList<string> SourceSchemas { get; init; } = [];
@@ -26,6 +28,17 @@ public sealed record XmlRepeatMappingDefinition
 {
     public string SourcePath { get; init; } = string.Empty;
     public string TargetPath { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Writes the target record (and everything below it) only when the condition evaluates to the exact text 'true'. For a repeating record the
+/// condition is evaluated once per source record, inside its loop, so it can read that record's fields. Compiled BizTalk output wraps the record
+/// in an xsl:if on the logical functoid's result the same way.
+/// </summary>
+public sealed record XmlRecordConditionDefinition
+{
+    public string TargetPath { get; init; } = string.Empty;
+    public XmlValueExpression? Condition { get; init; }
 }
 
 public sealed record XmlFieldMappingDefinition

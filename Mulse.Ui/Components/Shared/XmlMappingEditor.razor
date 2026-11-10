@@ -134,6 +134,22 @@
         }
         <button class="secondary-button" disabled="@(map.Repeats.Count >= 256)" @onclick="AddRepeatAsync">Add repeating record</button>
         </details>
+        <details open="@(map.RecordConditions.Count > 0)">
+        <summary>Conditional records (@map.RecordConditions.Count)</summary>
+        <HelpTooltip Label="Conditional records">The target record, with everything below it, is written only when the condition formula equals the text 'true' (for example LogicalGt(/s:Order/s:Lines/s:Line/s:Qty, 0)). For a repeating record the condition runs once per source record, so it can read that record's fields. Imported BizTalk logical functoids that are linked to a record become conditional records. The target path is relative to the target root and the record needs at least one mapped field. If the record is required by the target schema, output may be invalid while the condition is false.</HelpTooltip>
+        @foreach (var record in map.RecordConditions)
+        {
+            <fieldset @key="record">
+                <legend>Conditional record</legend>
+                <label class="field-label">Target record path</label>
+                <input class="mapping-input" aria-label="XML conditional record target path" value="@record.TargetPath" @onchange="async e => { record.TargetPath = e.Value?.ToString() ?? string.Empty; _map!.Version = 2; await WriteAsync(); }" />
+                <label class="field-label">Write this record only when</label>
+                <textarea class="mapping-input" rows="2" aria-label="XML conditional record condition" value="@(record.Condition is null ? string.Empty : XmlFormula.Format(record.Condition))" @onchange="e => SetRecordConditionAsync(record, e.Value?.ToString())"></textarea>
+                <button class="secondary-button" @onclick="async () => { map.RecordConditions.Remove(record); await WriteAsync(); }">Remove conditional record</button>
+            </fieldset>
+        }
+        <button class="secondary-button" disabled="@(map.RecordConditions.Count >= 256)" @onclick="AddRecordConditionAsync">Add conditional record</button>
+        </details>
         <XmlCustomFunctionsEditor Map="map" Changed="WriteAsync" />
     }
     <details>
@@ -204,6 +220,8 @@
                     || field.Operations.Any(operation => operation is null || !OperationKinds.Contains(operation.Kind, StringComparer.Ordinal)
                         || (operation.Kind is "Prefix" or "Suffix" ? operation.Argument is null || operation.Argument.Length > 4096 : operation.Argument is not null)))
                 || _map.SourceSchemas is null || _map.TargetSchemas is null || _map.Repeats is null
+                || _map.RecordConditions is null || (_map.RecordConditions.Count > 0 && _map.Version != 2)
+                || _map.RecordConditions.Any(record => record is null || record.Condition is null || XmlFormula.Validate(record.Condition, XmlCustomFunctions.ContextFor(_map.CustomFunctions)) is not null)
                 || XmlCustomFunctions.Validate(_map.CustomFunctions) is not null || (_map.CustomFunctions.Count > 0 && _map.Version != 2))
             {
                 _map = null;
@@ -321,6 +339,26 @@
         if (_map!.Repeats.Count >= 256) { _error = "Each mapping supports at most 256 repeats."; return; }
         _map.Version = 2;
         _map.Repeats.Add(new XmlRepeatMappingViewModel());
+        await WriteAsync();
+    }
+
+    private async Task AddRecordConditionAsync()
+    {
+        if (_map!.RecordConditions.Count >= 256) { _error = "Each mapping supports at most 256 conditional records."; return; }
+        _map.Version = 2;
+        _map.RecordConditions.Add(new XmlRecordConditionViewModel { Condition = new XmlValueExpressionViewModel { Kind = "Constant", Constant = "true" } });
+        await WriteAsync();
+    }
+
+    private async Task SetRecordConditionAsync(XmlRecordConditionViewModel record, string? text)
+    {
+        if (!XmlFormula.TryParse(text, out var condition, out var error, XmlCustomFunctions.ContextFor(_map!.CustomFunctions)))
+        {
+            _error = error;
+            return;
+        }
+        record.Condition = condition;
+        _map!.Version = 2;
         await WriteAsync();
     }
 

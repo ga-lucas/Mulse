@@ -497,7 +497,7 @@ public sealed class NativeMapFunctoidImportTests
     [Fact]
     public void FunctoidToRecord_AndRecordOrRepeatingInputs_AreRejected()
     {
-        Assert.Contains("conditional record creation", Message(Build(Out(1, 10, "Result"), F(10, 123), code: false)), StringComparison.Ordinal);
+        Assert.Contains("conditional creation of the whole message", Message(Build(Out(1, 10, "Result"), F(10, 123), code: false)), StringComparison.Ordinal);
         Assert.Contains("record", Message(Build(Wire(1, "Order", 10) + Out(2, 10, "Result/Number"), F(10, 701, Link("1", 0)))), StringComparison.Ordinal);
         Assert.Contains("repeating", Message(Build(Wire(1, "Order/Item", 10) + Out(2, 10, "Result/Number"), F(10, 105, Link("1", 0)))), StringComparison.Ordinal);
     }

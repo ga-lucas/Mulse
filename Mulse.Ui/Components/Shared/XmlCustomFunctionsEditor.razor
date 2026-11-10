@@ -130,7 +130,7 @@
         }).ToList();
         var context = XmlCustomFunctions.ContextFor(Map.CustomFunctions);
         var error = XmlCustomFunctions.Validate(Map.CustomFunctions)
-            ?? Map.Fields.SelectMany(field => new[] { field.Expression, field.Condition }).Select(expression => expression is null ? null : XmlFormula.Validate(expression, context)).FirstOrDefault(message => message is not null);
+            ?? Map.Fields.SelectMany(field => new[] { field.Expression, field.Condition }).Concat(Map.RecordConditions.Select(record => record.Condition)).Select(expression => expression is null ? null : XmlFormula.Validate(expression, context)).FirstOrDefault(message => message is not null);
         if (error is not null)
         {
             function.Parameters = previous;

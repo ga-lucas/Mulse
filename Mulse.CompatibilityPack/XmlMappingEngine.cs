@@ -93,12 +93,14 @@ public sealed partial class XmlMappingEngine
             stylesheet.Add(new XAttribute(XNamespace.Xmlns + prefix, uri));
         }
         var custom = ReadCustomFunctions(map, allowStubs);
-        if (map.Fields.Any(field => field is { Expression: not null }))
+        if (map.Fields.Any(field => field is { Expression: not null }) || map.RecordConditions is { Count: > 0 })
         {
             stylesheet.Add(new XAttribute(XNamespace.Xmlns + FunctionPrefix, XmlMappingFunctions.Namespace), new XAttribute("exclude-result-prefixes", FunctionPrefix));
         }
         if (map.Repeats is null || map.Repeats.Count > 256 || (map.Version == 1 && map.Repeats.Count > 0))
             throw new ArgumentException("Repeating records require version 2 and at most 256 repeats.");
+        if (map.RecordConditions is null || map.RecordConditions.Count > 256 || (map.Version != 2 && map.RecordConditions.Count > 0))
+            throw new ArgumentException("Record conditions require version 2 and at most 256 conditions.");
         var repeatTargets = new List<(XmlRepeatMappingDefinition Repeat, IReadOnlyList<(XName Name, bool IsAttribute)> Segments)>();
         foreach (var repeat in map.Repeats)
         {
@@ -167,22 +169,8 @@ public sealed partial class XmlMappingEngine
                 if (condition is not null) RequireRecordPositionSources(condition, map.Repeats, field.TargetPath);
             }
             else if (field.Constant is null) sourcePaths.Add(field.SourcePath);
-            var enclosing = new HashSet<XmlRepeatMappingDefinition>(repeatTargets
-                .Where(item => item.Segments.Count <= segments.Count && item.Segments.Zip(segments).All(pair => pair.First == pair.Second))
-                .Select(item => item.Repeat));
-            // A counted path is only counted, never read as a value, so counting a repeating record from outside it is allowed.
-            var scoped = sourcePaths.ToList();
-            if (effective.Expression is not null)
-                foreach (var counted in ExemptPaths(effective.Expression).Concat(effective.Condition is null ? [] : ExemptPaths(effective.Condition)))
-                    scoped.Remove(counted);
-            foreach (var sourcePath in sourcePaths)
-            {
-                ParsePath(sourcePath, absolute: true, map);
-                if (!scoped.Contains(sourcePath)) continue;
-                foreach (var repeat in map.Repeats)
-                    if ((sourcePath == repeat.SourcePath || sourcePath.StartsWith(repeat.SourcePath + "/", StringComparison.Ordinal)) && !enclosing.Contains(repeat))
-                        throw new ArgumentException($"Mapping '{field.TargetPath}' reads '{sourcePath}' inside repeat '{repeat.SourcePath}' but is not below the repeat's target '{repeat.TargetPath}'.");
-            }
+            RequireEnclosingRepeats(map, repeatTargets, segments, field.TargetPath, sourcePaths,
+                effective.Expression is null ? [] : ExemptPaths(effective.Expression).Concat(effective.Condition is null ? [] : ExemptPaths(effective.Condition)));
             var current = target;
             foreach (var segment in segments)
             {
@@ -207,6 +195,28 @@ public sealed partial class XmlMappingEngine
                 node = node.Children.FirstOrDefault(child => child.Name == segment.Name && child.IsAttribute == segment.IsAttribute)
                     ?? throw new ArgumentException($"Repeat target '{repeat.TargetPath}' has no mapped fields below it. Empty repeated records are not supported.");
             node.Repeat = repeat;
+        }
+        var conditionedRecords = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var recordCondition in map.RecordConditions)
+        {
+            if (recordCondition?.Condition is null) throw new ArgumentException("Record conditions need a target path and a condition.");
+            var segments = ParsePath(recordCondition.TargetPath, absolute: false, map);
+            if (!conditionedRecords.Add(recordCondition.TargetPath))
+                throw new ArgumentException($"Record '{recordCondition.TargetPath}' has more than one condition.");
+            var node = target;
+            foreach (var segment in segments)
+                node = node.Children.FirstOrDefault(child => child.Name == segment.Name && child.IsAttribute == segment.IsAttribute)
+                    ?? throw new ArgumentException($"Record condition target '{recordCondition.TargetPath}' has no mapped fields below it. A conditional record needs at least one mapped field.");
+            if (node.IsAttribute || node.Assignment is not null)
+                throw new ArgumentException($"Record condition target '{recordCondition.TargetPath}' is a field, not a record. Use a field condition instead.");
+            var sourcePaths = new List<string>();
+            var conditionNodes = 0;
+            ValidateExpression(recordCondition.Condition, recordCondition.TargetPath, 1, ref conditionNodes, sourcePaths, custom, null);
+            var expanded = 0;
+            var expandedCondition = Expand(recordCondition.Condition, null, custom, [], ref expanded, 1, allowStubs, recordCondition.TargetPath);
+            RequireRecordPositionSources(expandedCondition, map.Repeats, recordCondition.TargetPath);
+            RequireEnclosingRepeats(map, repeatTargets, segments, recordCondition.TargetPath, sourcePaths, ExemptPaths(expandedCondition));
+            node.RecordCondition = expandedCondition;
         }
         var folds = new FoldContext();
         var rootChecks = new List<XElement>();
@@ -366,6 +376,25 @@ public sealed partial class XmlMappingEngine
             foreach (var path in ExemptPaths(argument)) yield return path;
     }
 
+    // A source path inside a repeating record may only be read from a target at or below that repeat's target. A counted path is only counted, never read as a value, so counting a repeating record from outside it is allowed.
+    private static void RequireEnclosingRepeats(XmlMappingDefinition map, IReadOnlyList<(XmlRepeatMappingDefinition Repeat, IReadOnlyList<(XName Name, bool IsAttribute)> Segments)> repeatTargets,
+        IReadOnlyList<(XName Name, bool IsAttribute)> segments, string targetPath, IReadOnlyList<string> sourcePaths, IEnumerable<string> counted)
+    {
+        var enclosing = new HashSet<XmlRepeatMappingDefinition>(repeatTargets
+            .Where(item => item.Segments.Count <= segments.Count && item.Segments.Zip(segments).All(pair => pair.First == pair.Second))
+            .Select(item => item.Repeat));
+        var scoped = sourcePaths.ToList();
+        foreach (var path in counted) scoped.Remove(path);
+        foreach (var sourcePath in sourcePaths)
+        {
+            ParsePath(sourcePath, absolute: true, map);
+            if (!scoped.Contains(sourcePath)) continue;
+            foreach (var repeat in map.Repeats)
+                if ((sourcePath == repeat.SourcePath || sourcePath.StartsWith(repeat.SourcePath + "/", StringComparison.Ordinal)) && !enclosing.Contains(repeat))
+                    throw new ArgumentException($"Mapping '{targetPath}' reads '{sourcePath}' inside repeat '{repeat.SourcePath}' but is not below the repeat's target '{repeat.TargetPath}'.");
+        }
+    }
+
     private static void RequireRecordPositionSources(XmlValueExpression expression, IReadOnlyList<XmlRepeatMappingDefinition> repeats, string target)
     {
         if (expression.Function == XmlMappingFunction.RecordPosition
@@ -416,7 +445,7 @@ public sealed partial class XmlMappingEngine
     private static XElement Emit(TargetNode node, IReadOnlyList<string> scopes, List<XElement> checks, FoldContext folds)
     {
         var inner = node.Repeat is null ? scopes : [.. scopes, node.Repeat.SourcePath];
-        var scopeChecks = node.Repeat is null ? checks : [];
+        var scopeChecks = node.Repeat is null && node.RecordCondition is null ? checks : [];
         var element = new XElement(Xsl + (node.IsAttribute ? "attribute" : "element"),
             new XAttribute("name", node.Name.LocalName), new XAttribute("namespace", node.Name.NamespaceName));
         string? source = null;
@@ -478,6 +507,12 @@ public sealed partial class XmlMappingEngine
             : node.Assignment?.Condition is { } condition
                 ? new XElement(Xsl + "if", new XAttribute("test", $"string({Compile(condition, inner, folds, null)}) = 'true'"), element)
                 : element;
+        if (node.RecordCondition is { } recordCondition)
+        {
+            // The source checks of a conditional record live inside its gate: a skipped record must not fail on sources it never reads.
+            result = new XElement(Xsl + "if", new XAttribute("test", $"string({Compile(recordCondition, inner, folds, null)}) = 'true'"), scopeChecks, result);
+            scopeChecks = [];
+        }
         if (node.Repeat is null) return result;
         var loop = new XElement(Xsl + "for-each", new XAttribute("select", SourceExpression(node.Repeat.SourcePath, scopes)));
         loop.Add(new XElement(Xsl + "variable", new XAttribute("name", $"r{inner.Count}"), new XAttribute("select", ".")));
@@ -530,6 +565,7 @@ public sealed partial class XmlMappingEngine
         public List<TargetNode> Children { get; } = [];
         public XmlFieldMappingDefinition? Assignment { get; set; }
         public XmlRepeatMappingDefinition? Repeat { get; set; }
+        public XmlValueExpression? RecordCondition { get; set; }
     }
 
     private sealed class BoundedWriter(CancellationToken cancellationToken) : StringWriter(CultureInfo.InvariantCulture)

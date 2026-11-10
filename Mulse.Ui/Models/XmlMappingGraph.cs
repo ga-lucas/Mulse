@@ -47,6 +47,10 @@ public static class XmlMappingGraph
         foreach (var field in map.Fields)
             foreach (var path in source ? SourcePaths(field) : ["/" + map.TargetRoot + "/" + field.TargetPath])
                 if (!string.IsNullOrWhiteSpace(path)) Add(path, map.Namespaces, null);
+        if (source)
+            foreach (var record in map.RecordConditions.Where(record => record.Condition is not null))
+                foreach (var path in XmlFormula.SourcePaths(record.Condition!))
+                    if (!string.IsNullOrWhiteSpace(path)) Add(path, map.Namespaces, null);
         var children = nodes.Values.ToLookup(node =>
         {
             var parent = node.Key[..node.Key.LastIndexOf('/')];
