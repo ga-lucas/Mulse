@@ -86,10 +86,11 @@ public sealed partial class XmlMappingEngine
         foreach (var (prefix, uri) in map.Namespaces)
         {
             VerifyName(prefix);
+            // BizTalk schemas commonly use plain-string namespaces that are not absolute URIs, so only emptiness, size, control/whitespace characters and reserved namespaces are refused.
             if (prefix.StartsWith("xml", StringComparison.OrdinalIgnoreCase) || prefix == "xsl" || prefix == FunctionPrefix || prefix == NodeSetPrefix || string.IsNullOrWhiteSpace(uri) || uri == XmlMappingFunctions.Namespace
                 || uri == NodeSetNamespace
-                || !Uri.TryCreate(uri, UriKind.Absolute, out _) || uri == Xsl.NamespaceName || uri == XNamespace.Xml.NamespaceName || uri == XNamespace.Xmlns.NamespaceName)
-                throw new ArgumentException($"Invalid or reserved XML namespace prefix/URI '{prefix}'. Use explicit, non-reserved prefixes and absolute URIs.");
+                || uri.Length > 2048 || uri.Any(character => char.IsControl(character) || char.IsWhiteSpace(character)) || uri == Xsl.NamespaceName || uri == XNamespace.Xml.NamespaceName || uri == XNamespace.Xmlns.NamespaceName)
+                throw new ArgumentException($"Invalid or reserved XML namespace prefix/URI '{prefix}'. Use explicit, non-reserved prefixes and namespaces without whitespace or control characters.");
             stylesheet.Add(new XAttribute(XNamespace.Xmlns + prefix, uri));
         }
         var custom = ReadCustomFunctions(map, allowStubs);

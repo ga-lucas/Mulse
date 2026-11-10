@@ -97,9 +97,25 @@ public sealed class XmlMappingTests
     [InlineData("xml", "http://www.w3.org/XML/1998/namespace")]
     [InlineData("", "urn:source")]
     [InlineData("s", "")]
-    [InlineData("s", "relative")]
+    [InlineData("s", "has space")]
+    [InlineData("s", "http://www.w3.org/1999/XSL/Transform")]
     public void InvalidNamespaces_AreRejected(string prefix, string uri)
         => Assert.Throws<ArgumentException>(() => new XmlMappingEngine(Json(Map with { Namespaces = new() { [prefix] = uri } })));
+
+    [Fact]
+    public void NonUriNamespaces_UsedByBizTalkSchemas_AreAccepted()
+    {
+        var engine = new XmlMappingEngine(Json(new()
+        {
+            TargetRoot = "t:Result",
+            Namespaces = new() { ["s"] = "Acme.Partner/Orders", ["t"] = "Acme.Partner.Result" },
+            Fields = [new() { SourcePath = "/s:Order/s:Id", TargetPath = "t:Number" }]
+        }));
+
+        var output = System.Xml.Linq.XDocument.Parse(engine.Transform("<Order xmlns='Acme.Partner/Orders'><Id>42</Id></Order>"));
+
+        Assert.Equal("42", output.Root!.Element(System.Xml.Linq.XName.Get("Number", "Acme.Partner.Result"))!.Value);
+    }
 
     [Fact]
     public void AmbiguousValueKind_IsRejected()

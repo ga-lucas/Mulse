@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,082 service tests
+Latest verification: 2,084 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -66,6 +66,14 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Importer:** an optional record with at least one directly written field below it (no repeating level in between, fixed schema values excluded) now converts, with a warning that it is always created and that the target schema may reject an empty record. Records reached only through record links or across a repeating level are still refused, with a clearer message.
 - **Measured effect (292 real maps):** converting maps rose from 107 to 114. Next: required targets not produced (23), functoid/field inputs below a repeating record (18), functoids linked to records (15), schema paths still missing (10), functoids without a verified equivalent (9).
 - **Verification:** 2,051 service tests passed and the solution built.
+
+### Increment: Non-URI schema namespaces are accepted
+
+- **Evidence:** BizTalk schemas commonly use plain-string target namespaces (for example `Shs.SpaceTrax2.Interfaces.Partners.Carle/HL7/2X`) that are not absolute URIs. The mapping engine refused them with "Invalid or reserved XML namespace prefix", which failed seven real maps.
+- **Change:** the engine now accepts any namespace that is non-empty, at most 2,048 characters and free of whitespace and control characters. Reserved namespaces (xsl, xml, xmlns, engine helpers) are still refused.
+- **Measured effect (292 real maps):** converting maps rose from 149 to 153.
+- **Still open:** UTMC `A01/A04/A08 v23` maps link two conditional functoid chains (value equals M, value equals F) to one target field. The engine rejects two assignments to one target; supporting it needs proof that the conditions are exclusive.
+- **Verification:** 2,084 service tests passed and the solution built.
 
 ### Increment: Custom XSLT maps are imported as XSLT render choices
 
