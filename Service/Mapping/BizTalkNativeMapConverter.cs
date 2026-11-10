@@ -95,6 +95,7 @@ public static class BizTalkNativeMapConverter
         var namespaces = source.Namespaces.ToDictionary(entry => "s" + entry.Key, entry => entry.Value, StringComparer.Ordinal);
         foreach (var entry in target.Namespaces) namespaces.Add("t" + entry.Key, entry.Value);
         var links = new List<(XmlSchemaField From, XmlSchemaField To)>();
+        var copyLinks = new List<(XmlSchemaField From, XmlSchemaField To)>();
         var functoids = ReadFunctoids(root);
         var functoidOutputs = new List<(int Functoid, XmlSchemaField To)>();
         var resolver = new FunctoidResolver(functoids, root.Descendants("Link").ToArray(), sourceRoot);
@@ -120,6 +121,17 @@ public static class BizTalkNativeMapConverter
             XmlSchemaField to;
             if (fromFunctoid is { } producer)
             {
+                if (functoids[producer].Fid == MassCopyFid)
+                {
+                    var copyFrom = resolver.ResolveMassCopyInput(producer);
+                    var copyTo = Find(targetRoot, toText);
+                    if (copyFrom.Path == sourceRoot.Path || copyTo.Path == targetRoot.Path)
+                        throw new ArgumentException($"Mass Copy functoid {producer} copies to or from a whole message root, which is not supported. No partial native map was produced.");
+                    if (AroundStub(copyTo))
+                        throw new ArgumentException($"Mass Copy functoid {producer} writes '{copyTo.Path}', which is also built by a scripting functoid. No partial native map was produced.");
+                    copyLinks.AddRange(BizTalkMassCopy.Expand(producer, sourceRoot, copyFrom, source.Namespaces, targetRoot, copyTo, target.Namespaces));
+                    continue;
+                }
                 var output = Find(targetRoot, toText);
                 if (!output.Scalar && stubbedRecords.Contains(output.Path))
                 {
@@ -156,6 +168,16 @@ public static class BizTalkNativeMapConverter
             if (from.UnsupportedReason is not null || from.HasDefaultOrFixed)
                 throw new ArgumentException($"Source '{from.Path}' is unsupported: {from.UnsupportedReason ?? "schema default/fixed values are not supported"}. No partial native map was produced.");
             links.Add((from, to));
+        }
+        if (copyLinks.Count > 0)
+        {
+            var written = new HashSet<string>(links.Select(link => link.To.Path).Concat(functoidOutputs.Select(output => output.To.Path)), StringComparer.Ordinal);
+            foreach (var constant in root.Descendants("ConstantValues").Elements())
+                written.Add(Find(targetRoot, (string?)constant.Attribute("Query")).Path);
+            foreach (var (_, copyTarget) in copyLinks)
+                if (!written.Add(copyTarget.Path))
+                    throw new ArgumentException($"Target '{copyTarget.Path}' is written by a Mass Copy and also by another link, constant, functoid or Mass Copy; BizTalk would emit both. No partial native map was produced.");
+            links.AddRange(copyLinks);
         }
         var repeatLinks = new List<(XmlSchemaField From, XmlSchemaField To)>();
         foreach (var (from, to) in links)
@@ -229,6 +251,8 @@ public static class BizTalkNativeMapConverter
         foreach (var field in targetRoot.Fields.Where(field => field.Path != targetRoot.Path && !AroundStub(field)))
         {
             var isProduced = produced.Contains(field.Path);
+            // Children of an optional record that is not produced are not emitted either, so their own requirement does not apply.
+            if (field.Path[..field.Path.LastIndexOf('/')] is var parentPath && parentPath != targetRoot.Path && !produced.Contains(parentPath)) continue;
             if (!isProduced && field.RequiredInParent)
                 throw new ArgumentException($"Required target '{field.Path}' is not produced by any link or constant; the native engine cannot emit empty required records. No partial native map was produced.");
             if (isProduced && !field.Scalar && !field.RequiredInParent && !repeatLinks.Any(repeat => repeat.To == field))
@@ -269,6 +293,8 @@ public static class BizTalkNativeMapConverter
         }
         if (resolver.Loopings.Count > 0)
             warnings.Add($"{resolver.Loopings.Count} Looping functoid(s) (FID {LoopingFid}) with a single record input were converted to a plain record link: one target record per source record. Compare trusted expected outputs before use.");
+        if (resolver.MassCopies.Count > 0)
+            warnings.Add($"{resolver.MassCopies.Count} Mass Copy functoid(s) (FID {MassCopyFid}) were expanded into {copyLinks.Count} explicit record and field link(s) by matching the source and target record structure (identical qualified names, kinds and order). BizTalk copies the source nodes verbatim, so anything outside the declared schemas (undeclared elements, comments, exact whitespace) is not carried over, and optional values follow the normal missing-value rules. Edit the expanded links in the Mapping Designer; compare trusted expected outputs before use.");
         if (resolver.Used.Contains(IterationFid))
             warnings.Add($"Iteration functoid(s) (FID {IterationFid}) became RecordPosition: the 1-based position of the current record among its siblings under the same parent, as BizTalk's compiled position() reports it. Compare trusted expected outputs before use.");
         if (resolver.ValueMappings.Count > 0)
@@ -395,6 +421,7 @@ public static class BizTalkNativeMapConverter
         private readonly Dictionary<int, ScriptStub> scriptsByFunctoid = [];
         private readonly Dictionary<int, List<string>> targetsByFunctoid = [];
         private readonly HashSet<int> loopingIds = [];
+        private readonly HashSet<int> massCopyIds = [];
         private readonly HashSet<int> otherContributing = [];
         private readonly Dictionary<string, List<string>> recordNotes = new(StringComparer.Ordinal);
         private readonly List<string> recordStubTargets = [];
@@ -409,12 +436,29 @@ public static class BizTalkNativeMapConverter
                     throw new ArgumentException($"LinkID '{(string)link.Attribute("LinkID")!}' is declared more than once. No partial native map was produced.");
         }
 
-        public IReadOnlyCollection<int> Contributing => cache.Keys.Union(loopingIds).Union(otherContributing).ToArray();
+        public IReadOnlyCollection<int> Contributing => cache.Keys.Union(loopingIds).Union(otherContributing).Union(massCopyIds).ToArray();
+        public IReadOnlyCollection<int> MassCopies => massCopyIds;
         public IReadOnlyCollection<string> RecordStubTargets => recordStubTargets;
         public IReadOnlyCollection<string> PendingFunctions => stubsByKey.Values.Select(stub => stub.Name).ToArray();
         public HashSet<int> Used { get; } = [];
         public HashSet<int> ValueMappings { get; } = [];
         public IReadOnlyCollection<int> Loopings => loopingIds;
+
+        public XmlSchemaField ResolveMassCopyInput(int id)
+        {
+            var idText = id.ToString(CultureInfo.InvariantCulture);
+            var inputs = links.Where(link => (string?)link.Attribute("LinkTo") == idText).ToArray();
+            if (inputs.Length != 1)
+                throw new ArgumentException($"Mass Copy functoid {id} must have exactly one source record input but has {inputs.Length}. No partial native map was produced.");
+            if (functoids[id].Element.Elements("Input-Parameters").Elements("Parameter").Any(parameter => (string?)parameter.Attribute("Type") != "link"))
+                throw new ArgumentException($"Mass Copy functoid {id} has a constant input. No partial native map was produced.");
+            var fromText = (string?)inputs[0].Attribute("LinkFrom");
+            if (FunctoidReference(fromText, functoids) is not null)
+                throw new ArgumentException($"Mass Copy functoid {id} is fed by another functoid; only a direct source record input is supported. No partial native map was produced.");
+            var field = Find(sourceRoot, fromText);
+            massCopyIds.Add(id);
+            return field;
+        }
 
         public XmlSchemaField ResolveLoopInput(int id)
         {
@@ -743,6 +787,7 @@ public static class BizTalkNativeMapConverter
 
     private const int ScriptFid = 260;
     private const int LoopingFid = 424;
+    private const int MassCopyFid = 802;
     private const int IterationFid = 474;
     private const int ValueMappingFlatteningFid = 374;
     private const int ValueMappingFid = 375;

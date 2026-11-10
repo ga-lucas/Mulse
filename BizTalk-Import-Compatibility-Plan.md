@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,952 service tests passed and the solution built.
+Latest verification: 1,968 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -52,6 +52,16 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Record-target XSLT** (for example the P03 FT1 records) becomes a record stub: an unreferenced custom function documenting the whole record (including Looping inputs). That record and everything below it is deliberately not converted, with a warning; the user rebuilds it natively (fields plus a record link) and deletes the stub.
 - **Fail closed:** the engine now rejects any declared stub, used or not, unless stubs are explicitly allowed (previews only). Unsupported script languages (VB.NET, JScript, external assembly) are still rejected.
 - **Verification:** 1,952 service tests passed and the solution built.
+
+### Increment: Mass Copy (FID 802)
+
+- **Measured:** 15 uses in 11 of the 292 maps. No compiled `.btm.cs` shows the XSLT it emits, so BizTalk's exact copy output is **unproven**.
+- **Approach (no guessing):** a Mass Copy is expanded at import into ordinary, editable field and record links, but only when the supplied schemas prove the source and target records have the same structure. Nothing hidden runs at execution time; the expanded rows appear in the mapping UI like hand-drawn links.
+- **Exact-match rules:** one source record in, one target record out; both sides repeat or neither does; every source descendant is declared by the target with the same namespace URI, kind (value or record), repeat setting and order. Prefixes are ignored (compared by namespace URI).
+- **Refused (import stops with the reason, no partial map):** scalar, none, several, constant or functoid-fed inputs; whole-message roots; wildcards, choice, defaults/fixed values; undeclared nodes; kind, order or repeat mismatches; any other link, constant, functoid or second Mass Copy writing into the same target record. An unconnected 802 keeps the usual "not connected" warning.
+- **Warning at import:** states how many copies were expanded into how many links, and that undeclared elements, comments and exact whitespace are not carried over.
+- **Generic completeness fix:** the required-target check no longer demands children of an optional record that is not produced.
+- **Verification:** 1,968 service tests passed and the solution built.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
 
