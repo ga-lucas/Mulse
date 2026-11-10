@@ -526,8 +526,13 @@ public static class BizTalkNativeMapConverter
         });
         var path = "/" + string.Join("/", names);
         var matches = root.Fields.Where(field => field.LocalPath == path).ToArray();
+        // A single-schema map can address its message through BizTalk's part wrapper (/Root/InputMessagePart_0/X or /Root/OutputMessagePart_0/X); compiled output of such maps is rooted at X, so the wrapper is dropped, and only when the plain path does not exist.
+        if (matches.Length == 0 && PartWrapper.Match(path) is { Success: true } wrapped)
+            matches = root.Fields.Where(field => field.LocalPath == wrapped.Groups[1].Value).ToArray();
         return matches.Length == 1 ? matches[0] : throw new ArgumentException($"Schema path '{path}' is missing or namespace-ambiguous; no local-name guess was used.");
     }
+
+    private static readonly Regex PartWrapper = new(@"^/Root/(?:Input|Output)MessagePart_0(/.+)$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
 
     private static string Prefix(string path, string side)
         => string.Join("/", path.Split('/').Select(segment => segment.Contains(':') && !segment.StartsWith("xml:", StringComparison.Ordinal)

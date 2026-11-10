@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,085 service tests
+Latest verification: 2,087 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -66,6 +66,13 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Importer:** an optional record with at least one directly written field below it (no repeating level in between, fixed schema values excluded) now converts, with a warning that it is always created and that the target schema may reject an empty record. Records reached only through record links or across a repeating level are still refused, with a clearer message.
 - **Measured effect (292 real maps):** converting maps rose from 107 to 114. Next: required targets not produced (23), functoid/field inputs below a repeating record (18), functoids linked to records (15), schema paths still missing (10), functoids without a verified equivalent (9).
 - **Verification:** 2,051 service tests passed and the solution built.
+
+### Increment: Single-input maps may address their message through BizTalk's part wrapper
+
+- **Evidence:** six `PreProcessingMap` maps have an ordinary single `Reference` for each tree but link paths of the form `/Root/InputMessagePart_0/Billing` and `/Root/OutputMessagePart_0/Billing`. Their compiled XSLT is rooted at `/ns0:Billing` with no wrapper, so the wrapper is only an addressing form.
+- **Change:** when a link path does not exist in the schema and has the form `/Root/InputMessagePart_0/X` or `/Root/OutputMessagePart_0/X`, the wrapper is dropped and `/X` is looked up. Other part numbers and paths that already exist are unchanged.
+- **Measured effect (292 real maps):** no new conversions. The six maps now reach their real blocker: a repeating `Setting/@Name` that gates a `Procedures` record through a C# scripting functoid. Next largest groups: that `Setting` pattern (now 18 maps with the other repeat-coverage cases), functoids without a verified equivalent (10), Value Mapping feeding a functoid (6).
+- **Verification:** 2,087 service tests passed and the solution built.
 
 ### Increment: Non-URI schema namespaces are accepted
 

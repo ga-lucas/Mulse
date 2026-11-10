@@ -92,6 +92,28 @@ public sealed class NativeMapImportTests
     public void UnsupportedSourceCardinalityOrStructure_RejectsWholeProposal(string source)
         => Assert.Throws<ArgumentException>(() => BizTalkNativeMapConverter.Convert(Map(source), [SourceXsd], [TargetXsd]));
 
+    private static string WithPartWrapper(string map, string inputPart, string outputPart)
+    {
+        var document = XDocument.Parse(map);
+        foreach (var attribute in document.Descendants().Attributes().Where(attribute => attribute.Name.LocalName is "LinkFrom" or "LinkTo" or "Query").ToArray())
+            attribute.Value = attribute.Value
+                .Replace("/*[local-name()='Order']", "/*[local-name()='Root']/*[local-name()='" + inputPart + "']/*[local-name()='Order']", StringComparison.Ordinal)
+                .Replace("/*[local-name()='Result']", "/*[local-name()='Root']/*[local-name()='" + outputPart + "']/*[local-name()='Result']", StringComparison.Ordinal);
+        return document.ToString();
+    }
+
+    [Fact]
+    public void SinglePartWrapperPaths_ResolveLikePlainPaths()
+    {
+        var plain = BizTalkNativeMapConverter.Convert(Map(), [SourceXsd], [TargetXsd]);
+        var wrapped = BizTalkNativeMapConverter.Convert(WithPartWrapper(Map(), "InputMessagePart_0", "OutputMessagePart_0"), [SourceXsd], [TargetXsd]);
+        Assert.Equal(plain.MappingJson, wrapped.MappingJson);
+    }
+
+    [Fact]
+    public void WrapperPathsForOtherParts_AreStillRefused()
+        => Assert.Throws<ArgumentException>(() => BizTalkNativeMapConverter.Convert(WithPartWrapper(Map(), "InputMessagePart_1", "OutputMessagePart_0"), [SourceXsd], [TargetXsd]));
+
     [Fact]
     public void OptionalSourceToRequiredTarget_OmitsLikeBizTalkAndWarns()
     {
