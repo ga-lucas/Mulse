@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,087 service tests
+Latest verification: 2,088 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -66,6 +66,14 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Importer:** an optional record with at least one directly written field below it (no repeating level in between, fixed schema values excluded) now converts, with a warning that it is always created and that the target schema may reject an empty record. Records reached only through record links or across a repeating level are still refused, with a clearer message.
 - **Measured effect (292 real maps):** converting maps rose from 107 to 114. Next: required targets not produced (23), functoid/field inputs below a repeating record (18), functoids linked to records (15), schema paths still missing (10), functoids without a verified equivalent (9).
 - **Verification:** 2,051 service tests passed and the solution built.
+
+### Increment: Converted maps can be verified against real BizTalk messages
+
+- **Tooling:** `Service.Tests\ImportMapVerificationTests` is a reusable, opt-in check. It converts one `.btm` natively, runs it on a real exported input message and compares the result with the output BizTalk really produced. Set `VERIFY_ROOT` (projects folder), `VERIFY_MAP` (the `.btm`), `VERIFY_INPUT`, `VERIFY_EXPECTED`, `VERIFY_OUT` (a report path outside the repository) and optionally `VERIFY_SHOW_VALUES=1`, then run `dotnet test Service.Tests --filter "FullyQualifiedName~ImportMapVerification"`. The comparison is structural (element name and occurrence, attributes, text). Without `VERIFY_SHOW_VALUES` the report lists only paths and value lengths, so message data does not reach the report. It does nothing when the variables are unset.
+- **Evidence:** the TestOneTwo `SingleOutMap` converted natively and, run on a real exported input, matched BizTalk's real output with 0 differences. Using the input as the expected output reports a difference, so the check can fail.
+- **Why it matters:** this is the first proof from a real message rather than from compiled XSLT. More exported input/output pairs let other converted maps be proven the same way.
+- **`Setting`/`Procedures` rule (explained from the map):** a C# scripting functoid `Procedures(name, value)` returns true when a `Setting` has `Name="SendProcedures"` and `Value="1"`; a second one does the same for `SendPostProcedures`. A true result emits the `Procedures` (or `PostProcedures`) record, copied from `Details/Procedures`. In effect these are per-partner switches that turn the procedure sections on or off. Because the record is emitted once per matching `Setting`, two matching settings would duplicate it. The import still keeps scripting functoids as documented stubs; a generic "record gated by an equality test on a repeating source" form is the way to make this native.
+- **Verification:** 2,088 service tests passed and the solution built.
 
 ### Increment: Single-input maps may address their message through BizTalk's part wrapper
 
