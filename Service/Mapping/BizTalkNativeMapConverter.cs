@@ -98,6 +98,15 @@ public static class BizTalkNativeMapConverter
         var functoids = ReadFunctoids(root);
         var functoidOutputs = new List<(int Functoid, XmlSchemaField To)>();
         var resolver = new FunctoidResolver(functoids, root.Descendants("Link").ToArray(), sourceRoot);
+        // A target record fed by an XSLT scripting functoid is built by hand-written XSLT that cannot become native fields automatically: it is
+        // documented as a stub (together with any Looping inputs wired to the same record) and left for the user to rebuild.
+        var stubbedRecords = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var link in root.Descendants("Link"))
+            if (FunctoidReference((string?)link.Attribute("LinkFrom"), functoids) is { } scripted && functoids[scripted] is { Fid: ScriptFid, Script.IsXslt: true }
+                && FunctoidReference((string?)link.Attribute("LinkTo"), functoids) is null
+                && Find(targetRoot, (string?)link.Attribute("LinkTo")) is { Scalar: false } record && record.Path != targetRoot.Path)
+                stubbedRecords.Add(record.Path);
+        string RecordPath(XmlSchemaField record) => Prefix(record.Path[(targetRoot.Path.Length + 1)..], "t");
         foreach (var link in root.Descendants("Link"))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -112,6 +121,12 @@ public static class BizTalkNativeMapConverter
             if (fromFunctoid is { } producer)
             {
                 var output = Find(targetRoot, toText);
+                if (!output.Scalar && stubbedRecords.Contains(output.Path))
+                {
+                    if (functoids[producer] is { Fid: ScriptFid, Script.IsXslt: true }) resolver.RegisterRecordStub(producer, RecordPath(output));
+                    else resolver.NoteRecordInput(RecordPath(output), producer);
+                    continue;
+                }
                 if (functoids[producer].Fid == LoopingFid && !output.Scalar && output.Path != targetRoot.Path)
                 {
                     // A Looping functoid with one record input creates one target record per source record, exactly like a direct record link.
@@ -130,6 +145,11 @@ public static class BizTalkNativeMapConverter
             {
                 from = Find(sourceRoot, fromText);
                 to = Find(targetRoot, toText);
+                if (!to.Scalar && stubbedRecords.Contains(to.Path))
+                {
+                    resolver.NoteRecordSource(RecordPath(to), $"is also linked directly from {(from.Scalar ? "value" : "record")} {from.Path}");
+                    continue;
+                }
             }
             if (from.Scalar != to.Scalar)
                 throw new ArgumentException($"Link '{from.Path}' -> '{to.Path}' connects a record to a scalar field. No partial native map was produced.");
@@ -204,7 +224,9 @@ public static class BizTalkNativeMapConverter
         var produced = new HashSet<string>(StringComparer.Ordinal);
         foreach (var path in assignments.Select(assignment => assignment.Target.Path).Concat(repeatLinks.Select(repeat => repeat.To.Path)))
             for (var current = path; current.Length > targetRoot.Path.Length; current = current[..current.LastIndexOf('/')]) produced.Add(current);
-        foreach (var field in targetRoot.Fields.Where(field => field.Path != targetRoot.Path))
+        bool AroundStub(XmlSchemaField field)
+            => stubbedRecords.Any(path => field.Path == path || field.Path.StartsWith(path + "/", StringComparison.Ordinal) || path.StartsWith(field.Path + "/", StringComparison.Ordinal));
+        foreach (var field in targetRoot.Fields.Where(field => field.Path != targetRoot.Path && !AroundStub(field)))
         {
             var isProduced = produced.Contains(field.Path);
             if (!isProduced && field.RequiredInParent)
@@ -254,7 +276,9 @@ public static class BizTalkNativeMapConverter
         if (functoids.Count > 0 && resolver.Contributing.Count < functoids.Count)
             warnings.Add($"{functoids.Count - resolver.Contributing.Count} functoid(s) (for example unconnected sample script stubs) are not connected to any target and were ignored, as BizTalk generates no output for them.");
         if (resolver.PendingFunctions.Count > 0)
-            warnings.Add($"{resolver.PendingFunctions.Count} scripting functoid(s) were imported as unimplemented stubs ({string.Join(", ", resolver.PendingFunctions.Take(8))}{(resolver.PendingFunctions.Count > 8 ? ", ..." : string.Empty)}). The original C# is kept as documentation only and is never run. Until each stub has a formula, this map fails closed and cannot run: fill them in from the custom functions editor (an AI prompt is generated there) or replace the calls.");
+            warnings.Add($"{resolver.PendingFunctions.Count} scripting functoid(s) were imported as unimplemented stubs ({string.Join(", ", resolver.PendingFunctions.Take(8))}{(resolver.PendingFunctions.Count > 8 ? ", ..." : string.Empty)}). The original C# or XSLT is kept as documentation only and is never run. Until each stub has a formula (or is deleted after its record is rebuilt), this map fails closed and cannot run: fill them in from the custom functions editor (an AI prompt is generated there) or replace the calls.");
+        if (resolver.RecordStubTargets.Count > 0)
+            warnings.Add($"{resolver.RecordStubTargets.Count} target record(s) are built by hand-written XSLT scripting functoids ({string.Join(", ", resolver.RecordStubTargets.Take(6))}{(resolver.RecordStubTargets.Count > 6 ? ", ..." : string.Empty)}) and were NOT converted: the record and everything below it is missing from the native map, so previews are incomplete and the map must not be enabled. The stub documents the XSLT, its inputs and the Looping inputs; rebuild the record from native field mappings and a record link, then delete the stub.");
         return new(json, engine.Xslt, warnings, resolver.PendingFunctions.ToArray());
 
         bool RequiredWithin(XmlSchemaRoot tree, string scope, XmlSchemaField field)
@@ -307,24 +331,46 @@ public static class BizTalkNativeMapConverter
                 ? segment.StartsWith('@') ? "@" + side + segment[1..] : side + segment
                 : segment));
 
-    private sealed record Functoid(int Id, int Fid, XElement Element);
+    private sealed record ScriptChoice(string Language, string Code, IReadOnlyList<(string Language, string Code)> Alternates)
+    {
+        public bool IsXslt => Language is "Xslt" or "XsltCallTemplate";
+    }
+
+    private sealed record Functoid(int Id, int Fid, XElement Element, ScriptChoice? Script = null);
 
     private sealed record ResolvedFunctoid(XmlValueExpression Expression, IReadOnlyList<XmlSchemaField> Sources, int Nodes, int Depth, XmlValueExpression? Condition = null);
+
+    private static readonly string[] DefaultScriptPrecedence = ["CSharp", "ExternalAssembly", "VbNet", "JScript", "XsltCallTemplate", "Xslt"];
+
+    // BizTalk keeps one script per language in a functoid. Unedited default templates are dropped; if several real scripts remain, the map's
+    // own script precedence picks the primary one (one compiled example agrees) and the rest are documented as alternates. Nothing is run.
+    private static ScriptChoice? ChooseScript(XElement element, IReadOnlyList<string> precedence)
+    {
+        var scripts = element.Elements("ScripterCode").Elements("Script").Select(script => (Language: (string?)script.Attribute("Language") ?? string.Empty, Code: script.Value)).ToArray();
+        if (scripts.Length == 0) return null;
+        var real = scripts.Where(script => !string.IsNullOrWhiteSpace(script.Code) && !BizTalkXsltStub.IsSample(script.Code)).ToArray();
+        if (real.Length == 0) real = scripts[..1];
+        int Rank(string language) => precedence.ToList().IndexOf(language) is var found && found >= 0 ? found : int.MaxValue;
+        var ordered = real.Select((script, index) => (script, index)).OrderBy(entry => Rank(entry.script.Language)).ThenBy(entry => entry.index).Select(entry => entry.script).ToArray();
+        return new(ordered[0].Language, ordered[0].Code, ordered[1..]);
+    }
 
     private static Dictionary<int, Functoid> ReadFunctoids(XElement root)
     {
         var result = new Dictionary<int, Functoid>();
+        var precedence = root.Descendants("ScriptTypePrecedence").Elements().Where(entry => (string?)entry.Attribute("Enabled") != "No").Select(entry => entry.Name.LocalName).ToArray();
+        if (precedence.Length == 0) precedence = DefaultScriptPrecedence;
         foreach (var element in root.Descendants("Functoid"))
         {
             if (!int.TryParse((string?)element.Attribute("FunctoidID"), NumberStyles.None, CultureInfo.InvariantCulture, out var id)
                 || !int.TryParse((string?)element.Attribute("Functoid-FID"), NumberStyles.None, CultureInfo.InvariantCulture, out var fid))
                 throw new ArgumentException("A functoid has a missing or invalid FunctoidID or Functoid-FID. No partial native map was produced.");
-            if (!result.TryAdd(id, new Functoid(id, fid, element)))
-                throw new ArgumentException($"FunctoidID {id} is declared more than once. No partial native map was produced.");
             if (element.Elements("Input-Parameters").Count() > 1 || element.Elements("ScripterCode").Count() > 1)
                 throw new ArgumentException($"Functoid {id} has repeated parameter or script sections. No partial native map was produced.");
-            if (element.Elements("ScripterCode").Elements("Script").Any(script => (string?)script.Attribute("Language") != "CSharp"))
-                throw new ArgumentException($"Functoid {id} contains inline XSLT; custom XSLT cannot be imported as a native map, even when unconnected. No partial native map was produced.");
+            if (element.Elements("ScripterCode").Elements("Script").FirstOrDefault(script => (string?)script.Attribute("Language") is not ("CSharp" or "Xslt" or "XsltCallTemplate")) is { } unsupported)
+                throw new ArgumentException($"Functoid {id} uses script language '{(string?)unsupported.Attribute("Language")}', which cannot be imported (only C# and XSLT scripts become stubs). No partial native map was produced.");
+            if (!result.TryAdd(id, new Functoid(id, fid, element, ChooseScript(element, precedence))))
+                throw new ArgumentException($"FunctoidID {id} is declared more than once. No partial native map was produced.");
         }
         return result;
     }
@@ -349,7 +395,9 @@ public static class BizTalkNativeMapConverter
         private readonly Dictionary<int, ScriptStub> scriptsByFunctoid = [];
         private readonly Dictionary<int, List<string>> targetsByFunctoid = [];
         private readonly HashSet<int> loopingIds = [];
-
+        private readonly HashSet<int> otherContributing = [];
+        private readonly Dictionary<string, List<string>> recordNotes = new(StringComparer.Ordinal);
+        private readonly List<string> recordStubTargets = [];
         public FunctoidResolver(Dictionary<int, Functoid> functoids, XElement[] links, XmlSchemaRoot sourceRoot)
         {
             this.functoids = functoids;
@@ -361,7 +409,8 @@ public static class BizTalkNativeMapConverter
                     throw new ArgumentException($"LinkID '{(string)link.Attribute("LinkID")!}' is declared more than once. No partial native map was produced.");
         }
 
-        public IReadOnlyCollection<int> Contributing => cache.Keys.Union(loopingIds).ToArray();
+        public IReadOnlyCollection<int> Contributing => cache.Keys.Union(loopingIds).Union(otherContributing).ToArray();
+        public IReadOnlyCollection<string> RecordStubTargets => recordStubTargets;
         public IReadOnlyCollection<string> PendingFunctions => stubsByKey.Values.Select(stub => stub.Name).ToArray();
         public HashSet<int> Used { get; } = [];
         public HashSet<int> ValueMappings { get; } = [];
@@ -518,71 +567,178 @@ public static class BizTalkNativeMapConverter
             }
         }
 
-        private string RegisterScript(Functoid functoid, IReadOnlyList<string> inputNotes)
-        {
-            var code = functoid.Element.Elements("ScripterCode").Elements("Script").Select(script => script.Value).FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(code))
-                throw new ArgumentException($"Functoid {functoid.Id} is a scripting functoid without any code. No partial native map was produced.");
-            var signature = BizTalkScriptStub.Parse(BizTalkScriptStub.Strip(code));
-            var baseName = signature?.Name;
-            if (baseName is null || !XmlMappingFunctionCatalog.IsIdentifier(baseName) || baseName.Length > 56 || Enum.TryParse<XmlMappingFunction>(baseName, out _))
-                baseName = $"Script_{functoid.Id.ToString(CultureInfo.InvariantCulture)}";
-            var key = $"{baseName}\0{inputNotes.Count}\0{code}";
-            if (!stubsByKey.TryGetValue(key, out var stub))
-            {
-                var name = baseName;
-                for (var suffix = 2; stubsByKey.Values.Any(existing => existing.Name == name); suffix++) name = $"{baseName}_{suffix}";
-                var names = signature?.Parameters is { } declared && declared.Count == inputNotes.Count && declared.Select(parameter => parameter.Name).Distinct(StringComparer.Ordinal).Count() == declared.Count
-                    ? declared.Select(parameter => parameter.Name).ToArray()
-                    : Enumerable.Range(1, inputNotes.Count).Select(index => $"param{index}").ToArray();
-                stub = new ScriptStub(name, code, signature, names);
-                stubsByKey[key] = stub;
-            }
-            stub.Uses.Add((functoid.Id, inputNotes.ToArray()));
-            scriptsByFunctoid[functoid.Id] = stub;
-            return stub.Name;
-        }
+		private static string Sanitize(string text) => new(text.Select(character => char.IsAsciiLetterOrDigit(character) ? character : '_').ToArray());
 
-        public IReadOnlyList<XmlCustomFunctionDefinition> CustomFunctions(string mapName)
-        {
-            if (stubsByKey.Count > XmlMappingFunctionCatalog.MaxCustomFunctions)
-                throw new ArgumentException($"The map has {stubsByKey.Count} distinct scripting functoids; at most {XmlMappingFunctionCatalog.MaxCustomFunctions} can be imported as stubs. No partial native map was produced.");
-            return stubsByKey.Values.Select(stub =>
-            {
-                var stripped = BizTalkScriptStub.Strip(stub.Code);
-                var text = new System.Text.StringBuilder();
-                text.AppendLine($"Imported BizTalk scripting functoid (FID {ScriptFid}) from map '{mapName}'. The original C# is kept below for reference and is never run: implement this function as a formula (Body) to use the map.");
-                if (stub.Signature is { } signature)
-                {
-                    text.AppendLine($"Original signature: {signature.Display}");
-                    text.AppendLine($"Returns: {signature.ReturnType}");
-                    if (signature.PublicMethods > 1) text.AppendLine($"Note: the script declares {signature.PublicMethods} public methods; the first was described.");
-                }
-                else text.AppendLine("The method signature could not be read from the script.");
-                var first = stub.Uses[0];
-                for (var index = 0; index < stub.ParameterNames.Count; index++)
-                    text.AppendLine($"Input {index + 1} ({stub.ParameterNames[index]}{(stub.Signature?.Parameters is { } declared && declared.Count == stub.ParameterNames.Count ? ": " + declared[index].Type : string.Empty)}) - first use: {first.Inputs[index]}");
-                var hints = BizTalkScriptStub.Hints(stripped);
-                if (hints.Count > 0) text.AppendLine("Detected behavior: " + string.Join("; ", hints) + ".");
-                var usages = stub.Uses.Take(XmlMappingFunctionCatalog.MaxUsages).Select(use =>
-                    BizTalkScriptStub.Clip($"Map '{mapName}', functoid {use.FunctoidId}: inputs ({string.Join("; ", use.Inputs)})"
-                        + (targetsByFunctoid.TryGetValue(use.FunctoidId, out var targets) && targets.Count > 0 ? " -> feeds " + string.Join(", ", targets) : string.Empty),
-                        XmlMappingFunctionCatalog.MaxUsageLength)).ToArray();
-                return new XmlCustomFunctionDefinition
-                {
-                    Name = stub.Name,
-                    Description = BizTalkScriptStub.Clip(text.ToString().TrimEnd(), XmlMappingFunctionCatalog.MaxDescriptionLength),
-                    Parameters = stub.ParameterNames.Select((name, index) => new XmlCustomFunctionParameter
-                    {
-                        Name = name,
-                        Description = BizTalkScriptStub.Clip(stub.Signature?.Parameters is { } declared && declared.Count == stub.ParameterNames.Count ? declared[index].Type : "unknown type", XmlMappingFunctionCatalog.MaxDescriptionLength)
-                    }).ToArray(),
-                    OriginalSource = BizTalkScriptStub.Clip(stub.Code.Trim(), XmlMappingFunctionCatalog.MaxOriginalSourceLength),
-                    OriginalSourceLanguage = "CSharp",
-                    Usages = usages
-                };
-            }).ToArray();
-        }
+		private void MarkContributing(int id)
+		{
+			var pending = new Stack<int>([id]);
+			while (pending.Count > 0)
+			{
+				var current = pending.Pop();
+				if (!otherContributing.Add(current)) continue;
+				var currentText = current.ToString(CultureInfo.InvariantCulture);
+				foreach (var link in links.Where(link => (string?)link.Attribute("LinkTo") == currentText))
+					if (FunctoidReference((string?)link.Attribute("LinkFrom"), functoids) is { } upstream) pending.Push(upstream);
+			}
+		}
+
+		// Describes a functoid's inputs for documentation only; unlike Resolve it accepts record inputs and does not build an expression.
+		private IReadOnlyList<string> DescribeInputs(int id)
+		{
+			var idText = id.ToString(CultureInfo.InvariantCulture);
+			var parameters = functoids[id].Element.Elements("Input-Parameters").Elements("Parameter")
+				.Select(parameter => (Parameter: parameter, Index: int.TryParse((string?)parameter.Attribute("linkIndex"), NumberStyles.None, CultureInfo.InvariantCulture, out var index) ? index : -1))
+				.OrderBy(entry => entry.Index).ToArray();
+			if (!parameters.Select(entry => entry.Index).SequenceEqual(Enumerable.Range(0, parameters.Length)))
+				throw new ArgumentException($"Functoid {id} (FID {functoids[id].Fid}) has missing or duplicate input positions. No partial native map was produced.");
+			var notes = new List<string>();
+			var linkInputs = 0;
+			foreach (var (parameter, _) in parameters)
+			{
+				var value = (string?)parameter.Attribute("Value") ?? throw new ArgumentException($"Functoid {id} has an input without a value. No partial native map was produced.");
+				switch ((string?)parameter.Attribute("Type"))
+				{
+					case "constant":
+						notes.Add($"constant \"{BizTalkScriptStub.Clip(value, 60)}\"");
+						break;
+					case "link":
+						linkInputs++;
+						if (!linksById.TryGetValue(value, out var link) || (string?)link.Attribute("LinkTo") != idText)
+							throw new ArgumentException($"Functoid {id} input refers to link '{value}', which is missing or not wired to this functoid. No partial native map was produced.");
+						var fromText = (string?)link.Attribute("LinkFrom");
+						if (FunctoidReference(fromText, functoids) is { } inner)
+						{
+							notes.Add($"result of functoid {inner} (FID {functoids[inner].Fid})");
+							MarkContributing(inner);
+						}
+						else
+						{
+							var field = Find(sourceRoot, fromText);
+							notes.Add($"{(field.Scalar ? "source" : "source record")} {field.Path}{(field.SelfRepeating ? " (repeating)" : string.Empty)}");
+						}
+						break;
+					default:
+						throw new ArgumentException($"Functoid {id} has an input of unsupported type '{(string?)parameter.Attribute("Type")}'. No partial native map was produced.");
+				}
+			}
+			if (links.Count(link => (string?)link.Attribute("LinkTo") == idText) != linkInputs)
+				throw new ArgumentException($"Functoid {id} has links that its input list does not account for. No partial native map was produced.");
+			return notes;
+		}
+
+		/// <summary>Documents a target record that hand-written XSLT builds. Nothing is converted for it; the stub only carries the description.</summary>
+		public void RegisterRecordStub(int producer, string recordPath)
+		{
+			RegisterScript(functoids[producer], DescribeInputs(producer), recordPath);
+			NoteTarget(producer, recordPath);
+			otherContributing.Add(producer);
+			if (!recordStubTargets.Contains(recordPath)) recordStubTargets.Add(recordPath);
+		}
+
+		public void NoteRecordInput(string recordPath, int functoid)
+		{
+			var inputs = string.Join("; ", DescribeInputs(functoid));
+			otherContributing.Add(functoid);
+			NoteRecordSource(recordPath, functoids[functoid].Fid == LoopingFid
+				? $"Looping functoid {functoid} creates one record for each node of its inputs: {inputs}"
+				: $"functoid {functoid} (FID {functoids[functoid].Fid}) is also linked to it (inputs: {inputs})");
+		}
+
+		public void NoteRecordSource(string recordPath, string note)
+		{
+			if (!recordNotes.TryGetValue(recordPath, out var notes)) recordNotes[recordPath] = notes = [];
+			if (!notes.Contains(note)) notes.Add(note);
+		}
+
+		private string RegisterScript(Functoid functoid, IReadOnlyList<string> inputNotes, string? recordPath = null)
+		{
+			var script = functoid.Script;
+			if (script is null || string.IsNullOrWhiteSpace(script.Code))
+				throw new ArgumentException($"Functoid {functoid.Id} is a scripting functoid without any code. No partial native map was produced.");
+			var code = script.Code;
+			var signature = script.IsXslt ? null : BizTalkScriptStub.Parse(BizTalkScriptStub.Strip(code));
+			var baseName = script.IsXslt
+				? script.Language == "XsltCallTemplate" && BizTalkXsltStub.Template(code) is { } template ? "Template_" + Sanitize(template) : null
+				: signature?.Name;
+			if (baseName is null || !XmlMappingFunctionCatalog.IsIdentifier(baseName) || baseName.Length > 56 || Enum.TryParse<XmlMappingFunction>(baseName, out _))
+				baseName = $"{(script.IsXslt ? "Xslt" : "Script")}_{functoid.Id.ToString(CultureInfo.InvariantCulture)}";
+			var key = $"{baseName}\0{inputNotes.Count}\0{recordPath is not null}\0{script.Language}\0{code}";
+			if (!stubsByKey.TryGetValue(key, out var stub))
+			{
+				var name = baseName;
+				for (var suffix = 2; stubsByKey.Values.Any(existing => existing.Name == name); suffix++) name = $"{baseName}_{suffix}";
+				var declared = script.IsXslt ? BizTalkXsltStub.Parameters(code).ToArray() : signature?.Parameters?.Select(parameter => parameter.Name).ToArray();
+				var names = declared is not null && declared.Length == inputNotes.Count && declared.All(XmlMappingFunctionCatalog.IsIdentifier) && declared.Distinct(StringComparer.Ordinal).Count() == declared.Length
+					? declared
+					: Enumerable.Range(1, inputNotes.Count).Select(index => $"param{index}").ToArray();
+				stub = new ScriptStub(name, script, signature, names, recordPath is not null);
+				stubsByKey[key] = stub;
+			}
+			stub.Uses.Add((functoid.Id, inputNotes.ToArray()));
+			scriptsByFunctoid[functoid.Id] = stub;
+			return stub.Name;
+		}
+
+		public IReadOnlyList<XmlCustomFunctionDefinition> CustomFunctions(string mapName)
+		{
+			if (stubsByKey.Count > XmlMappingFunctionCatalog.MaxCustomFunctions)
+				throw new ArgumentException($"The map has {stubsByKey.Count} distinct scripting functoids; at most {XmlMappingFunctionCatalog.MaxCustomFunctions} can be imported as stubs. No partial native map was produced.");
+			return stubsByKey.Values.Select(stub =>
+			{
+				var script = stub.Script;
+				var stripped = script.IsXslt ? script.Code : BizTalkScriptStub.Strip(script.Code);
+				var text = new System.Text.StringBuilder();
+				if (script.IsXslt)
+				{
+					text.AppendLine($"Imported BizTalk scripting functoid (FID {ScriptFid}, {script.Language}) from map '{mapName}'. The original XSLT is kept below for reference and is never run.");
+					text.AppendLine(stub.IsRecord
+						? "This functoid builds a whole target record, not one value, so it cannot be written as a formula and nothing was converted for it. Rebuild the record from native field mappings plus a record link in the mapping designer, then delete this stub. The map fails closed while the stub exists."
+						: "This functoid writes its output into one target field. Implement the function as a formula that returns the text value the XSLT computes (the field mapping writes the element itself), or replace the call.");
+					if (BizTalkXsltStub.Template(script.Code) is { } templateName) text.AppendLine($"Named template: {templateName}");
+				}
+				else
+				{
+					text.AppendLine($"Imported BizTalk scripting functoid (FID {ScriptFid}) from map '{mapName}'. The original C# is kept below for reference and is never run: implement this function as a formula (Body) to use the map.");
+					if (stub.Signature is { } signature)
+					{
+						text.AppendLine($"Original signature: {signature.Display}");
+						text.AppendLine($"Returns: {signature.ReturnType}");
+						if (signature.PublicMethods > 1) text.AppendLine($"Note: the script declares {signature.PublicMethods} public methods; the first was described.");
+					}
+					else text.AppendLine("The method signature could not be read from the script.");
+				}
+				var first = stub.Uses[0];
+				for (var index = 0; index < stub.ParameterNames.Count; index++)
+					text.AppendLine($"Input {index + 1} ({stub.ParameterNames[index]}{(stub.Signature?.Parameters is { } declared && declared.Count == stub.ParameterNames.Count ? ": " + declared[index].Type : string.Empty)}) - first use: {first.Inputs[index]}");
+				var hints = script.IsXslt ? BizTalkXsltStub.Describe(script.Language, stripped) : BizTalkScriptStub.Hints(stripped);
+				if (hints.Count > 0) text.AppendLine("Detected behavior: " + string.Join("; ", hints) + ".");
+				foreach (var path in stub.Uses.SelectMany(use => targetsByFunctoid.TryGetValue(use.FunctoidId, out var fed) ? (IEnumerable<string>)fed : Array.Empty<string>()).Distinct(StringComparer.Ordinal))
+					if (recordNotes.TryGetValue(path, out var notes))
+						foreach (var note in notes) text.AppendLine($"Target record {path}: {note}.");
+				if (script.Alternates.Count > 0)
+					text.AppendLine($"Note: this functoid also holds {string.Join(", ", script.Alternates.Select(alternate => alternate.Language))} script text. BizTalk keeps one script per language and the map file does not name the active one; the {script.Language} script was chosen from the map's script precedence (one compiled example agrees). The others are appended to the original source below.");
+				var usages = stub.Uses.Take(XmlMappingFunctionCatalog.MaxUsages).Select(use =>
+					BizTalkScriptStub.Clip($"Map '{mapName}', functoid {use.FunctoidId}: inputs ({string.Join("; ", use.Inputs)})"
+						+ (targetsByFunctoid.TryGetValue(use.FunctoidId, out var targets) && targets.Count > 0 ? " -> feeds " + string.Join(", ", targets) : string.Empty),
+						XmlMappingFunctionCatalog.MaxUsageLength)).ToArray();
+				var original = script.Code.Trim();
+				foreach (var alternate in script.Alternates)
+					original += $"\n\n----- alternate {alternate.Language} script (not chosen) -----\n{alternate.Code.Trim()}";
+				return new XmlCustomFunctionDefinition
+				{
+					Name = stub.Name,
+					Description = BizTalkScriptStub.Clip(text.ToString().TrimEnd(), XmlMappingFunctionCatalog.MaxDescriptionLength),
+					Parameters = stub.ParameterNames.Select((name, index) => new XmlCustomFunctionParameter
+					{
+						Name = name,
+						Description = BizTalkScriptStub.Clip(stub.Signature?.Parameters is { } declared && declared.Count == stub.ParameterNames.Count ? declared[index].Type : "unknown type", XmlMappingFunctionCatalog.MaxDescriptionLength)
+					}).ToArray(),
+					OriginalSource = BizTalkScriptStub.Clip(original, XmlMappingFunctionCatalog.MaxOriginalSourceLength),
+					OriginalSourceLanguage = script.Language,
+					Usages = usages
+				};
+			}).ToArray();
+		}
     }
 
     private const int ScriptFid = 260;
@@ -591,10 +747,11 @@ public static class BizTalkNativeMapConverter
     private const int ValueMappingFlatteningFid = 374;
     private const int ValueMappingFid = 375;
 
-    private sealed class ScriptStub(string name, string code, BizTalkScriptSignature? signature, IReadOnlyList<string> parameterNames)
+    private sealed class ScriptStub(string name, ScriptChoice script, BizTalkScriptSignature? signature, IReadOnlyList<string> parameterNames, bool isRecord)
     {
         public string Name { get; } = name;
-        public string Code { get; } = code;
+        public ScriptChoice Script { get; } = script;
+        public bool IsRecord { get; } = isRecord;
         public BizTalkScriptSignature? Signature { get; } = signature;
         public IReadOnlyList<string> ParameterNames { get; } = parameterNames;
         public List<(int FunctoidId, string[] Inputs)> Uses { get; } = [];

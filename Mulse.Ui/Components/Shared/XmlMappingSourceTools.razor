@@ -29,7 +29,7 @@
     <textarea class="sample-textarea" aria-label="BizTalk map XML" value="@_mapXml" @onchange="e => { _mapXml = e.Value?.ToString() ?? string.Empty; Invalidate(); }"></textarea>
     <InputFile OnChange="ReadMapAsync" accept=".btm" disabled="@_busy" />
     <button class="secondary-button" disabled="@_busy" @onclick="ConvertAsync">Create native map proposal</button>
-    <HelpTooltip Label="Native map proposals">Requires source/target XSDs. Supported links, repeats and built-in functoids are converted. Scripting functoids become custom function stubs: the original code is kept for reference and each stub must be given a formula (by hand, or by pasting an AI assistant's reply) before the map can run. Inline XSLT, unknown functoids and unsupported targets fail explicitly; no partial map replaces your work.</HelpTooltip>
+    XSLT scripting functoids also become stubs; one that builds a whole record is only documented, and that record must be mapped natively before the stub is deleted. Unknown functoids and unsupported targets fail explicitly; no partial map replaces your work.
     @if (_proposal is { } proposal)
     {
         @foreach (var warning in proposal.Warnings)

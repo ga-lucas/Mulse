@@ -43,6 +43,9 @@ public sealed partial class XmlMappingEngine
             var expanded = 0;
             Expand(function.Body, placeholders, custom, [function.Name], ref expanded, 1, allowStubs: true, function.Name);
         }
+        // A stub may stand for something no call site shows (for example a target record built by imported XSLT), so any stub blocks a real run.
+        if (!allowStubs && custom.Values.FirstOrDefault(function => function.Body is null) is { } pending)
+            throw new ArgumentException($"Custom function '{pending.Name}' is an unimplemented stub. Implement it, or delete it once the calls or target record it stands for are mapped natively, before this map can run.");
         return custom;
     }
 

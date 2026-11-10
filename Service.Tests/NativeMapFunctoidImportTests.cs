@@ -375,12 +375,89 @@ public sealed class NativeMapFunctoidImportTests
         Assert.True(function.OriginalSource!.Length <= XmlMappingFunctionCatalog.MaxOriginalSourceLength);
     }
 
+    private static string Scripts(int id, string[] inputs, params (string Language, string Code)[] scripts)
+        => $"<Functoid FunctoidID=\"{id}\" Functoid-FID=\"260\" X-Cell=\"1\" Y-Cell=\"1\"><Input-Parameters>{string.Concat(inputs)}</Input-Parameters><ScripterCode>"
+            + string.Concat(scripts.Select(script => $"<Script Language=\"{script.Language}\"><![CDATA[{script.Code}]]></Script>")) + "</ScripterCode></Functoid>";
+
+    private const string SettingFragment = "<Number><xsl:value-of select=\"/*/ConfigurationInfo/AdditionalInfo/Setting[@Name='Facility']/@Value\"/></Number>";
+    private const string SampleScript = "<!--Uncomment the following lines for a sample Xslt that creates a record and a child field attribute.-->\r\n<AdditionalInfo><Setting Name=\"A\" Value=\"1\" /></AdditionalInfo>";
+    private const string RowTemplate = "<xsl:template name=\"BuildRow\"><xsl:param name=\"startDate\"/><xsl:for-each select=\"//Line\"><Row><Label><xsl:value-of select=\"position()\"/></Label></Row></xsl:for-each></xsl:template>";
+
     [Fact]
-    public void ConnectedInlineXsltScript_IsStillRejected()
+    public void ConnectedInlineXsltScript_BecomesADocumentedStubThatFailsClosed()
     {
-        var xslt = "<Functoid FunctoidID=\"10\" Functoid-FID=\"260\" X-Cell=\"1\" Y-Cell=\"1\"><Input-Parameters>" + Link("1", 0)
-            + "</Input-Parameters><ScripterCode><Script Language=\"Xslt\"><![CDATA[<x/>]]></Script></ScripterCode></Functoid>";
-        Assert.Contains("inline XSLT", Message(Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number"), xslt)), StringComparison.Ordinal);
+        var conversion = Convert(Build(Out(2, 10, "Result/Number"), Scripts(10, [], ("Xslt", SettingFragment))));
+        var function = Assert.Single(Definition(conversion).CustomFunctions);
+        Assert.Equal("Xslt_10", function.Name);
+        Assert.Equal("Xslt", function.OriginalSourceLanguage);
+        Assert.Null(function.Body);
+        Assert.Contains("never run", function.Description, StringComparison.Ordinal);
+        Assert.Contains("Facility", function.Description, StringComparison.Ordinal);
+        Assert.Contains("Number", function.Description, StringComparison.Ordinal);
+        Assert.Contains("Setting[@Name='Facility']", function.OriginalSource, StringComparison.Ordinal);
+        Assert.Equal(["Xslt_10"], conversion.PendingFunctions);
+        Assert.Contains("unimplemented stub", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(conversion.MappingJson)).Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void XsltCallTemplate_UsesTheTemplateAndParameterNamesAndDocumentsInputs()
+    {
+        var conversion = Convert(Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number"),
+            Scripts(10, [Link("1", 0)], ("XsltCallTemplate", RowTemplate))));
+        var function = Assert.Single(Definition(conversion).CustomFunctions);
+        Assert.Equal("Template_BuildRow", function.Name);
+        Assert.Equal("XsltCallTemplate", function.OriginalSourceLanguage);
+        Assert.Equal("startDate", Assert.Single(function.Parameters).Name);
+        Assert.Contains("Named template: BuildRow", function.Description, StringComparison.Ordinal);
+        Assert.Matches(@"first use: source \S*Id", function.Description);
+        Assert.Contains("position of the current record", function.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void XsltBuildingARecord_IsAStubWithTheLoopingInputsDocumented_AndTheMapFailsClosed()
+    {
+        var conversion = ConvertRepeating(LoopMap(
+            Wire(2, "Order/Id", 10) + Out(3, 10, "Result/Row") + Wire(4, "Order/Line", 11) + Out(5, 11, "Result/Row"),
+            Scripts(10, [Link("2", 0)], ("XsltCallTemplate", RowTemplate)) + F(11, 424, Link("4", 0))));
+        var definition = Definition(conversion);
+        var function = Assert.Single(definition.CustomFunctions);
+        Assert.Equal("Template_BuildRow", function.Name);
+        Assert.Contains("builds a whole target record", function.Description, StringComparison.Ordinal);
+        Assert.Contains("Looping functoid 11", function.Description, StringComparison.Ordinal);
+        Assert.Matches(@"Looping functoid 11 creates one record for each node of its inputs: source record \S*Line", function.Description);
+        Assert.Contains("feeds", Assert.Single(function.Usages), StringComparison.Ordinal);
+        Assert.DoesNotContain(definition.Fields, field => field.TargetPath?.StartsWith("Row", StringComparison.Ordinal) == true);
+        Assert.Empty(definition.Repeats);
+        Assert.Contains(conversion.Warnings, warning => warning.Contains("were NOT converted", StringComparison.Ordinal));
+        Assert.DoesNotContain(conversion.Warnings, warning => warning.Contains("not connected", StringComparison.Ordinal));
+        Assert.Contains("unimplemented stub", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(conversion.MappingJson)).Message, StringComparison.Ordinal);
+        var preview = XDocument.Parse(new XmlMappingEngine(conversion.MappingJson, allowStubs: true).Transform(TwoLines)).Root!;
+        Assert.Equal("7", preview.Element("Number")!.Value);
+        Assert.Empty(preview.Elements("Row"));
+    }
+
+    [Fact]
+    public void UnconnectedXslt_IsIgnoredWithAWarning_ButUnsupportedScriptLanguagesAreRejected()
+    {
+        var conversion = Convert(Build(Direct(1, "Order/Id", "Result/Number"), Scripts(31, [], ("Xslt", SettingFragment))));
+        Assert.Contains(conversion.Warnings, warning => warning.Contains("not connected", StringComparison.Ordinal));
+        Assert.Empty(Definition(conversion).CustomFunctions);
+        Assert.Contains("VbNet", Message(Build(Direct(1, "Order/Id", "Result/Number"), Scripts(31, [], ("VbNet", "Public Function X() As String")))), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SeveralScriptLanguages_DropTheDefaultTemplateAndPickByPrecedence()
+    {
+        var onlyOneReal = Convert(Build(Out(2, 10, "Result/Number"), Scripts(10, [], ("Xslt", SampleScript), ("CSharp", "public string Fixed() { return \"DFT\"; }"))));
+        var single = Assert.Single(Definition(onlyOneReal).CustomFunctions);
+        Assert.Equal("Fixed", single.Name);
+        Assert.Equal("CSharp", single.OriginalSourceLanguage);
+        Assert.DoesNotContain("Uncomment", single.OriginalSource, StringComparison.Ordinal);
+        var both = Convert(Build(Out(2, 10, "Result/Number"), Scripts(10, [], ("Xslt", SettingFragment), ("CSharp", "public string Fixed() { return \"DFT\"; }"))));
+        var chosen = Assert.Single(Definition(both).CustomFunctions);
+        Assert.Equal("CSharp", chosen.OriginalSourceLanguage);
+        Assert.Contains("alternate Xslt script (not chosen)", chosen.OriginalSource, StringComparison.Ordinal);
+        Assert.Contains("does not name the active one", chosen.Description, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -393,12 +470,10 @@ public sealed class NativeMapFunctoidImportTests
     }
 
     [Fact]
-    public void UnconnectedUnsupportedFunctoid_DoesNotAffectOutput_ButInlineXsltAlwaysRejects()
+    public void UnconnectedUnsupportedFunctoid_DoesNotAffectOutput()
     {
         var conversion = Convert(Build(Direct(1, "Order/Id", "Result/Number"), F(30, 374, Const("a", 0))));
         Assert.Contains(conversion.Warnings, warning => warning.Contains("not connected", StringComparison.Ordinal));
-        var xslt = "<Functoid FunctoidID=\"31\" Functoid-FID=\"260\" X-Cell=\"1\" Y-Cell=\"1\"><Input-Parameters /><ScripterCode><Script Language=\"Xslt\"><![CDATA[<x/>]]></Script></ScripterCode></Functoid>";
-        Assert.Contains("inline XSLT", Message(Build(Direct(1, "Order/Id", "Result/Number"), xslt)), StringComparison.Ordinal);
     }
 
     [Fact]

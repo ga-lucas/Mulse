@@ -98,6 +98,19 @@ public sealed class XmlCustomFunctionUiTests
         Assert.Contains("DateReformat", prompt, StringComparison.Ordinal);
         Assert.Contains("Trim2(v)", prompt, StringComparison.Ordinal);
         Assert.Contains(XmlCustomFunctions.CannotExpress, prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("record structure must be mapped natively", prompt, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Xslt")]
+    [InlineData("XsltCallTemplate")]
+    public void BuildPrompt_ForXsltStubs_AsksForOnlyTheTextValueAndAllowsDecliningRecords(string language)
+    {
+        var function = Stub("Template_Row", "raw");
+        function.OriginalSourceLanguage = language;
+        var prompt = XmlCustomFunctions.BuildPrompt(function, [function]);
+        Assert.Contains("The original is XSLT", prompt, StringComparison.Ordinal);
+        Assert.Contains(XmlCustomFunctions.CannotExpress + ": record structure must be mapped natively", prompt, StringComparison.Ordinal);
     }
 
     [Theory]

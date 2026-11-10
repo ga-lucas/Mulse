@@ -99,11 +99,13 @@ public static class XmlCustomFunctions
             foreach (var other in callable) text.AppendLine($"  {other.Name}({string.Join(", ", other.Parameters.Select(parameter => parameter.Name))})");
         }
         text.AppendLine("- Example: Conditional(StringContains($a, '-'), StringUpperCase($a), StringConcat($a, '!'))");
+        if (function.OriginalSourceLanguage is not null && function.OriginalSourceLanguage.StartsWith("Xslt", StringComparison.OrdinalIgnoreCase))
+            text.AppendLine($"- The original is XSLT. Reproduce only the single text value it gives the target field. If it builds a whole record or repeating structure, reply exactly: {CannotExpress}: record structure must be mapped natively");
         text.AppendLine($"- If the behavior cannot be expressed with these functions, reply exactly: {CannotExpress}: <short reason>");
         return text.ToString().TrimEnd();
     }
 
-    /// <summary>Takes an AI reply (possibly fenced or prefixed) and returns the formula text. Null with an error when the assistant said it cannot express the function.</summary>
+    /// <summary>Takes an AI reply
     public static string? ExtractFormula(string? reply, out string? error)
     {
         error = null;

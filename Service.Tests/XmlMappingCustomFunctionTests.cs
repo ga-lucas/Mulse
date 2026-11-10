@@ -223,8 +223,12 @@ public sealed class XmlMappingCustomFunctionTests
     }
 
     [Fact]
-    public void UnusedStub_DoesNotBlockTheMap()
-        => Assert.Equal("x", Run(Map(Const("x"), Function("Pending", ["a"], null))));
+    public void UnusedStub_StillFailsClosedUnlessStubsAreAllowed()
+    {
+        var json = XmlMappingTests.Json(Map(Const("x"), Function("Pending", ["a"], null)));
+        Assert.Contains("unimplemented stub", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(json)).Message, StringComparison.Ordinal);
+        Assert.NotNull(new XmlMappingEngine(json, allowStubs: true).Xslt);
+    }
 
     [Fact]
     public void Cycles_AreRejected()

@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,946 service tests passed and the solution built.
+Latest verification: 1,952 service tests passed and the solution built.
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -43,6 +43,15 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Not done - multi-input Looping:** needs several source repeats per target record with per-branch field assignments; how constants and outside values are distributed across the branches is not proven by the evidence supplied, so it stays blocked.
 - **Measured (all 292 maps): multi-input Looping is not the real blocker.** 16 maps use it. 9 of them (every Billing DFT P03 map: CVPH, DHitchcock, Houston, IASIS x2, Steward, UTMC, TestOneTwo x2) also embed hand-written XSLT (`Script Language="Xslt"/"XsltCallTemplate"`); the compiled `.btm.cs` of the IASIS and Steward maps shows the FT1 record content comes from such a call-template, not from links. 6 more are blocked by 802 or 322. Only 1 map (`T12InputFlatToCommonItemImport`) would convert once multi-input Looping existed. The next high-value gap for Billing is therefore custom-XSLT scripting functoids (document/stub them like the C# script stubs), then 802/322. Only 21 `.btm.cs` files exist in the repo, and none of the others involves 424/474, so no further compiled XSLT is needed.
 - **Verification:** 1,946 service tests passed and the solution built.
+
+### Increment: XSLT scripting functoids as documented stubs
+
+- **Measured (292 `.btm` maps):** 118 maps carry non-C# scripts (105 `XsltCallTemplate`, 211 other `Xslt`). 155 connected `Xslt` scripts are only BizTalk's unedited default sample text. A functoid stores one `<Script>` per language; the map lists `ScriptTypePrecedence` (CSharp, ExternalAssembly, VbNet, JScript, XsltCallTemplate, Xslt).
+- **Active script is inferred, not proven:** empty/unedited-sample scripts are dropped when a real one exists, then the map's precedence order picks the primary; the others are kept as alternates in the stub's `OriginalSource`. Only one compiled map (DFT P03 functoid 31) confirms that `XsltCallTemplate` wins over `Xslt`. The stub text says this.
+- **Scalar-target XSLT** becomes a custom-function stub (`OriginalSourceLanguage` `Xslt`/`XsltCallTemplate`, named `Template_<name>` or `Xslt_<id>`) called from the field. The description lists the elements written, `Setting` reads, named-element branches and structure hints (for-each, position(), choose, call-template, count, document) plus the original text. The AI/copy-paste prompt asks only for the text value and allows `CANNOT_EXPRESS: record structure must be mapped natively`. XSLT is never run.
+- **Record-target XSLT** (for example the P03 FT1 records) becomes a record stub: an unreferenced custom function documenting the whole record (including Looping inputs). That record and everything below it is deliberately not converted, with a warning; the user rebuilds it natively (fields plus a record link) and deletes the stub.
+- **Fail closed:** the engine now rejects any declared stub, used or not, unless stubs are explicitly allowed (previews only). Unsupported script languages (VB.NET, JScript, external assembly) are still rejected.
+- **Verification:** 1,952 service tests passed and the solution built.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
 
