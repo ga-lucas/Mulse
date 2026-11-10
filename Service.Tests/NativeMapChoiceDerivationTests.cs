@@ -147,6 +147,47 @@ public sealed class NativeMapChoiceDerivationTests : IDisposable
     }
 
     [Fact]
+    public void MapSchemaReferences_CanBeRelativeFilePathsToDeclaredSchemas()
+    {
+        var project = WriteProject();
+        var map = File.ReadAllText(Path.Combine(_directory, "Maps", "OrderToResult.btm"))
+            .Replace("Acme.Partner.Schemas.Order", @"..\Schemas\Order.xsd", StringComparison.Ordinal)
+            .Replace("Acme.Partner.Schemas.Result", @".\..\Schemas\Result.xsd", StringComparison.Ordinal);
+        File.WriteAllText(Path.Combine(_directory, "Maps", "OrderToResult.btm"), map);
+
+        var item = Derive(project, Literals(Good)).Report.Single();
+        Assert.True(item.Status == "Converted", item.Status + ": " + item.Detail);
+
+        File.WriteAllText(Path.Combine(_directory, "Maps", "OrderToResult.btm"), map.Replace(@"..\Schemas\Order.xsd", @"..\Schemas\Undeclared.xsd", StringComparison.Ordinal));
+        Assert.Equal("SchemaUnresolved", Derive(project, Literals(Good)).Report.Single().Status);
+        var catalog = BizTalkSchemaSourceCatalog.Read([project]);
+        Assert.Null(catalog.ResolveFileReference(Path.Combine(_directory, "Maps"), Path.Combine(_directory, "Schemas", "Order.xsd")));
+        Assert.Null(catalog.ResolveFileReference(Path.Combine(_directory, "Maps"), "https://example.test/Order.xsd"));
+        Assert.NotNull(catalog.ResolveFileReference(Path.Combine(_directory, "Maps"), "../Schemas/Order.xsd"));
+    }
+
+    [Fact]
+    public void SchemaImports_CanNameADeclaredSchemaClass_AndUndeclaredOnesAreReported()
+    {
+        var project = WriteProject();
+        File.WriteAllText(Path.Combine(_directory, "Schemas", "Part.xsd"), """
+            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:part" elementFormDefault="qualified">
+              <xs:element name="Part" type="xs:string" />
+            </xs:schema>
+            """);
+        File.WriteAllText(project, File.ReadAllText(project).Replace("</ItemGroup>",
+            "<Schema Include=\"Schemas\\Part.xsd\"><Namespace>Acme.Partner.Schemas</Namespace><TypeName>Part</TypeName></Schema></ItemGroup>", StringComparison.Ordinal));
+        var order = Path.Combine(_directory, "Schemas", "Order.xsd");
+        var original = File.ReadAllText(order);
+        File.WriteAllText(order, original.Replace("elementFormDefault=\"qualified\">", "elementFormDefault=\"qualified\"><xs:import namespace=\"urn:part\" schemaLocation=\"Acme.Partner.Schemas.Part\" />", StringComparison.Ordinal));
+        var catalog = BizTalkSchemaSourceCatalog.Read([project]);
+        Assert.Equal(2, catalog.ReadSchemaDocuments(order).Count);
+
+        File.WriteAllText(order, original.Replace("elementFormDefault=\"qualified\">", "elementFormDefault=\"qualified\"><xs:import namespace=\"urn:part\" schemaLocation=\"Product.Schemas.Absent\" />", StringComparison.Ordinal));
+        Assert.Contains("not declared by any analyzed project", Assert.Throws<NotSupportedException>(() => catalog.ReadSchemaDocuments(order)).Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ManyValues_StopAtTheRenderDispatchCaseCapAndReportTheRest()
     {
         var project = WriteProject();

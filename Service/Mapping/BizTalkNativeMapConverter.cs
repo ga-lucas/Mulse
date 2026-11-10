@@ -90,8 +90,8 @@ public static class BizTalkNativeMapConverter
         CheckSetting("OmitXmlDeclaration", "Yes");
         CheckSetting("UseXSLTransform", "Undefined", "No");
         CheckSetting("PreserveSequenceOrder", "No");
-        var source = XmlSchemaInspector.Analyze(sourceDocuments, cancellationToken);
-        var target = XmlSchemaInspector.Analyze(targetDocuments, cancellationToken);
+        var source = XmlSchemaInspector.Analyze(sourceDocuments, RootName("SrcTree"), cancellationToken);
+        var target = XmlSchemaInspector.Analyze(targetDocuments, RootName("TrgTree"), cancellationToken);
         var sourceRoot = SelectRoot(source, "SrcTree");
         var targetRoot = SelectRoot(target, "TrgTree");
         var unsupportedTarget = targetRoot.Fields.FirstOrDefault(field => field.UnsupportedReason is not null || field.HasDefaultOrFixed);
@@ -333,6 +333,7 @@ public static class BizTalkNativeMapConverter
             if (root.Attribute(name) is { } attribute && !expected.Contains(attribute.Value, StringComparer.OrdinalIgnoreCase))
                 throw new ArgumentException($"Map setting '{name}={attribute.Value}' is not supported by native map import.");
         }
+        string? RootName(string name) => root.Elements(name).SingleOrDefault()?.Attribute("RootNode_Name")?.Value is { Length: > 0 } text ? text : null;
         XmlSchemaRoot SelectRoot(XmlSchemaTree tree, string name)
         {
             var trees = root.Elements(name).ToArray();

@@ -88,6 +88,17 @@ internal sealed class BizTalkSchemaSourceCatalog
             matches.Take(MaximumCandidates).ToArray(), _warningCount, limitation);
     }
 
+    private static string FullPath(string baseDirectory, string reference)
+        => Path.GetFullPath(Path.Combine(baseDirectory, reference.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar)));
+
+    /// <summary>Resolves a relative file reference (for example a map's <c>.\Schema.xsd</c>) to a schema file that a project declares; anything else returns null.</summary>
+    public string? ResolveFileReference(string baseDirectory, string reference)
+    {
+        if (!Literal(reference) || Path.IsPathRooted(reference) || Uri.TryCreate(reference, UriKind.Absolute, out _)) return null;
+        var full = FullPath(baseDirectory, reference);
+        return _byClass.Values.SelectMany(matches => matches).Any(candidate => string.Equals(candidate.SourcePath, full, StringComparison.OrdinalIgnoreCase) && candidate.SourceExists) ? full : null;
+    }
+
     public IReadOnlyList<string> ReadSchemaDocuments(string sourcePath)
     {
         XNamespace xs = "http://www.w3.org/2001/XMLSchema";
@@ -96,7 +107,8 @@ internal sealed class BizTalkSchemaSourceCatalog
         void Read(string path)
         {
             if (documents.ContainsKey(path)) return;
-            if (!declared.Contains(path) || documents.Count >= 16) throw new NotSupportedException("Schema imports require exact declared source files and at most 16 documents.");
+            if (!declared.Contains(path)) throw new NotSupportedException($"Imported schema '{Path.GetFileName(path)}' is not declared by any analyzed project (a BizTalk product schema assembly, for example); add the owning project to the source paths.");
+            if (documents.Count >= 16) throw new NotSupportedException("Schema imports exceed the 16-document limit.");
             var document = XmlMappingSchemas.ReadXmlFile(path);
             if (document.Root?.Name != xs + "schema") throw new NotSupportedException("Declared schema source is not XSD.");
             documents.Add(path, document.ToString(SaveOptions.DisableFormatting));
@@ -104,8 +116,15 @@ internal sealed class BizTalkSchemaSourceCatalog
             {
                 var location = (string?)import.Attribute("schemaLocation");
                 if (import.Name != xs + "import" || !Literal(location) || Uri.TryCreate(location, UriKind.Absolute, out _)
-                    || Path.IsPathRooted(location!)) throw new NotSupportedException("Only explicit relative XSD imports of declared project files are supported; no resolver or external URL is used.");
-                var target = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, location!.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar)));
+                    || Path.IsPathRooted(location!)) throw new NotSupportedException("Only xs:import of a declared project schema (relative file or BizTalk class name) is supported; no resolver or external URL is used.");
+                var target = FullPath(Path.GetDirectoryName(path)!, location!);
+                if (!declared.Contains(target) && _byClass.TryGetValue(location!, out var byClass))
+                {
+                    // BizTalk imports often name the schema class (Namespace.TypeName) instead of a file.
+                    var sources = byClass.Select(candidate => candidate.SourcePath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                    if (sources.Length != 1) throw new NotSupportedException($"Schema import '{location}' matches {sources.Length} declared schema files; it must match exactly one.");
+                    target = sources[0];
+                }
                 Read(target);
             }
         }

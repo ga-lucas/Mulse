@@ -63,8 +63,8 @@ internal static class BizTalkNativeMapChoiceDeriver
             try
             {
                 var document = XmlMappingSchemas.ReadXmlFile(map.MapPath);
-                var source = SchemaDocuments(document, "SrcTree", schemas, out var sourceProblem);
-                var target = SchemaDocuments(document, "TrgTree", schemas, out var targetProblem);
+                var source = SchemaDocuments(document, "SrcTree", schemas, map.MapPath, out var sourceProblem);
+                var target = SchemaDocuments(document, "TrgTree", schemas, map.MapPath, out var targetProblem);
                 if (source is null || target is null)
                 {
                     report.Add(Result("SchemaUnresolved", map.MapPath, sourceProblem ?? targetProblem!));
@@ -98,7 +98,7 @@ internal static class BizTalkNativeMapChoiceDeriver
 
     // A multi-input map's inline aggregate wrapper names each input part's schema through xs:import schemaLocation (a BizTalk class name).
     // The converter adds the wrapper itself; the part schemas (and their imports) are resolved here through the source catalog.
-    private static IReadOnlyList<string>? AggregateDocuments(XElement[] inline, BizTalkSchemaSourceCatalog schemas, out string? problem)
+    private static IReadOnlyList<string>? AggregateDocuments(XElement[] inline, BizTalkSchemaSourceCatalog schemas, string mapPath, out string? problem)
     {
         problem = null;
         var locations = inline.Length == 1
@@ -111,45 +111,46 @@ internal static class BizTalkNativeMapChoiceDeriver
         var documents = new List<string>();
         foreach (var location in locations.Distinct(StringComparer.Ordinal))
         {
-            var evidence = schemas.Resolve(location!);
-            if (evidence.Status != "SourceCandidate" || evidence.Candidates.Count != 1)
-            {
-                problem = $"Input part schema '{location}' is {evidence.Status} ({evidence.Candidates.Count} source candidates); add the owning project to the source paths.";
-                return null;
-            }
-            try { documents.AddRange(schemas.ReadSchemaDocuments(evidence.Candidates[0].SourcePath)); }
-            catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException or XmlException)
-            {
-                problem = $"Input part schema '{location}' could not be read: {Truncate(exception.Message)}";
-                return null;
-            }
+            var part = ReadReference(location!, schemas, mapPath, "Input part schema", out problem);
+            if (part is null) return null;
+            documents.AddRange(part);
         }
         return documents.Distinct(StringComparer.Ordinal).ToArray();
     }
 
-    private static IReadOnlyList<string>? SchemaDocuments(XDocument map, string tree, BizTalkSchemaSourceCatalog schemas, out string? problem)
+    // A map names a schema either by BizTalk class name or by a file path relative to the map; both must lead to a schema file a project declares.
+    private static IReadOnlyList<string>? ReadReference(string location, BizTalkSchemaSourceCatalog schemas, string mapPath, string what, out string? problem)
+    {
+        problem = null;
+        var evidence = schemas.Resolve(location);
+        string? sourcePath = null;
+        if (evidence.Status == "SourceCandidate" && evidence.Candidates.Count == 1) sourcePath = evidence.Candidates[0].SourcePath;
+        else if (evidence.Status == "Unresolved") sourcePath = schemas.ResolveFileReference(Path.GetDirectoryName(mapPath)!, location);
+        if (sourcePath is null)
+        {
+            problem = $"{what} '{location}' is {evidence.Status} ({evidence.Candidates.Count} source candidates); add the owning project to the source paths.";
+            return null;
+        }
+        try { return schemas.ReadSchemaDocuments(sourcePath); }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException or XmlException)
+        {
+            problem = $"{what} '{location}' could not be read: {Truncate(exception.Message)}";
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<string>? SchemaDocuments(XDocument map, string tree, BizTalkSchemaSourceCatalog schemas, string mapPath, out string? problem)
     {
         problem = null;
         if (tree == "SrcTree" && map.Root?.Elements(tree).SingleOrDefault()?.Elements(Xsd + "schema").ToArray() is { Length: > 0 } inline)
-            return AggregateDocuments(inline, schemas, out problem);
+            return AggregateDocuments(inline, schemas, mapPath, out problem);
         var location = map.Root?.Elements(tree).SingleOrDefault()?.Elements("Reference").SingleOrDefault()?.Attribute("Location")?.Value;
         if (string.IsNullOrWhiteSpace(location))
         {
             problem = $"The map has no single {tree} schema reference.";
             return null;
         }
-        var evidence = schemas.Resolve(location);
-        if (evidence.Status != "SourceCandidate" || evidence.Candidates.Count != 1)
-        {
-            problem = $"Schema '{location}' is {evidence.Status} ({evidence.Candidates.Count} source candidates); add the owning project to the source paths.";
-            return null;
-        }
-        try { return schemas.ReadSchemaDocuments(evidence.Candidates[0].SourcePath); }
-        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException or XmlException)
-        {
-            problem = $"Schema '{location}' could not be read: {Truncate(exception.Message)}";
-            return null;
-        }
+        return ReadReference(location, schemas, mapPath, "Schema", out problem);
     }
 
     private static List<MapClass> ReadMapClasses(IEnumerable<string> projectPaths)

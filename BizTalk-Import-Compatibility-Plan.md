@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,023 service tests
+Latest verification: 2,026 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -98,6 +98,23 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Limits:** not usable in a condition when the index is computed.
 - **Warning at import:** the behavior follows BizTalk's documentation; no compiled output was available to confirm it (especially out-of-range indexes).
 - **Verification:** 2,023 service tests passed and the solution built. Functoid 703 now stands in as the example of an unsupported FID.
+
+### Increment: real-project schema resolution (file-path references, class-name imports, per-root limit)
+
+Measured by converting every `.btm` of the 52-project SpaceTRAX solution (292 maps) with the real project catalog. No map text was committed.
+
+| Stage | Converted (incl. stubs) | Stopped at schema loading | Stopped at conversion |
+| --- | --- | --- | --- |
+| Before | 10 | 234 | 48 |
+| After | 23 | 45 | 224 |
+
+- **File-path map references:** a map may name its schema by a path relative to the map (`.\Foo.xsd`, `..\Schemas\Foo.xsd`) instead of a class name. It now resolves when a project declares exactly that file; undeclared paths, rooted paths and URLs are still refused.
+- **Class-name imports:** a schema's `xs:import schemaLocation` may name a schema class (`Namespace.Type`), as BizTalk's HL7 schemas do. It now resolves to the one declared file; zero or several matches are refused and named. The error now says which import is undeclared (for example a BizTalk product schema assembly) instead of a generic limit message.
+- **Per-root inspection limit:** the 2,048-node limit used to count every global element an imported schema set declares, which rejected every HL7 map. The converter now inspects only the root named in the map (`XmlSchemaInspector.Analyze(documents, rootLocalName)`); the limit itself is unchanged.
+- **Still unresolved (45):** schemas the map names that no analyzed project declares (stale references, or projects not in the source paths), plus 14 roots that are genuinely larger than 2,048 nodes.
+- **What now blocks the other maps (top causes, of 224):** a source field below a repeating record with no record link around its target (59, BizTalk's implicit loop); an optional target record without a link (28); repeating model groups in the target schema (22, flat-file schemas; both real Index maps stop here); map-level custom XSLT settings (21); default/fixed target values (17).
+- **Index rule check:** the 15 real Index uses are all in maps that stop at the target schema, so the one-index-per-repeating-level rule is **still unverified** against real data.
+- **Verification:** 3 new tests; 2,026 service tests passed and the solution built.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
 

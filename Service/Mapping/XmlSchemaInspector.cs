@@ -26,12 +26,17 @@ public static class XmlSchemaInspector
     public const int MaximumCharacters = Mulse.Modules.Mapping.XmlMappingSchemas.MaximumCharacters;
 
     public static XmlSchemaTree Analyze(IReadOnlyList<string> documents, CancellationToken cancellationToken = default)
+        => Analyze(documents, null, cancellationToken);
+
+    /// <summary>Analyzes only global elements with the given local name (all roots when null), so a large imported schema set is not counted in full.</summary>
+    public static XmlSchemaTree Analyze(IReadOnlyList<string> documents, string? rootLocalName, CancellationToken cancellationToken = default)
     {
         var schemas = Mulse.Modules.Mapping.XmlMappingSchemas.Compile(documents, cancellationToken);
         var namespaces = new Dictionary<string, string>(StringComparer.Ordinal);
         var roots = new List<XmlSchemaRoot>();
         var count = 0;
         foreach (var element in schemas.GlobalElements.Values.Cast<XmlSchemaElement>()
+                     .Where(element => rootLocalName is null || element.QualifiedName.Name == rootLocalName)
                      .OrderBy(static element => element.QualifiedName.ToString(), StringComparer.Ordinal))
         {
             var fields = new List<XmlSchemaField>();
