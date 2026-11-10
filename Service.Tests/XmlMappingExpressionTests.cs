@@ -175,6 +175,38 @@ public sealed class XmlMappingExpressionTests
         Assert.Contains("not below the repeat's target", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(map))).Message);
     }
 
+    private static XmlMappingDefinition PositionMap(params XmlValueExpression[] extra) => new()
+    {
+        Version = 2, TargetRoot = "Output",
+        Repeats = [new() { SourcePath = "/Input/Group", TargetPath = "G" }, new() { SourcePath = "/Input/Group/Item", TargetPath = "G/Row" }],
+        Fields =
+        [
+            new() { TargetPath = "G/Num", Expression = Fn(XmlMappingFunction.RecordPosition, Src("/Input/Group")) },
+            new() { TargetPath = "G/Row/Num", Expression = Fn(XmlMappingFunction.StringConcat, Fn(XmlMappingFunction.RecordPosition, Src("/Input/Group")), Const("."), Fn(XmlMappingFunction.RecordPosition, Src("/Input/Group/Item"))) },
+            .. extra.Select((expression, index) => new XmlFieldMappingDefinition { TargetPath = $"G/Row/Extra{index}", Expression = expression })
+        ]
+    };
+
+    [Fact]
+    public void RecordPosition_IsOneBasedPerParentAndRestartsInNestedRepeats()
+    {
+        var output = XDocument.Parse(new XmlMappingEngine(XmlMappingTests.Json(PositionMap(Fn(XmlMappingFunction.MathAdd, Fn(XmlMappingFunction.RecordPosition, Src("/Input/Group/Item")), Const("10")))))
+            .Transform("<Input><Group><Item/><Item/></Group><Group><Item/></Group></Input>")).Root!;
+        Assert.Equal(["1", "2"], output.Elements("G").Select(group => group.Element("Num")!.Value));
+        Assert.Equal(["1.1", "1.2", "2.1"], output.Descendants("Row").Select(row => row.Element("Num")!.Value));
+        Assert.Equal(["11", "12", "11"], output.Descendants("Row").Select(row => row.Element("Extra0")!.Value));
+    }
+
+    [Fact]
+    public void RecordPosition_NeedsARepeatingSourcePathThatEnclosesItsTarget()
+    {
+        Assert.Contains("repeating record", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(Map(Fn(XmlMappingFunction.RecordPosition, Src("/Input/Other")))))).Message);
+        Assert.Contains("repeating record", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(Map(Fn(XmlMappingFunction.RecordPosition, Const("1")))))).Message);
+        var outside = Map(Fn(XmlMappingFunction.RecordPosition, Src("/Input/Item"))) with { Repeats = [new() { SourcePath = "/Input/Item", TargetPath = "Row" }] };
+        outside = outside with { Fields = [.. outside.Fields, new XmlFieldMappingDefinition { TargetPath = "Row/Id", Constant = "x" }] };
+        Assert.Contains("not below the repeat's target", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(outside))).Message);
+    }
+
     [Fact]
     public void GeneratedStylesheet_DeclaresTheFunctionNamespaceOnlyWhenUsed()
     {

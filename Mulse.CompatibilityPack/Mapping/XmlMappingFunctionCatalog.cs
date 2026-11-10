@@ -19,7 +19,7 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.StringSize or XmlMappingFunction.StringUpperCase or XmlMappingFunction.MathInt
             or XmlMappingFunction.LogicalExistence or XmlMappingFunction.LogicalNot or XmlMappingFunction.StringLowerCase
             or XmlMappingFunction.StringTrim or XmlMappingFunction.DateNow or XmlMappingFunction.MathAbs
-            or XmlMappingFunction.StringTrimLeft or XmlMappingFunction.StringTrimRight => (1, 1),
+            or XmlMappingFunction.StringTrimLeft or XmlMappingFunction.StringTrimRight or XmlMappingFunction.RecordPosition => (1, 1),
         XmlMappingFunction.StringConcat => (2, 32),
         XmlMappingFunction.LogicalAnd or XmlMappingFunction.LogicalOr or XmlMappingFunction.MathAdd
             or XmlMappingFunction.MathSubtract or XmlMappingFunction.MathMultiply => (2, 16),
@@ -44,12 +44,13 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.MathAbs => 111, XmlMappingFunction.MathAdd => 118, XmlMappingFunction.MathSubtract => 119,
         XmlMappingFunction.MathMultiply => 120, XmlMappingFunction.LogicalGte => 312, XmlMappingFunction.LogicalLt => 313,
         XmlMappingFunction.LogicalLte => 314, XmlMappingFunction.LogicalOr => 320, XmlMappingFunction.LogicalNot => 705,
+        XmlMappingFunction.RecordPosition => 474,
         _ => null
     };
 
     /// <summary>True when the function's behavior was compared with a helper body BizTalk compiled into a real map; false when it was ported from the functoid's documented behavior.</summary>
     public static bool HelperVerified(XmlMappingFunction function)
-        => Fid(function) is { } fid && (fid is 102 or 104 or 105 or 107 or 110 or 111 or 112 or 121 or 123 or 125 or 311 or 315 or 316 or 321 or 701);
+        => Fid(function) is { } fid && (fid is 102 or 104 or 105 or 107 or 110 or 111 or 112 or 121 or 123 or 125 or 311 or 315 or 316 or 321 or 474 or 701);
 
     /// <summary>One-line semantics shown in the editor and given to whoever writes a replacement formula. Arguments are text.</summary>
     public static string Summary(XmlMappingFunction function) => function switch
@@ -89,6 +90,7 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.LogicalLte => "LogicalLte(a, b): true when a <= b (numeric when both are numbers, otherwise ordinal text).",
         XmlMappingFunction.StringTrimLeft => "StringTrimLeft(text): removes leading white space.",
         XmlMappingFunction.StringTrimRight => "StringTrimRight(text): removes trailing white space.",
+        XmlMappingFunction.RecordPosition => "RecordPosition(record): 1-based position of the current repeat of the source record (BizTalk Iteration functoid). The argument must be the source path of a repeating record that the target sits inside.",
         _ => throw new ArgumentOutOfRangeException(nameof(function))
     };
 

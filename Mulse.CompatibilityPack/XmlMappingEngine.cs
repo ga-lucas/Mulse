@@ -159,6 +159,8 @@ public sealed partial class XmlMappingEngine
                     condition = Expand(field.Condition, null, custom, [], ref expanded, 1, allowStubs, field.TargetPath);
                 }
                 effective = field with { Expression = Expand(field.Expression, null, custom, [], ref expanded, 1, allowStubs, field.TargetPath), Condition = condition };
+                RequireRecordPositionSources(effective.Expression!, map.Repeats, field.TargetPath);
+                if (condition is not null) RequireRecordPositionSources(condition, map.Repeats, field.TargetPath);
             }
             else if (field.Constant is null) sourcePaths.Add(field.SourcePath);
             var enclosing = new HashSet<XmlRepeatMappingDefinition>(repeatTargets
@@ -215,6 +217,12 @@ public sealed partial class XmlMappingEngine
         }
         string Text(XmlValueExpression argument) => argument.Kind == XmlValueExpressionKind.Constant ? Compile(argument, scopes) : $"string({Compile(argument, scopes)})";
         var function = expression.Function!.Value;
+        if (function == XmlMappingFunction.RecordPosition)
+        {
+            var scope = scopes.ToList().LastIndexOf(expression.Arguments[0].SourcePath!);
+            if (scope < 0) throw new ArgumentException($"RecordPosition source '{expression.Arguments[0].SourcePath}' is not an enclosing repeat of its target.");
+            return $"string($p{scope + 1})";
+        }
         var arguments = expression.Arguments.Select(Text).ToArray();
         switch (function)
         {
@@ -231,6 +239,14 @@ public sealed partial class XmlMappingEngine
                 return result;
             default: return $"{FunctionPrefix}:{function}({string.Join(", ", arguments)})";
         }
+    }
+
+    private static void RequireRecordPositionSources(XmlValueExpression expression, IReadOnlyList<XmlRepeatMappingDefinition> repeats, string target)
+    {
+        if (expression.Function == XmlMappingFunction.RecordPosition
+            && (expression.Arguments[0].Kind != XmlValueExpressionKind.Source || !repeats.Any(repeat => repeat.SourcePath == expression.Arguments[0].SourcePath)))
+            throw new ArgumentException($"RecordPosition in '{target}' must be given the source path of a repeating record (a repeat's source path).");
+        foreach (var argument in expression.Arguments) RequireRecordPositionSources(argument, repeats, target);
     }
 
     private static string Literal(string text)
@@ -326,6 +342,7 @@ public sealed partial class XmlMappingEngine
         if (node.Repeat is null) return result;
         var loop = new XElement(Xsl + "for-each", new XAttribute("select", SourceExpression(node.Repeat.SourcePath, scopes)));
         loop.Add(new XElement(Xsl + "variable", new XAttribute("name", $"r{inner.Count}"), new XAttribute("select", ".")));
+        loop.Add(new XElement(Xsl + "variable", new XAttribute("name", $"p{inner.Count}"), new XAttribute("select", "position()")));
         loop.Add(new XElement(Xsl + "if", new XAttribute("test", $"self::node(){NilTest}"),
             new XElement(Xsl + "message", new XAttribute("terminate", "yes"), $"Source record '{node.Repeat.SourcePath}' is xsi:nil, which is not supported.")));
         loop.Add(scopeChecks);

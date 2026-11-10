@@ -40,6 +40,7 @@ public sealed class XmlFormulaUiTests
     [InlineData("DateCurrentDate()")]
     [InlineData("MathDivide('10', '4')")]
     [InlineData("StringConcat('', '')")]
+    [InlineData("StringConcat(RecordPosition(/s:Order/s:Item), '.')")]
     public void FormatAndParse_RoundTrip(string text)
         => Assert.Equal(text, XmlFormula.Format(Parse(text)));
 

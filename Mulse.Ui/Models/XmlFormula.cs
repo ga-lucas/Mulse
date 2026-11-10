@@ -40,7 +40,8 @@ public static class XmlFormula
         ["LogicalOr"] = (2, 16), ["LogicalNot"] = (1, 1), ["StringLowerCase"] = (1, 1), ["StringTrim"] = (1, 1),
         ["StringReplace"] = (3, 3), ["StringSubstring"] = (3, 3), ["StringContains"] = (2, 2),
         ["MathAbs"] = (1, 1), ["MathAdd"] = (2, 16), ["MathSubtract"] = (2, 16), ["MathMultiply"] = (2, 16),
-        ["LogicalGte"] = (2, 2), ["LogicalLt"] = (2, 2), ["LogicalLte"] = (2, 2), ["StringTrimLeft"] = (1, 1), ["StringTrimRight"] = (1, 1)
+        ["LogicalGte"] = (2, 2), ["LogicalLt"] = (2, 2), ["LogicalLte"] = (2, 2), ["StringTrimLeft"] = (1, 1), ["StringTrimRight"] = (1, 1),
+        ["RecordPosition"] = (1, 1)
     };
 
     /// <summary>One-line semantics per function (mirrors the engine catalog; a test keeps them equal). Given to whoever writes a custom function body.</summary>
@@ -80,7 +81,8 @@ public static class XmlFormula
         ["LogicalLt"] = "LogicalLt(a, b): true when a < b (numeric when both are numbers, otherwise ordinal text).",
         ["LogicalLte"] = "LogicalLte(a, b): true when a <= b (numeric when both are numbers, otherwise ordinal text).",
         ["StringTrimLeft"] = "StringTrimLeft(text): removes leading white space.",
-        ["StringTrimRight"] = "StringTrimRight(text): removes trailing white space."
+        ["StringTrimRight"] = "StringTrimRight(text): removes trailing white space.",
+        ["RecordPosition"] = "RecordPosition(record): 1-based position of the current repeat of the source record (BizTalk Iteration functoid). The argument must be the source path of a repeating record that the target sits inside."
     };
 
     public const int MaxCustomFunctions = 64;

@@ -31,7 +31,8 @@ public static class BizTalkNativeMapConverter
         [103] = XmlMappingFunction.StringLowerCase, [108] = XmlMappingFunction.StringTrimLeft, [109] = XmlMappingFunction.StringTrimRight,
         [111] = XmlMappingFunction.MathAbs, [118] = XmlMappingFunction.MathAdd, [119] = XmlMappingFunction.MathSubtract,
         [120] = XmlMappingFunction.MathMultiply, [312] = XmlMappingFunction.LogicalGte, [313] = XmlMappingFunction.LogicalLt,
-        [314] = XmlMappingFunction.LogicalLte, [320] = XmlMappingFunction.LogicalOr, [705] = XmlMappingFunction.LogicalNot
+        [314] = XmlMappingFunction.LogicalLte, [320] = XmlMappingFunction.LogicalOr, [705] = XmlMappingFunction.LogicalNot,
+        [IterationFid] = XmlMappingFunction.RecordPosition
     };
     private static readonly HashSet<string> MetadataAttributes = new(StringComparer.Ordinal)
     {
@@ -96,6 +97,7 @@ public static class BizTalkNativeMapConverter
         var links = new List<(XmlSchemaField From, XmlSchemaField To)>();
         var functoids = ReadFunctoids(root);
         var functoidOutputs = new List<(int Functoid, XmlSchemaField To)>();
+        var resolver = new FunctoidResolver(functoids, root.Descendants("Link").ToArray(), sourceRoot);
         foreach (var link in root.Descendants("Link"))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -105,16 +107,30 @@ public static class BizTalkNativeMapConverter
             var toFunctoid = FunctoidReference(toText, functoids);
             var fromFunctoid = FunctoidReference(fromText, functoids);
             if (toFunctoid is not null) continue; // input wiring is resolved from the functoid's own parameters
+            XmlSchemaField from;
+            XmlSchemaField to;
             if (fromFunctoid is { } producer)
             {
                 var output = Find(targetRoot, toText);
-                if (!output.Scalar || output.Path == targetRoot.Path)
-                    throw new ArgumentException($"Functoid {producer} is linked to record '{output.Path}'; conditional record creation is not supported. No partial native map was produced.");
-                functoidOutputs.Add((producer, output));
-                continue;
+                if (functoids[producer].Fid == LoopingFid && !output.Scalar && output.Path != targetRoot.Path)
+                {
+                    // A Looping functoid with one record input creates one target record per source record, exactly like a direct record link.
+                    from = resolver.ResolveLoopInput(producer);
+                    to = output;
+                }
+                else
+                {
+                    if (!output.Scalar || output.Path == targetRoot.Path)
+                        throw new ArgumentException($"Functoid {producer} is linked to record '{output.Path}'; conditional record creation is not supported. No partial native map was produced.");
+                    functoidOutputs.Add((producer, output));
+                    continue;
+                }
             }
-            var from = Find(sourceRoot, fromText);
-            var to = Find(targetRoot, toText);
+            else
+            {
+                from = Find(sourceRoot, fromText);
+                to = Find(targetRoot, toText);
+            }
             if (from.Scalar != to.Scalar)
                 throw new ArgumentException($"Link '{from.Path}' -> '{to.Path}' connects a record to a scalar field. No partial native map was produced.");
             if (from.UnsupportedReason is not null || from.HasDefaultOrFixed)
@@ -163,13 +179,17 @@ public static class BizTalkNativeMapConverter
                 DefaultValue = sourceRequired ? string.Empty : null
             }));
         }
-        var resolver = new FunctoidResolver(functoids, root.Descendants("Link").ToArray(), sourceRoot);
         foreach (var (producer, to) in functoidOutputs)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var resolved = resolver.Resolve(producer);
             resolver.NoteTarget(producer, TargetPath(to));
-            foreach (var field in resolved.Sources) RequireRepeatCoverage(field, to);
+            foreach (var field in resolved.Sources)
+            {
+                RequireRepeatCoverage(field, to);
+                if (!field.Scalar && !repeatLinks.Any(repeat => repeat.From == field && to.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal)))
+                    throw new ArgumentException($"Iteration over repeating record '{field.Path}' feeds '{to.Path}', which is not inside a record link from that record. BizTalk would wrap a loop around just that field, which a native map cannot express. No partial native map was produced.");
+            }
             assignments.Add((to, new() { Expression = resolved.Expression, Condition = resolved.Condition, TargetPath = TargetPath(to) }));
         }
         foreach (var value in root.Descendants("ConstantValues").Elements())
@@ -225,6 +245,10 @@ public static class BizTalkNativeMapConverter
             if (unverified.Length > 0)
                 warnings.Add($"FID {string.Join(", ", unverified)} follow the functoid's documented behavior; no compiled BizTalk helper for them was available to compare. Check their outputs against trusted expected data first.");
         }
+        if (resolver.Loopings.Count > 0)
+            warnings.Add($"{resolver.Loopings.Count} Looping functoid(s) (FID {LoopingFid}) with a single record input were converted to a plain record link: one target record per source record. Compare trusted expected outputs before use.");
+        if (resolver.Used.Contains(IterationFid))
+            warnings.Add($"Iteration functoid(s) (FID {IterationFid}) became RecordPosition: the 1-based position of the current record among its siblings under the same parent, as BizTalk's compiled position() reports it. Compare trusted expected outputs before use.");
         if (resolver.ValueMappings.Count > 0)
             warnings.Add($"Value Mapping functoid(s) (FID {string.Join(", ", resolver.ValueMappings.Order())}) became conditional targets: the target is written only when the condition equals the text 'true' (BizTalk's compiled test), and nothing is written otherwise. FID 374 (flattening) is converted with the same per-record behavior, which is only equivalent while its inputs are single values in scope. A missing value input reads as empty text. Compare trusted expected outputs before use.");
         if (functoids.Count > 0 && resolver.Contributing.Count < functoids.Count)
@@ -324,6 +348,7 @@ public static class BizTalkNativeMapConverter
         private readonly Dictionary<string, ScriptStub> stubsByKey = new(StringComparer.Ordinal);
         private readonly Dictionary<int, ScriptStub> scriptsByFunctoid = [];
         private readonly Dictionary<int, List<string>> targetsByFunctoid = [];
+        private readonly HashSet<int> loopingIds = [];
 
         public FunctoidResolver(Dictionary<int, Functoid> functoids, XElement[] links, XmlSchemaRoot sourceRoot)
         {
@@ -336,10 +361,31 @@ public static class BizTalkNativeMapConverter
                     throw new ArgumentException($"LinkID '{(string)link.Attribute("LinkID")!}' is declared more than once. No partial native map was produced.");
         }
 
-        public IReadOnlyCollection<int> Contributing => cache.Keys;
+        public IReadOnlyCollection<int> Contributing => cache.Keys.Union(loopingIds).ToArray();
         public IReadOnlyCollection<string> PendingFunctions => stubsByKey.Values.Select(stub => stub.Name).ToArray();
         public HashSet<int> Used { get; } = [];
         public HashSet<int> ValueMappings { get; } = [];
+        public IReadOnlyCollection<int> Loopings => loopingIds;
+
+        public XmlSchemaField ResolveLoopInput(int id)
+        {
+            var idText = id.ToString(CultureInfo.InvariantCulture);
+            var inputs = links.Where(link => (string?)link.Attribute("LinkTo") == idText).ToArray();
+            if (inputs.Length == 0)
+                throw new ArgumentException($"Looping functoid {id} has no input record. No partial native map was produced.");
+            if (inputs.Length > 1)
+                throw new ArgumentException($"Looping functoid {id} merges {inputs.Length} source records into one target record, which a native map cannot express yet (it needs one loop per input). No partial native map was produced.");
+            if (functoids[id].Element.Elements("Input-Parameters").Elements("Parameter").Any(parameter => (string?)parameter.Attribute("Type") != "link"))
+                throw new ArgumentException($"Looping functoid {id} has a constant input. No partial native map was produced.");
+            var fromText = (string?)inputs[0].Attribute("LinkFrom");
+            if (FunctoidReference(fromText, functoids) is not null)
+                throw new ArgumentException($"Looping functoid {id} is fed by another functoid; only a direct source record input is supported. No partial native map was produced.");
+            var field = Find(sourceRoot, fromText);
+            if (field.Scalar)
+                throw new ArgumentException($"Looping functoid {id} is fed by scalar '{field.Path}'; it loops over records. No partial native map was produced.");
+            loopingIds.Add(id);
+            return field;
+        }
 
         public ResolvedFunctoid Resolve(int id)
         {
@@ -395,8 +441,12 @@ public static class BizTalkNativeMapConverter
                             else
                             {
                                 var field = Find(sourceRoot, fromText);
-                                if (!field.Scalar || field.SelfRepeating || field.UnsupportedReason is not null || field.HasDefaultOrFixed)
-                                    throw new ArgumentException($"Functoid {id} reads '{field.Path}', which is a record, a repeating value, or otherwise unsupported as a functoid input. No partial native map was produced.");
+                                if (functoid.Fid == IterationFid
+                                    ? field.Scalar || !field.SelfRepeating || field.UnsupportedReason is not null || field.HasDefaultOrFixed
+                                    : !field.Scalar || field.SelfRepeating || field.UnsupportedReason is not null || field.HasDefaultOrFixed)
+                                    throw new ArgumentException(functoid.Fid == IterationFid
+                                        ? $"Iteration functoid {id} must read a repeating source record, but '{field.Path}' is not one. No partial native map was produced."
+                                        : $"Functoid {id} reads '{field.Path}', which is a record, a repeating value, or otherwise unsupported as a functoid input. No partial native map was produced.");
                                 arguments.Add(new XmlValueExpression { Kind = XmlValueExpressionKind.Source, SourcePath = Prefix(field.Path, "s") });
                                 inputNotes.Add($"source {field.Path}");
                                 sources.Add(field);
@@ -410,6 +460,8 @@ public static class BizTalkNativeMapConverter
                 }
                 if (links.Count(link => (string?)link.Attribute("LinkTo") == idText) != linkInputs)
                     throw new ArgumentException($"Functoid {id} has links that its input list does not account for. No partial native map was produced.");
+                if (functoid.Fid == IterationFid && (arguments.Count != 1 || arguments[0].Kind != XmlValueExpressionKind.Source))
+                    throw new ArgumentException($"Iteration functoid {id} needs exactly one source record input. No partial native map was produced.");
                 if (isScript)
                 {
                     if (nodes > XmlMappingFunctionCatalog.MaxNodes || childDepth + 1 > XmlMappingFunctionCatalog.MaxDepth)
@@ -534,6 +586,8 @@ public static class BizTalkNativeMapConverter
     }
 
     private const int ScriptFid = 260;
+    private const int LoopingFid = 424;
+    private const int IterationFid = 474;
     private const int ValueMappingFlatteningFid = 374;
     private const int ValueMappingFid = 375;
 

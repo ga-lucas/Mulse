@@ -147,13 +147,81 @@ public sealed class NativeMapFunctoidImportTests
 
     [Theory]
     [InlineData(424)]
-    [InlineData(474)]
+    [InlineData(322)]
     public void UnverifiedFunctoid_IsNamedAndNothingIsProduced(int fid)
     {
         var map = Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number"), F(10, fid, Link("1", 0)));
         var message = Message(map);
         Assert.Contains($"FID {fid}", message, StringComparison.Ordinal);
         Assert.Contains("No partial native map", message, StringComparison.Ordinal);
+    }
+
+    private static string LoopMap(string links, string functoids) => Build(Direct(1, "Order/Id", "Result/Number") + links, functoids, code: false);
+
+    private static NativeMapConversion ConvertRepeating(string map) => BizTalkNativeMapConverter.Convert(map, [RepeatSource], [RepeatTarget]);
+
+    private const string TwoLines = "<Order xmlns='urn:source'><Id>7</Id><Line><Qty>a</Qty></Line><Line><Qty>b</Qty></Line></Order>";
+
+    [Fact]
+    public void Iteration_BecomesRecordPositionInsideALinkedRecord()
+    {
+        var conversion = ConvertRepeating(LoopMap(
+            Direct(2, "Order/Line", "Result/Row") + Wire(3, "Order/Line", 10) + Out(4, 10, "Result/Row/Label"), F(10, 474, Link("3", 0))));
+        var definition = JsonSerializer.Deserialize<XmlMappingDefinition>(conversion.MappingJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        var field = Assert.Single(definition.Fields, candidate => candidate.TargetPath == "Row/Label");
+        Assert.Equal(XmlMappingFunction.RecordPosition, field.Expression!.Function);
+        Assert.Equal("/sn1:Order/sn1:Line", field.Expression.Arguments.Single().SourcePath);
+        Assert.Contains(conversion.Warnings, warning => warning.Contains("RecordPosition", StringComparison.Ordinal));
+        Assert.Equal(["1", "2"], Run(conversion, TwoLines).Root!.Elements("Row").Select(row => row.Element("Label")!.Value));
+    }
+
+    [Fact]
+    public void Iteration_FeedingAFormulaWithOtherFields_Works()
+    {
+        var conversion = ConvertRepeating(LoopMap(
+            Direct(2, "Order/Line", "Result/Row") + Wire(3, "Order/Line", 10) + L(4, "10", "11") + Wire(5, "Order/Line/Qty", 11) + Out(6, 11, "Result/Row/Label"),
+            F(10, 474, Link("3", 0)) + F(11, 107, Link("4", 0), Const(":", 1), Link("5", 2))));
+        Assert.Equal(["1:a", "2:b"], Run(conversion, TwoLines).Root!.Elements("Row").Select(row => row.Element("Label")!.Value));
+    }
+
+    [Fact]
+    public void Iteration_OutsideARecordLinkOfItsRecord_IsRejected()
+    {
+        var message = Assert.Throws<ArgumentException>(() => ConvertRepeating(LoopMap(
+            Direct(2, "Order/Line", "Result/Row") + Wire(3, "Order/Line", 10) + Out(4, 10, "Result/Number") + Direct(5, "Order/Line/Qty", "Result/Row/Label"),
+            F(10, 474, Link("3", 0))).Replace(Direct(1, "Order/Id", "Result/Number"), string.Empty))).Message;
+        Assert.Contains("not inside a record link", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Iteration_OfANonRepeatingSourceOrWithoutARecord_IsRejected()
+    {
+        Assert.Contains("repeating source record", Assert.Throws<ArgumentException>(() => ConvertRepeating(LoopMap(
+            Wire(3, "Order/Id", 10) + Out(4, 10, "Result/Number"), F(10, 474, Link("3", 0))).Replace(Direct(1, "Order/Id", "Result/Number"), string.Empty))).Message);
+        Assert.Contains("exactly one source record input", Assert.Throws<ArgumentException>(() => ConvertRepeating(LoopMap(
+            Out(4, 10, "Result/Number"), F(10, 474, Const("1", 0))).Replace(Direct(1, "Order/Id", "Result/Number"), string.Empty))).Message);
+    }
+
+    [Fact]
+    public void Looping_WithOneRecordInput_IsAPlainRecordLink()
+    {
+        var looping = ConvertRepeating(LoopMap(
+            Wire(2, "Order/Line", 10) + Out(3, 10, "Result/Row") + Direct(4, "Order/Line/Qty", "Result/Row/Label"), F(10, 424, Link("2", 0))));
+        var direct = ConvertRepeating(LoopMap(Direct(2, "Order/Line", "Result/Row") + Direct(4, "Order/Line/Qty", "Result/Row/Label"), string.Empty));
+        Assert.Equal(direct.Xslt, looping.Xslt);
+        Assert.Contains(looping.Warnings, warning => warning.Contains("Looping functoid(s) (FID 424)", StringComparison.Ordinal));
+        Assert.DoesNotContain(looping.Warnings, warning => warning.Contains("not connected", StringComparison.Ordinal));
+        Assert.Equal(["a", "b"], Run(looping, TwoLines).Root!.Elements("Row").Select(row => row.Element("Label")!.Value));
+    }
+
+    [Fact]
+    public void Looping_WithSeveralInputsOrAScalarInput_FailsClosed()
+    {
+        Assert.Contains("merges 2 source records", Assert.Throws<ArgumentException>(() => ConvertRepeating(LoopMap(
+            Wire(2, "Order/Line", 10) + Wire(5, "Order/Line", 10) + Out(3, 10, "Result/Row") + Direct(4, "Order/Line/Qty", "Result/Row/Label"),
+            F(10, 424, Link("2", 0), Link("5", 1))))).Message);
+        Assert.Contains("scalar", Assert.Throws<ArgumentException>(() => ConvertRepeating(LoopMap(
+            Wire(2, "Order/Id", 10) + Out(3, 10, "Result/Row") + Direct(4, "Order/Line/Qty", "Result/Row/Label"), F(10, 424, Link("2", 0))))).Message);
     }
 
     private static string ValueMappingMap(int fid, string conditionConstant = "42")

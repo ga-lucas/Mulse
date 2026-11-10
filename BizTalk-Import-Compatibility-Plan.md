@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,937 service tests passed and the solution built.
+Latest verification: 1,946 service tests passed and the solution built.
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -32,8 +32,16 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Measured over the 292 supplied `.btm` maps** (FID usage): fully importable maps 152 -> 160 with the cheap functoids -> about 233 with Value Mapping. Looping/Iteration (about 32 more maps) is the next gap; 802 (11 maps), 322 (8), 324 (6) and the rest stay documented unsupported.
 - **New native functions (compatibility pack, UI-editable, mirrored in the formula editor):** MathAbs, MathAdd, MathSubtract, MathMultiply (variadic, pairwise fold), LogicalGte/Lt/Lte, StringTrimLeft/Right. Only FIDs whose behavior was compared with compiled BizTalk helpers in the repository (102, 104, 105, 107, 110, 111, 112, 121, 123, 125, 311, 315, 316, 321, 701) are `HelperVerified`; every other imported FID follows documented behavior and the import adds a warning listing those FIDs.
 - **Value Mapping (375) and Value Mapping Flattening (374):** a field mapping gains an optional `Condition` formula (version 2, expression fields only). The target element is written only when the condition equals the exact, case-sensitive text `true`, matching BizTalk's `string(cond)='true'` output. The first input is the condition, the second is the value; a missing value reads as empty text. A Value Mapping must feed scalar targets directly (feeding another functoid is rejected, because a formula cannot express "no value"). FID 374 is converted with per-record semantics and a warning. The condition is editable in the Mapping Designer ("Write this target only when") and survives formula edits and kind changes.
-- **Deliberately not converted (fail closed, unverified semantics):** 101 StringFind, 106 Extract (1-based inclusive), 113-117, 122, 124, 317-319, 322-328, 424/474, 703/704, 802.
+322-328, 424 with several inputs, 703/704, 802.
 - **Verification:** 1,937 service tests passed and the solution built.
+
+### Increment: Iteration (474) and single-input Looping (424)
+
+- **Evidence:** the BizTalk-compiled XSLT (`*.btm.cs`) supplied for three maps that use these functoids shows Iteration compiling to `position()` evaluated in the enclosing `for-each`, and a multi-input Looping compiling to one `for-each` per input record (each emitting its own target record, nested inputs as separate loops).
+- **Iteration -> `RecordPosition(record)`** (new native function, FID 474, `HelperVerified`; mirrored in the formula editor): the 1-based position of the current repeat of a source record, per parent (restarts inside nested loops). The engine declares a `position()` variable per repeat and validates that the argument is a repeat's source path whose target encloses the field. The converter requires a repeating source record input and the Iteration's result to feed a target inside a record link from that same record; otherwise it fails closed (BizTalk would wrap a loop around only that field, which a native map cannot express).
+- **Looping with one record input** converts to the plain record link it is equivalent to (a warning says so). Looping with several inputs, constants, functoid-fed inputs, scalar inputs or a non-record output still fails closed with a specific message.
+- **Not done - multi-input Looping (about 30 usages in about 15 maps, including the Billing DFT P03 maps):** needs several source repeats per target record with per-branch field assignments; how constants and outside values are distributed across the branches is not proven by the evidence supplied, so it stays blocked.
+- **Verification:** 1,946 service tests passed and the solution built.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
 

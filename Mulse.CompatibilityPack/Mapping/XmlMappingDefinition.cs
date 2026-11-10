@@ -110,7 +110,9 @@ public enum XmlMappingFunction
     LogicalLt,
     LogicalLte,
     StringTrimLeft,
-    StringTrimRight
+    StringTrimRight,
+    // BizTalk Iteration functoid (474): BizTalk compiles it to position(); verified against a compiled map.
+    RecordPosition
 }
 
 /// <summary>
