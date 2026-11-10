@@ -265,6 +265,13 @@ public static class BizTalkNativeMapConverter
             for (var current = path; current.Length > targetRoot.Path.Length; current = current[..current.LastIndexOf('/')]) produced.Add(current);
         bool AroundStub(XmlSchemaField field)
             => stubbedRecords.Any(path => field.Path == path || field.Path.StartsWith(path + "/", StringComparison.Ordinal) || path.StartsWith(field.Path + "/", StringComparison.Ordinal));
+        // Compiled BizTalk output creates an optional record unconditionally when a constant or an ungated functoid below it always writes a value; the native engine also always creates it.
+        bool AlwaysProduces(XmlSchemaField record)
+            => assignments.Any(assignment => (assignment.Mapping.Constant is not null || (assignment.Mapping.Expression is not null && assignment.Mapping.Condition is null))
+                && assignment.Target.Path.StartsWith(record.Path + "/", StringComparison.Ordinal)
+                && !targetRoot.Fields.Any(between => between.SelfRepeating && between.Path.Length > record.Path.Length
+                    && (between.Path == assignment.Target.Path || assignment.Target.Path.StartsWith(between.Path + "/", StringComparison.Ordinal))));
+        var alwaysCreated = new List<string>();
         foreach (var field in targetRoot.Fields.Where(field => field.Path != targetRoot.Path && !AroundStub(field)))
         {
             var isProduced = produced.Contains(field.Path);
@@ -273,7 +280,10 @@ public static class BizTalkNativeMapConverter
             if (!isProduced && field.RequiredInParent)
                 throw new ArgumentException($"Required target '{field.Path}' is not produced by any link or constant; the native engine cannot emit empty required records. No partial native map was produced.");
             if (isProduced && !field.Scalar && !field.RequiredInParent && !repeatLinks.Any(repeat => repeat.To == field))
+            {
+                if (AlwaysProduces(field)) { alwaysCreated.Add(field.Path); continue; }
                 throw new ArgumentException($"Optional record '{field.Path}' would be created without a record link; BizTalk emits it only when a source exists. No partial native map was produced.");
+            }
         }
         foreach (var (_, to) in repeatLinks)
             if (!assignments.Any(assignment => assignment.Target.Path.StartsWith(to.Path + "/", StringComparison.Ordinal) || assignment.Target == to))
@@ -301,6 +311,8 @@ public static class BizTalkNativeMapConverter
         };
         if (firstOccurrence.Count > 0)
             warnings.Add($"{firstOccurrence.Count} direct link(s) read a field below a repeating source record with no record link, so only the first occurrence is mapped (for example {string.Join("; ", firstOccurrence.Take(3))}). Compiled BizTalk output observed for such links uses the first occurrence without a loop; it was not compared with this map's own compiled output.");
+        if (alwaysCreated.Count > 0)
+            warnings.Add($"{alwaysCreated.Count} optional target record(s) are always created because a constant or functoid below them always writes a value (for example {string.Join("; ", alwaysCreated.Take(3))}). Compiled BizTalk output observed does the same, even when the other fields below the record are absent; it was not compared with this map's own compiled output. Optional records with only direct field links are still refused.");
         if (optionalToRequired.Count > 0)
             warnings.Add($"{optionalToRequired.Count} link(s) feed a required target from an optional source (for example {string.Join("; ", optionalToRequired.Take(3))}). Like BizTalk, the target element is omitted when the source is absent, so the output can then violate the target schema.");
         if (resolver.Used.Count > 0)

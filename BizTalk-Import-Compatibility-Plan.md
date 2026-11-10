@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,036 service tests
+Latest verification: 2,038 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -34,6 +34,14 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Still refused (unproven):** functoid inputs below a repeating record (one compiled map wraps the functoid chain in a loop over the record), and direct links inside a record link that do not cover a repeating level. One compiled map showed a record-link pattern that its repository `.btm` does not contain, so deployed maps can differ from repository sources.
 - **Measured effect (292 real maps):** the implicit-loop blocker fell from 59 to 10 maps; those maps now stop at the next blocker (optional record without a record link), so conversions are unchanged until that is handled.
 - **Verification:** 2,036 service tests passed and the solution built.
+
+### Increment: Optional records guaranteed by a constant or functoid
+
+- **Evidence:** compiled output of two unrelated partner maps (a message-header map and several patient-registration maps) emits an optional target record unconditionally when a no-input or ungated functoid below it always writes a value, even while sibling fields are wrapped in per-field conditions.
+- **Rule:** the importer no longer refuses an optional, non-repeating target record with no record link when a constant or an ungated functoid expression below it (not crossing a repeating level) always writes a value. The record is always created, as the native engine does, and a warning lists each such record.
+- **Still refused:** an optional record fed only by direct field links or conditionally gated functoids. BizTalk's rule for those (create only when a source exists) is unproven and the engine has no record-level condition.
+- **Measured effect (292 real maps):** converting maps rose from 23 to 91; the "optional record without a record link" blocker fell from 74 to 3 maps. Next blockers: repeating model groups in the target (22), custom map-level XSLT (21), default/fixed target values (17), oversized schemas (14).
+- **Verification:** 2,038 service tests passed and the solution built.
 
 ### Increment: DLL-verified functoid IDs, cheap functoids and Value Mapping
 
