@@ -114,7 +114,13 @@ public enum XmlMappingFunction
     // BizTalk Iteration functoid (474): BizTalk compiles it to position(); verified against a compiled map.
     RecordPosition,
     // BizTalk Record Count functoid (322): ported from its documented behavior (count of the nodes at a source path); not compared with a compiled map.
-    RecordCount
+    RecordCount,
+    // BizTalk cumulative functoids (324-328): ported from their documented behavior (fold over every selected node); not compared with a compiled map.
+    CumulativeSum,
+    CumulativeAverage,
+    CumulativeMin,
+    CumulativeMax,
+    CumulativeConcat
 }
 
 /// <summary>

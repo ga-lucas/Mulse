@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,976 service tests
+Latest verification: 1,999 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -71,6 +71,16 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Input rules (import stops with the reason otherwise):** exactly one input, read directly from the source message (a record or a value the schema supports); constants, no input, several inputs or functoid-fed inputs are refused.
 - **Warning at import:** says whether counting inside a loop is relative to the current record or global in BizTalk is unproven; review those maps.
 - **Verification:** 1,976 service tests passed and the solution built.
+
+### Increment: Cumulative functoids (FIDs 324 Sum, 325 Average, 326 Min, 327 Max, 328 Concat)
+
+- **Measured:** 12 uses across the 292 maps (324 x8, 326 x1, 328 x3). No compiled XSLT was available, so exact BizTalk behavior is **unproven**.
+- **Approach:** become the editable formula functions `CumulativeSum/Average/Min/Max/Concat`. One argument folds every node of a source path. `Cumulative...(record, [condition,] value)` folds a computed or conditional value once per source record (the engine hoists it into a node-set variable, so the stylesheet declares `msxsl` only when needed).
+- **Empty and bad input:** Sum of nothing is 0; Average/Min/Max of nothing, or any non-numeric value, is empty; Concat joins without a separator.
+- **Import rules:** the value input may be a direct source value (repeating values allowed) or another functoid, including a Value Mapping (its condition becomes the fold condition, the classic conditional concatenate). The record to loop over is the deepest repeating ancestor shared by the inputs; values from different repeating records are refused. An optional second (scope) input must contain the value, and a repeating scope needs a record link around the target. Constants, record inputs and computed values combined with a scope are refused.
+- **Limits:** folding the record the target sits in, or a record-and-value fold inside a condition, is refused.
+- **Warning at import:** whether BizTalk folds relative to the current record or across the whole message inside a loop, and what the scope input changes, are unproven; review those maps.
+- **Verification:** 1,999 service tests passed and the solution built.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
 

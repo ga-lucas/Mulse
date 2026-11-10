@@ -21,6 +21,8 @@ public static class XmlMappingFunctionCatalog
             or XmlMappingFunction.StringTrim or XmlMappingFunction.DateNow or XmlMappingFunction.MathAbs
             or XmlMappingFunction.StringTrimLeft or XmlMappingFunction.StringTrimRight or XmlMappingFunction.RecordPosition
             or XmlMappingFunction.RecordCount => (1, 1),
+        XmlMappingFunction.CumulativeSum or XmlMappingFunction.CumulativeAverage or XmlMappingFunction.CumulativeMin
+            or XmlMappingFunction.CumulativeMax or XmlMappingFunction.CumulativeConcat => (1, 3),
         XmlMappingFunction.StringConcat => (2, 32),
         XmlMappingFunction.LogicalAnd or XmlMappingFunction.LogicalOr or XmlMappingFunction.MathAdd
             or XmlMappingFunction.MathSubtract or XmlMappingFunction.MathMultiply => (2, 16),
@@ -46,6 +48,8 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.MathMultiply => 120, XmlMappingFunction.LogicalGte => 312, XmlMappingFunction.LogicalLt => 313,
         XmlMappingFunction.LogicalLte => 314, XmlMappingFunction.LogicalOr => 320, XmlMappingFunction.LogicalNot => 705,
         XmlMappingFunction.RecordPosition => 474, XmlMappingFunction.RecordCount => 322,
+        XmlMappingFunction.CumulativeSum => 324, XmlMappingFunction.CumulativeAverage => 325, XmlMappingFunction.CumulativeMin => 326,
+        XmlMappingFunction.CumulativeMax => 327, XmlMappingFunction.CumulativeConcat => 328,
         _ => null
     };
 
@@ -92,7 +96,13 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.StringTrimLeft => "StringTrimLeft(text): removes leading white space.",
         XmlMappingFunction.StringTrimRight => "StringTrimRight(text): removes trailing white space.",
         XmlMappingFunction.RecordPosition => "RecordPosition(record): 1-based position of the current repeat of the source record (BizTalk Iteration functoid). The argument must be the source path of a repeating record that the target sits inside.",
-        XmlMappingFunction.RecordCount => "RecordCount(source): number of nodes selected by the source path (BizTalk Record Count functoid); inside a repeating record the count is taken within the current record. The argument must be a source path, not the repeating record the target sits in.",        _ => throw new ArgumentOutOfRangeException(nameof(function))
+        XmlMappingFunction.RecordCount => "RecordCount(source): number of nodes selected by the source path (BizTalk Record Count functoid); inside a repeating record the count is taken within the current record. The argument must be a source path, not the repeating record the target sits in.",
+        XmlMappingFunction.CumulativeSum => "CumulativeSum(source) or CumulativeSum(record, [condition,] value): sum of the values over every node the source path selects (BizTalk Cumulative Sum functoid; 0 when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Non-numeric values give an empty result. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
+        XmlMappingFunction.CumulativeAverage => "CumulativeAverage(source) or CumulativeAverage(record, [condition,] value): average of the values over every node the source path selects (BizTalk Cumulative Average functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Non-numeric values give an empty result. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
+        XmlMappingFunction.CumulativeMin => "CumulativeMin(source) or CumulativeMin(record, [condition,] value): smallest of the values over every node the source path selects (BizTalk Cumulative Minimum functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Non-numeric values give an empty result. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
+        XmlMappingFunction.CumulativeMax => "CumulativeMax(source) or CumulativeMax(record, [condition,] value): largest of the values over every node the source path selects (BizTalk Cumulative Maximum functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Non-numeric values give an empty result. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
+        XmlMappingFunction.CumulativeConcat => "CumulativeConcat(source) or CumulativeConcat(record, [condition,] value): the values over every node the source path selects, joined in document order without a separator (BizTalk Cumulative Concatenate functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
+        _ => throw new ArgumentOutOfRangeException(nameof(function))
     };
 
     /// <summary>Custom function and parameter names: letters, digits and underscore, not starting with a digit.</summary>

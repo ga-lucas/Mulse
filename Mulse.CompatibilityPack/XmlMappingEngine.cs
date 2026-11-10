@@ -85,7 +85,8 @@ public sealed partial class XmlMappingEngine
         foreach (var (prefix, uri) in map.Namespaces)
         {
             VerifyName(prefix);
-            if (prefix.StartsWith("xml", StringComparison.OrdinalIgnoreCase) || prefix == "xsl" || prefix == FunctionPrefix || string.IsNullOrWhiteSpace(uri) || uri == XmlMappingFunctions.Namespace
+            if (prefix.StartsWith("xml", StringComparison.OrdinalIgnoreCase) || prefix == "xsl" || prefix == FunctionPrefix || prefix == NodeSetPrefix || string.IsNullOrWhiteSpace(uri) || uri == XmlMappingFunctions.Namespace
+                || uri == NodeSetNamespace
                 || !Uri.TryCreate(uri, UriKind.Absolute, out _) || uri == Xsl.NamespaceName || uri == XNamespace.Xml.NamespaceName || uri == XNamespace.Xmlns.NamespaceName)
                 throw new ArgumentException($"Invalid or reserved XML namespace prefix/URI '{prefix}'. Use explicit, non-reserved prefixes and absolute URIs.");
             stylesheet.Add(new XAttribute(XNamespace.Xmlns + prefix, uri));
@@ -169,7 +170,7 @@ public sealed partial class XmlMappingEngine
             // A counted path is only counted, never read as a value, so counting a repeating record from outside it is allowed.
             var scoped = sourcePaths.ToList();
             if (effective.Expression is not null)
-                foreach (var counted in CountedPaths(effective.Expression).Concat(effective.Condition is null ? [] : CountedPaths(effective.Condition)))
+                foreach (var counted in ExemptPaths(effective.Expression).Concat(effective.Condition is null ? [] : ExemptPaths(effective.Condition)))
                     scoped.Remove(counted);
             foreach (var sourcePath in sourcePaths)
             {
@@ -204,16 +205,37 @@ public sealed partial class XmlMappingEngine
                     ?? throw new ArgumentException($"Repeat target '{repeat.TargetPath}' has no mapped fields below it. Empty repeated records are not supported.");
             node.Repeat = repeat;
         }
+        var folds = new FoldContext();
         var rootChecks = new List<XElement>();
-        var body = Emit(target, [], rootChecks);
+        var body = Emit(target, [], rootChecks, folds);
         template.Add(rootChecks);
         template.Add(body);
+        if (folds.UsesNodeSet)
+        {
+            stylesheet.Add(new XAttribute(XNamespace.Xmlns + NodeSetPrefix, NodeSetNamespace));
+            stylesheet.SetAttributeValue("exclude-result-prefixes", $"{FunctionPrefix} {NodeSetPrefix}");
+        }
         stylesheet.Add(new XElement(Xsl + "output", new XAttribute("method", "xml"), new XAttribute("omit-xml-declaration", "yes"), new XAttribute("indent", "yes")), template);
         return stylesheet.ToString();
     }
 
+    // Folds over computed values (cumulative functoids) are hoisted into a variable holding one <v> per record, because XPath 1.0 cannot map a formula over a node-set.
+    private const string NodeSetPrefix = "msxsl";
+    private const string NodeSetNamespace = "urn:schemas-microsoft-com:xslt";
+
+    private sealed class FoldContext
+    {
+        public int Count { get; set; }
+        public bool UsesNodeSet { get; set; }
+    }
+
+    private static bool IsFold(XmlMappingFunction function)
+        => function is XmlMappingFunction.CumulativeSum or XmlMappingFunction.CumulativeAverage or XmlMappingFunction.CumulativeMin
+            or XmlMappingFunction.CumulativeMax or XmlMappingFunction.CumulativeConcat;
+
     // Arguments are passed as XPath strings (like BizTalk's string(...) wrappers); results of logical functions become the text true/false.
-    private static string Compile(XmlValueExpression expression, IReadOnlyList<string> scopes)
+    // Variables a fold needs are appended to prelude (null where none can be declared, e.g. a condition).
+    private static string Compile(XmlValueExpression expression, IReadOnlyList<string> scopes, FoldContext folds, List<XElement>? prelude)
     {
         switch (expression.Kind)
         {
@@ -221,8 +243,9 @@ public sealed partial class XmlMappingEngine
             case XmlValueExpressionKind.Constant: return Literal(expression.Constant!);
             case XmlValueExpressionKind.Custom: return $"{FunctionPrefix}:Unimplemented({Literal(expression.Name!)})";
         }
-        string Text(XmlValueExpression argument) => argument.Kind == XmlValueExpressionKind.Constant ? Compile(argument, scopes) : $"string({Compile(argument, scopes)})";
+        string Text(XmlValueExpression argument) => argument.Kind == XmlValueExpressionKind.Constant ? Compile(argument, scopes, folds, prelude) : $"string({Compile(argument, scopes, folds, prelude)})";
         var function = expression.Function!.Value;
+        if (IsFold(function)) return CompileFold(function, expression, scopes, folds, prelude);
         if (function == XmlMappingFunction.RecordPosition)
         {
             var scope = scopes.ToList().LastIndexOf(expression.Arguments[0].SourcePath!);
@@ -239,7 +262,7 @@ public sealed partial class XmlMappingEngine
         switch (function)
         {
             case XmlMappingFunction.StringConcat: return $"concat({string.Join(", ", arguments)})";
-            case XmlMappingFunction.LogicalExistence: return $"{FunctionPrefix}:LogicalExistence(boolean({Compile(expression.Arguments[0], scopes)}))";
+            case XmlMappingFunction.LogicalExistence: return $"{FunctionPrefix}:LogicalExistence(boolean({Compile(expression.Arguments[0], scopes, folds, prelude)}))";
             case XmlMappingFunction.LogicalAnd:
             case XmlMappingFunction.LogicalOr:
             case XmlMappingFunction.MathAdd:
@@ -253,12 +276,41 @@ public sealed partial class XmlMappingEngine
         }
     }
 
-    private static IEnumerable<string> CountedPaths(XmlValueExpression expression)
+    private static string CompileFold(XmlMappingFunction function, XmlValueExpression expression, IReadOnlyList<string> scopes, FoldContext folds, List<XElement>? prelude)
+    {
+        var anchor = expression.Arguments[0].SourcePath!;
+        if (scopes.Contains(anchor)) throw new ArgumentException($"{function} source '{anchor}' is the repeating record the target sits in; fold a different path.");
+        if (expression.Arguments.Count == 1) return $"{FunctionPrefix}:{function}({SourceExpression(anchor, scopes)})";
+        if (prelude is null) throw new ArgumentException($"{function} over a record and a value cannot be used in a condition; compute it in the target field instead.");
+        var inner = scopes.Append(anchor).ToArray();
+        var level = inner.Length;
+        var loop = new XElement(Xsl + "for-each", new XAttribute("select", SourceExpression(anchor, scopes)));
+        loop.Add(new XElement(Xsl + "variable", new XAttribute("name", $"r{level}"), new XAttribute("select", ".")));
+        loop.Add(new XElement(Xsl + "variable", new XAttribute("name", $"p{level}"), new XAttribute("select", "position()")));
+        var declarations = new List<XElement>();
+        var value = Compile(expression.Arguments[^1], inner, folds, declarations);
+        var test = expression.Arguments.Count == 3 ? $"string({Compile(expression.Arguments[1], inner, folds, declarations)}) = 'true'" : null;
+        loop.Add(declarations);
+        var item = new XElement("v", new XElement(Xsl + "value-of", new XAttribute("select", value)));
+        loop.Add(test is null ? item : new XElement(Xsl + "if", new XAttribute("test", test), item));
+        var name = $"fold{++folds.Count}";
+        prelude.Add(new XElement(Xsl + "variable", new XAttribute("name", name), loop));
+        folds.UsesNodeSet = true;
+        return $"{FunctionPrefix}:{function}({NodeSetPrefix}:node-set(${name})/v)";
+    }
+
+    // Paths a count or fold only selects (never reads as one value per target record), so they may lie below a repeat the target is not in.
+    private static IEnumerable<string> ExemptPaths(XmlValueExpression expression)
     {
         if (expression.Function == XmlMappingFunction.RecordCount && expression.Arguments.Count == 1 && expression.Arguments[0].Kind == XmlValueExpressionKind.Source)
             yield return expression.Arguments[0].SourcePath!;
+        else if (expression.Function is { } function && IsFold(function))
+        {
+            foreach (var path in XmlMappingFunctionCatalog.SourcePaths(expression)) yield return path;
+            yield break;
+        }
         foreach (var argument in expression.Arguments)
-            foreach (var path in CountedPaths(argument)) yield return path;
+            foreach (var path in ExemptPaths(argument)) yield return path;
     }
 
     private static void RequireRecordPositionSources(XmlValueExpression expression, IReadOnlyList<XmlRepeatMappingDefinition> repeats, string target)
@@ -268,6 +320,8 @@ public sealed partial class XmlMappingEngine
             throw new ArgumentException($"RecordPosition in '{target}' must be given the source path of a repeating record (a repeat's source path).");
         if (expression.Function == XmlMappingFunction.RecordCount && expression.Arguments[0].Kind != XmlValueExpressionKind.Source)
             throw new ArgumentException($"RecordCount in '{target}' must be given a source path.");
+        if (expression.Function is { } fold && IsFold(fold) && expression.Arguments[0].Kind != XmlValueExpressionKind.Source)
+            throw new ArgumentException($"{fold} in '{target}' must start with a source path (the nodes to fold).");
         foreach (var argument in expression.Arguments) RequireRecordPositionSources(argument, repeats, target);
     }
 
@@ -302,7 +356,7 @@ public sealed partial class XmlMappingEngine
 
     private const string NilTest = "[@*[local-name()='nil' and namespace-uri()='http://www.w3.org/2001/XMLSchema-instance' and (.='true' or .='1')]]";
 
-    private static XElement Emit(TargetNode node, IReadOnlyList<string> scopes, List<XElement> checks)
+    private static XElement Emit(TargetNode node, IReadOnlyList<string> scopes, List<XElement> checks, FoldContext folds)
     {
         var inner = node.Repeat is null ? scopes : [.. scopes, node.Repeat.SourcePath];
         var scopeChecks = node.Repeat is null ? checks : [];
@@ -320,8 +374,9 @@ public sealed partial class XmlMappingEngine
                         ? $"Source '{field.SourcePath}' must select exactly one scalar element or attribute that is not xsi:nil. Missing, repeating, complex, or nil values are not supported."
                         : $"Source '{field.SourcePath}' must select at most one scalar element or attribute that is not xsi:nil. Repeating, complex, or nil values are not supported.")));
             }
+            var prelude = new List<XElement>();
             var value = field.Expression is not null
-                ? new XElement(Xsl + "value-of", new XAttribute("select", Compile(field.Expression, inner)))
+                ? new XElement(Xsl + "value-of", new XAttribute("select", Compile(field.Expression, inner, folds, prelude)))
                 : field.Constant is null
                     ? new XElement(Xsl + "value-of", new XAttribute("select", source!))
                     : new XElement(Xsl + "text", field.Constant);
@@ -330,6 +385,7 @@ public sealed partial class XmlMappingEngine
                     new XElement(Xsl + "when", new XAttribute("test", $"count({source}) = 0"), new XElement(Xsl + "text", field.DefaultValue)),
                     new XElement(Xsl + "otherwise", value))
                 : value;
+            element.Add(prelude);
             if (field.Operations.Count == 0) element.Add(initial);
             else
             {
@@ -355,11 +411,11 @@ public sealed partial class XmlMappingEngine
             }
         }
         foreach (var child in node.Children.OrderByDescending(static child => child.IsAttribute))
-            element.Add(Emit(child, inner, scopeChecks));
+            element.Add(Emit(child, inner, scopeChecks, folds));
         XElement result = node.Assignment is { MissingValueBehavior: MissingXmlValueBehavior.Omit }
             ? new XElement(Xsl + "if", new XAttribute("test", $"count({source}) = 1"), element)
             : node.Assignment?.Condition is { } condition
-                ? new XElement(Xsl + "if", new XAttribute("test", $"string({Compile(condition, inner)}) = 'true'"), element)
+                ? new XElement(Xsl + "if", new XAttribute("test", $"string({Compile(condition, inner, folds, null)}) = 'true'"), element)
                 : element;
         if (node.Repeat is null) return result;
         var loop = new XElement(Xsl + "for-each", new XAttribute("select", SourceExpression(node.Repeat.SourcePath, scopes)));

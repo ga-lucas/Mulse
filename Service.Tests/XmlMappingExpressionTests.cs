@@ -245,6 +245,85 @@ public sealed class XmlMappingExpressionTests
         Assert.Contains("count a different path", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(self))).Message);
     }
 
+    private const string Lines = "<Input><Line><Qty>2</Qty><Price>1.5</Price><Kind>a</Kind></Line><Line><Qty>3</Qty><Price>2</Price><Kind>b</Kind></Line><Line><Qty>1</Qty><Price>4</Price><Kind>a</Kind></Line></Input>";
+
+    [Theory]
+    [InlineData(XmlMappingFunction.CumulativeSum, "6")]
+    [InlineData(XmlMappingFunction.CumulativeAverage, "2")]
+    [InlineData(XmlMappingFunction.CumulativeMin, "1")]
+    [InlineData(XmlMappingFunction.CumulativeMax, "3")]
+    [InlineData(XmlMappingFunction.CumulativeConcat, "231")]
+    public void CumulativeFunctions_FoldEveryNodeOfASource(XmlMappingFunction function, string expected)
+        => Assert.Equal(expected, Run(Fn(function, Src("/Input/Line/Qty")), Lines));
+
+    [Fact]
+    public void CumulativeFunctions_HandleEmptyAndNonNumericInput()
+    {
+        Assert.Equal("0", Run(Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Missing")), Lines));
+        Assert.Equal(string.Empty, Run(Fn(XmlMappingFunction.CumulativeMax, Src("/Input/Missing")), Lines));
+        Assert.Equal(string.Empty, Run(Fn(XmlMappingFunction.CumulativeAverage, Src("/Input/Missing")), Lines));
+        Assert.Equal(string.Empty, Run(Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Line/Kind")), Lines));
+        Assert.Equal("aba", Run(Fn(XmlMappingFunction.CumulativeConcat, Src("/Input/Line/Kind")), Lines));
+    }
+
+    [Fact]
+    public void CumulativeFold_OverAComputedValue_SumsPerRecord()
+    {
+        var product = Fn(XmlMappingFunction.MathMultiply, Src("/Input/Line/Qty"), Src("/Input/Line/Price"));
+        var expression = Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Line"), product);
+        Assert.Equal("13", Run(expression, Lines));
+        var xslt = new XmlMappingEngine(XmlMappingTests.Json(Map(expression))).Xslt;
+        Assert.Contains("urn:schemas-microsoft-com:xslt", xslt);
+        Assert.DoesNotContain("urn:schemas-microsoft-com:xslt", new XmlMappingEngine(XmlMappingTests.Json(Map(Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Line/Qty"))))).Xslt);
+    }
+
+    [Fact]
+    public void CumulativeFold_WithACondition_OnlyFoldsMatchingRecords()
+    {
+        var equals = Fn(XmlMappingFunction.LogicalEq, Src("/Input/Line/Kind"), Const("a"));
+        Assert.Equal("3", Run(Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Line"), equals, Src("/Input/Line/Qty")), Lines));
+        Assert.Equal("aa", Run(Fn(XmlMappingFunction.CumulativeConcat, Src("/Input/Line"), equals, Src("/Input/Line/Kind")), Lines));
+        var none = Fn(XmlMappingFunction.LogicalEq, Src("/Input/Line/Kind"), Const("z"));
+        Assert.Equal("0", Run(Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Line"), none, Src("/Input/Line/Qty")), Lines));
+    }
+
+    [Fact]
+    public void CumulativeFunctions_InsideARepeat_AreRelativeToTheCurrentRecord()
+    {
+        const string input = "<Input><Group><Item><V>1</V></Item><Item><V>2</V></Item></Group><Group><Item><V>5</V></Item></Group></Input>";
+        var map = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Repeats = [new() { SourcePath = "/Input/Group", TargetPath = "G" }],
+            Fields = [new() { TargetPath = "G/Sum", Expression = Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Group/Item/V")) },
+                new() { TargetPath = "G/Scaled", Expression = Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Group/Item"), Fn(XmlMappingFunction.MathMultiply, Src("/Input/Group/Item/V"), Const("10"))) },
+                new() { TargetPath = "Total", Expression = Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Group/Item/V")) }]
+        };
+        var output = XDocument.Parse(new XmlMappingEngine(XmlMappingTests.Json(map)).Transform(input)).Root!;
+        Assert.Equal(["3", "5"], output.Elements("G").Select(group => group.Element("Sum")!.Value));
+        Assert.Equal(["30", "50"], output.Elements("G").Select(group => group.Element("Scaled")!.Value));
+        Assert.Equal("8", output.Element("Total")!.Value);
+    }
+
+    [Fact]
+    public void CumulativeFunctions_AreRefusedWhenMisused()
+    {
+        var self = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Repeats = [new() { SourcePath = "/Input/Line", TargetPath = "L" }],
+            Fields = [new() { TargetPath = "L/Sum", Expression = Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Line")) }]
+        };
+        Assert.Contains("fold a different path", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(self))).Message);
+        Assert.Contains("start with a source path", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(Map(Fn(XmlMappingFunction.CumulativeSum, Const("1")))))).Message);
+        var inCondition = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Fields = [new() { TargetPath = "A", Expression = Const("x"), Condition = Fn(XmlMappingFunction.LogicalGt, Fn(XmlMappingFunction.CumulativeSum, Src("/Input/Line"), Src("/Input/Line/Qty")), Const("1")) }]
+        };
+        Assert.Contains("cannot be used in a condition", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(inCondition))).Message);
+    }
+
     [Fact]
     public void GeneratedStylesheet_DeclaresTheFunctionNamespaceOnlyWhenUsed()
     {

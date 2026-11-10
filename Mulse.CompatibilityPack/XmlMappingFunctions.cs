@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Text;
+using System.Xml.XPath;
 
 namespace Mulse.CompatibilityPack;
 
@@ -120,6 +122,38 @@ public sealed class XmlMappingFunctions(TimeProvider timeProvider)
         => IsNumeric(val1, out var d1) && IsNumeric(val2, out var d2) ? d1 <= d2 : string.CompareOrdinal(val1, val2) <= 0;
 
     public string StringTrimLeft(string str) => str?.TrimStart() ?? string.Empty;
+
+    // Cumulative functoids fold the string value of every selected node. Any non-numeric value makes a numeric result empty (like the other math functions).
+    private static bool Numbers(XPathNodeIterator values, out List<double> numbers)
+    {
+        numbers = [];
+        foreach (XPathNavigator node in values)
+        {
+            if (!IsNumeric(node.Value, out var number)) return false;
+            numbers.Add(number);
+        }
+        return true;
+    }
+
+    /// <summary>Sum of the selected values; 0 when nothing is selected.</summary>
+    public string CumulativeSum(XPathNodeIterator values) => Numbers(values, out var numbers) ? Format(numbers.Sum()) : string.Empty;
+
+    /// <summary>Average of the selected values; empty when nothing is selected.</summary>
+    public string CumulativeAverage(XPathNodeIterator values) => Numbers(values, out var numbers) && numbers.Count > 0 ? Format(numbers.Sum() / numbers.Count) : string.Empty;
+
+    /// <summary>Smallest of the selected values; empty when nothing is selected.</summary>
+    public string CumulativeMin(XPathNodeIterator values) => Numbers(values, out var numbers) && numbers.Count > 0 ? Format(numbers.Min()) : string.Empty;
+
+    /// <summary>Largest of the selected values; empty when nothing is selected.</summary>
+    public string CumulativeMax(XPathNodeIterator values) => Numbers(values, out var numbers) && numbers.Count > 0 ? Format(numbers.Max()) : string.Empty;
+
+    /// <summary>The selected values joined in document order without a separator.</summary>
+    public string CumulativeConcat(XPathNodeIterator values)
+    {
+        var text = new StringBuilder();
+        foreach (XPathNavigator node in values) text.Append(node.Value);
+        return text.ToString();
+    }
 
     public string StringTrimRight(string str) => str?.TrimEnd() ?? string.Empty;
 

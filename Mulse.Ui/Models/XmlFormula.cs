@@ -41,7 +41,8 @@ public static class XmlFormula
         ["StringReplace"] = (3, 3), ["StringSubstring"] = (3, 3), ["StringContains"] = (2, 2),
         ["MathAbs"] = (1, 1), ["MathAdd"] = (2, 16), ["MathSubtract"] = (2, 16), ["MathMultiply"] = (2, 16),
         ["LogicalGte"] = (2, 2), ["LogicalLt"] = (2, 2), ["LogicalLte"] = (2, 2), ["StringTrimLeft"] = (1, 1), ["StringTrimRight"] = (1, 1),
-        ["RecordPosition"] = (1, 1), ["RecordCount"] = (1, 1)
+        ["RecordPosition"] = (1, 1), ["RecordCount"] = (1, 1), ["CumulativeSum"] = (1, 3), ["CumulativeAverage"] = (1, 3),
+        ["CumulativeMin"] = (1, 3), ["CumulativeMax"] = (1, 3), ["CumulativeConcat"] = (1, 3)
     };
 
     /// <summary>One-line semantics per function (mirrors the engine catalog; a test keeps them equal). Given to whoever writes a custom function body.</summary>
@@ -83,7 +84,12 @@ public static class XmlFormula
         ["StringTrimLeft"] = "StringTrimLeft(text): removes leading white space.",
         ["StringTrimRight"] = "StringTrimRight(text): removes trailing white space.",
         ["RecordPosition"] = "RecordPosition(record): 1-based position of the current repeat of the source record (BizTalk Iteration functoid). The argument must be the source path of a repeating record that the target sits inside.",
-        ["RecordCount"] = "RecordCount(source): number of nodes selected by the source path (BizTalk Record Count functoid); inside a repeating record the count is taken within the current record. The argument must be a source path, not the repeating record the target sits in."
+        ["RecordCount"] = "RecordCount(source): number of nodes selected by the source path (BizTalk Record Count functoid); inside a repeating record the count is taken within the current record. The argument must be a source path, not the repeating record the target sits in.",
+        ["CumulativeSum"] = "CumulativeSum(source) or CumulativeSum(record, [condition,] value): sum of the values over every node the source path selects (BizTalk Cumulative Sum functoid; 0 when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Non-numeric values give an empty result. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
+        ["CumulativeAverage"] = "CumulativeAverage(source) or CumulativeAverage(record, [condition,] value): average of the values over every node the source path selects (BizTalk Cumulative Average functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Non-numeric values give an empty result. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
+        ["CumulativeMin"] = "CumulativeMin(source) or CumulativeMin(record, [condition,] value): smallest of the values over every node the source path selects (BizTalk Cumulative Minimum functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Non-numeric values give an empty result. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
+        ["CumulativeMax"] = "CumulativeMax(source) or CumulativeMax(record, [condition,] value): largest of the values over every node the source path selects (BizTalk Cumulative Maximum functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Non-numeric values give an empty result. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
+        ["CumulativeConcat"] = "CumulativeConcat(source) or CumulativeConcat(record, [condition,] value): the values over every node the source path selects, joined in document order without a separator (BizTalk Cumulative Concatenate functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in."
     };
 
     public const int MaxCustomFunctions = 64;

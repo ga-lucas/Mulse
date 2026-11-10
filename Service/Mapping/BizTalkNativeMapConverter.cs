@@ -32,7 +32,9 @@ public static class BizTalkNativeMapConverter
         [111] = XmlMappingFunction.MathAbs, [118] = XmlMappingFunction.MathAdd, [119] = XmlMappingFunction.MathSubtract,
         [120] = XmlMappingFunction.MathMultiply, [312] = XmlMappingFunction.LogicalGte, [313] = XmlMappingFunction.LogicalLt,
         [314] = XmlMappingFunction.LogicalLte, [320] = XmlMappingFunction.LogicalOr, [705] = XmlMappingFunction.LogicalNot,
-        [IterationFid] = XmlMappingFunction.RecordPosition, [RecordCountFid] = XmlMappingFunction.RecordCount
+        [IterationFid] = XmlMappingFunction.RecordPosition, [RecordCountFid] = XmlMappingFunction.RecordCount,
+        [324] = XmlMappingFunction.CumulativeSum, [325] = XmlMappingFunction.CumulativeAverage, [326] = XmlMappingFunction.CumulativeMin,
+        [327] = XmlMappingFunction.CumulativeMax, [328] = XmlMappingFunction.CumulativeConcat
     };
     private static readonly HashSet<string> MetadataAttributes = new(StringComparer.Ordinal)
     {
@@ -233,6 +235,9 @@ public static class BizTalkNativeMapConverter
                 if (!field.Scalar && positionRecords.Contains(Prefix(field.Path, "s")) && !repeatLinks.Any(repeat => repeat.From == field && to.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal)))
                     throw new ArgumentException($"Iteration over repeating record '{field.Path}' feeds '{to.Path}', which is not inside a record link from that record. BizTalk would wrap a loop around just that field, which a native map cannot express. No partial native map was produced.");
             }
+            foreach (var scope in resolved.Scopes ?? [])
+                if (!repeatLinks.Any(repeat => repeat.From == scope && to.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal)))
+                    throw new ArgumentException($"A cumulative functoid scoped to repeating record '{scope.Path}' feeds '{to.Path}', which is not inside a record link from that record. No partial native map was produced.");
             assignments.Add((to, new() { Expression = resolved.Expression, Condition = resolved.Condition, TargetPath = TargetPath(to) }));
         }
         foreach (var value in root.Descendants("ConstantValues").Elements())
@@ -300,6 +305,8 @@ public static class BizTalkNativeMapConverter
             warnings.Add($"Iteration functoid(s) (FID {IterationFid}) became RecordPosition: the 1-based position of the current record among its siblings under the same parent, as BizTalk's compiled position() reports it. Compare trusted expected outputs before use.");
         if (resolver.Used.Contains(RecordCountFid))
             warnings.Add($"Record Count functoid(s) (FID {RecordCountFid}) became RecordCount: the number of nodes at the counted source path (inside a repeating record, within the current record). No compiled BizTalk output was available to confirm this, in particular whether BizTalk counts inside a loop relative to the current record or across the whole message. Compare trusted expected outputs before use.");
+        if (resolver.Used.Overlaps(CumulativeFids))
+            warnings.Add($"Cumulative functoid(s) (FID {string.Join(", ", resolver.Used.Where(CumulativeFids.Contains).Order())}) became CumulativeSum/Average/Min/Max/Concat formulas that fold the value over every matching source node (computed or conditional inputs are folded per source record). No compiled BizTalk output was available to confirm the exact behavior, in particular inside a loop (relative to the current record versus across the whole message) or what the optional second (scope) input changes. Compare trusted expected outputs before use.");
         if (resolver.ValueMappings.Count > 0)
             warnings.Add($"Value Mapping functoid(s) (FID {string.Join(", ", resolver.ValueMappings.Order())}) became conditional targets: the target is written only when the condition equals the text 'true' (BizTalk's compiled test), and nothing is written otherwise. FID 374 (flattening) is converted with the same per-record behavior, which is only equivalent while its inputs are single values in scope. A missing value input reads as empty text. Compare trusted expected outputs before use.");
         if (functoids.Count > 0 && resolver.Contributing.Count < functoids.Count)
@@ -367,7 +374,7 @@ public static class BizTalkNativeMapConverter
 
     private sealed record Functoid(int Id, int Fid, XElement Element, ScriptChoice? Script = null);
 
-    private sealed record ResolvedFunctoid(XmlValueExpression Expression, IReadOnlyList<XmlSchemaField> Sources, int Nodes, int Depth, XmlValueExpression? Condition = null);
+    private sealed record ResolvedFunctoid(XmlValueExpression Expression, IReadOnlyList<XmlSchemaField> Sources, int Nodes, int Depth, XmlValueExpression? Condition = null, IReadOnlyList<XmlSchemaField>? Scopes = null);
 
     private static IEnumerable<string> PositionRecordPaths(XmlValueExpression expression)
     {
@@ -508,8 +515,10 @@ public static class BizTalkNativeMapConverter
                     .OrderBy(entry => entry.Index).ToArray();
                 if (!parameters.Select(entry => entry.Index).SequenceEqual(Enumerable.Range(0, parameters.Length)))
                     throw new ArgumentException($"Functoid {id} (FID {functoid.Fid}) has missing or duplicate input positions. No partial native map was produced.");
+                if (CumulativeFids.Contains(functoid.Fid)) return ResolveCumulative(id, functoid, function, parameters.Select(entry => entry.Parameter).ToArray());
                 var arguments = new List<XmlValueExpression>();
                 var sources = new List<XmlSchemaField>();
+                var scopeFields = new List<XmlSchemaField>();
                 var nodes = 1;
                 var childDepth = 0;
                 var linkInputs = 0;
@@ -538,6 +547,7 @@ public static class BizTalkNativeMapConverter
                                 inputNotes.Add($"result of functoid {inner} (FID {functoids[inner].Fid})");
                                 arguments.Add(child.Expression);
                                 sources.AddRange(child.Sources);
+                                scopeFields.AddRange(child.Scopes ?? []);
                                 nodes += child.Nodes;
                                 childDepth = Math.Max(childDepth, child.Depth);
                             }
@@ -578,7 +588,7 @@ public static class BizTalkNativeMapConverter
                     if (nodes > XmlMappingFunctionCatalog.MaxNodes || childDepth + 1 > XmlMappingFunctionCatalog.MaxDepth)
                         throw new ArgumentException($"Functoid {id} produces a formula larger than the native limit ({XmlMappingFunctionCatalog.MaxNodes} nodes, depth {XmlMappingFunctionCatalog.MaxDepth}). No partial native map was produced.");
                     var call = new XmlValueExpression { Kind = XmlValueExpressionKind.Custom, Name = RegisterScript(functoid, inputNotes), Arguments = arguments };
-                    var stub = new ResolvedFunctoid(call, sources, nodes, childDepth + 1);
+                    var stub = new ResolvedFunctoid(call, sources, nodes, childDepth + 1, Scopes: scopeFields);
                     cache[id] = stub;
                     return stub;
                 }
@@ -589,7 +599,7 @@ public static class BizTalkNativeMapConverter
                     if (nodes > XmlMappingFunctionCatalog.MaxNodes || childDepth + 1 > XmlMappingFunctionCatalog.MaxDepth)
                         throw new ArgumentException($"Functoid {id} produces a formula larger than the native limit ({XmlMappingFunctionCatalog.MaxNodes} nodes, depth {XmlMappingFunctionCatalog.MaxDepth}). No partial native map was produced.");
                     ValueMappings.Add(functoid.Fid);
-                    var conditional = new ResolvedFunctoid(arguments[1], sources, nodes, childDepth + 1, arguments[0]);
+                    var conditional = new ResolvedFunctoid(arguments[1], sources, nodes, childDepth + 1, arguments[0], scopeFields);
                     cache[id] = conditional;
                     return conditional;
                 }
@@ -599,7 +609,7 @@ public static class BizTalkNativeMapConverter
                 if (nodes > XmlMappingFunctionCatalog.MaxNodes || childDepth + 1 > XmlMappingFunctionCatalog.MaxDepth)
                     throw new ArgumentException($"Functoid {id} produces a formula larger than the native limit ({XmlMappingFunctionCatalog.MaxNodes} nodes, depth {XmlMappingFunctionCatalog.MaxDepth}). No partial native map was produced.");
                 Used.Add(functoid.Fid);
-                var resolved = new ResolvedFunctoid(new XmlValueExpression { Kind = XmlValueExpressionKind.Function, Function = function, Arguments = arguments }, sources, nodes, childDepth + 1);
+                var resolved = new ResolvedFunctoid(new XmlValueExpression { Kind = XmlValueExpressionKind.Function, Function = function, Arguments = arguments }, sources, nodes, childDepth + 1, Scopes: scopeFields);
                 cache[id] = resolved;
                 return resolved;
             }
@@ -607,6 +617,73 @@ public static class BizTalkNativeMapConverter
             {
                 active.Remove(id);
             }
+        }
+
+        private ResolvedFunctoid ResolveCumulative(int id, Functoid functoid, XmlMappingFunction function, XElement[] parameters)
+        {
+            var idText = id.ToString(CultureInfo.InvariantCulture);
+            if (parameters.Length is < 1 or > 2)
+                throw new ArgumentException($"Cumulative functoid {id} (FID {functoid.Fid}) has {parameters.Length} input(s); it needs a value and optionally a scope. No partial native map was produced.");
+            if (parameters.Any(parameter => (string?)parameter.Attribute("Type") != "link"))
+                throw new ArgumentException($"Cumulative functoid {id} (FID {functoid.Fid}) has a constant input. No partial native map was produced.");
+            var inputs = parameters.Select(parameter =>
+            {
+                var value = (string?)parameter.Attribute("Value") ?? throw new ArgumentException($"Functoid {id} has an input without a value. No partial native map was produced.");
+                return linksById.TryGetValue(value, out var link) && (string?)link.Attribute("LinkTo") == idText
+                    ? (string?)link.Attribute("LinkFrom")
+                    : throw new ArgumentException($"Functoid {id} input refers to link '{value}', which is missing or not wired to this functoid. No partial native map was produced.");
+            }).ToArray();
+            if (links.Count(link => (string?)link.Attribute("LinkTo") == idText) != inputs.Length)
+                throw new ArgumentException($"Functoid {id} has links that its input list does not account for. No partial native map was produced.");
+            XmlSchemaField? scope = null;
+            if (inputs.Length == 2)
+            {
+                if (FunctoidReference(inputs[1], functoids) is not null)
+                    throw new ArgumentException($"Cumulative functoid {id} takes its scope from another functoid; only a source record read directly from the message is supported. No partial native map was produced.");
+                scope = Find(sourceRoot, inputs[1]);
+            }
+            var scopes = new List<XmlSchemaField>();
+            List<XmlValueExpression> arguments;
+            var nodes = 2;
+            var depth = 1;
+            if (FunctoidReference(inputs[0], functoids) is { } inner)
+            {
+                if (scope is not null)
+                    throw new ArgumentException($"Cumulative functoid {id} has a scope input and a computed value; that combination is not supported yet. No partial native map was produced.");
+                var child = Resolve(inner);
+                (children.TryGetValue(id, out var childIds) ? childIds : children[id] = []).Add(inner);
+                var anchors = child.Sources
+                    .Select(source => sourceRoot.Fields.Where(field => field.SelfRepeating && field.Path != source.Path && source.Path.StartsWith(field.Path + "/", StringComparison.Ordinal))
+                        .OrderByDescending(field => field.Path.Length).FirstOrDefault())
+                    .Where(field => field is not null).Select(field => field!.Path).Distinct(StringComparer.Ordinal).ToArray();
+                if (anchors.Length > 1)
+                    throw new ArgumentException($"Cumulative functoid {id} folds values from different repeating records ({string.Join(", ", anchors)}); a native fold needs one record to loop over. No partial native map was produced.");
+                arguments = [new() { Kind = XmlValueExpressionKind.Source, SourcePath = Prefix(anchors.Length == 1 ? anchors[0] : sourceRoot.Path, "s") }];
+                if (child.Condition is not null) arguments.Add(child.Condition);
+                arguments.Add(child.Expression);
+                nodes += child.Nodes;
+                depth = child.Depth + 1;
+                scopes.AddRange(child.Scopes ?? []);
+            }
+            else
+            {
+                var field = Find(sourceRoot, inputs[0]);
+                if (!field.Scalar || field.UnsupportedReason is not null || field.HasDefaultOrFixed)
+                    throw new ArgumentException($"Cumulative functoid {id} reads '{field.Path}', which is a record or otherwise unsupported as a value input. No partial native map was produced.");
+                if (scope is not null)
+                {
+                    if (field.Path != scope.Path && !field.Path.StartsWith(scope.Path + "/", StringComparison.Ordinal))
+                        throw new ArgumentException($"Cumulative functoid {id} has scope '{scope.Path}', which does not contain its value '{field.Path}'. No partial native map was produced.");
+                    if (scope.SelfRepeating) scopes.Add(scope);
+                }
+                arguments = [new() { Kind = XmlValueExpressionKind.Source, SourcePath = Prefix(field.Path, "s") }];
+            }
+            if (nodes > XmlMappingFunctionCatalog.MaxNodes || depth + 1 > XmlMappingFunctionCatalog.MaxDepth)
+                throw new ArgumentException($"Functoid {id} produces a formula larger than the native limit ({XmlMappingFunctionCatalog.MaxNodes} nodes, depth {XmlMappingFunctionCatalog.MaxDepth}). No partial native map was produced.");
+            Used.Add(functoid.Fid);
+            var resolved = new ResolvedFunctoid(new XmlValueExpression { Kind = XmlValueExpressionKind.Function, Function = function, Arguments = arguments }, [], nodes, depth + 1, Scopes: scopes);
+            cache[id] = resolved;
+            return resolved;
         }
 
         private static ArgumentException Unsupported(Functoid functoid)
@@ -808,6 +885,7 @@ public static class BizTalkNativeMapConverter
     private const int MassCopyFid = 802;
     private const int IterationFid = 474;
     private const int RecordCountFid = 322;
+    private static readonly HashSet<int> CumulativeFids = [324, 325, 326, 327, 328];
     private const int ValueMappingFlatteningFid = 374;
     private const int ValueMappingFid = 375;
 
