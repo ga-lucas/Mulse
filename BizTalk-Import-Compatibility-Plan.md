@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,084 service tests
+Latest verification: 2,085 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -73,7 +73,8 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Change:** the engine now accepts any namespace that is non-empty, at most 2,048 characters and free of whitespace and control characters. Reserved namespaces (xsl, xml, xmlns, engine helpers) are still refused.
 - **Measured effect (292 real maps):** converting maps rose from 149 to 153.
 - **Still open:** UTMC `A01/A04/A08 v23` maps link two conditional functoid chains (value equals M, value equals F) to one target field. The engine rejects two assignments to one target; supporting it needs proof that the conditions are exclusive.
-- **Verification:** 2,084 service tests passed and the solution built.
+- **Tooling:** `Service.Tests\ImportCoverageReportTests` is a reusable, opt-in coverage report. Set `MEASURE_ROOT` (a folder of BizTalk projects) and `MEASURE_OUT` (a report path outside the repository), then run `dotnet test Service.Tests --filter "FullyQualifiedName~ImportCoverageReport"`. It writes a per-map TSV and a `.summary.txt` of grouped failure reasons, and does nothing when the variables are unset.
+- **Verification:** 2,085 service tests passed and the solution built.
 
 ### Increment: Custom XSLT maps are imported as XSLT render choices
 

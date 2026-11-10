@@ -167,7 +167,7 @@ internal static class BizTalkNativeMapChoiceDeriver
         }
     }
 
-    private static IReadOnlyList<string>? SchemaDocuments(XDocument map, string tree, BizTalkSchemaSourceCatalog schemas, string mapPath, out string? problem)
+    internal static IReadOnlyList<string>? SchemaDocuments(XDocument map, string tree, BizTalkSchemaSourceCatalog schemas, string mapPath, out string? problem)
     {
         problem = null;
         if (tree == "SrcTree" && map.Root?.Elements(tree).SingleOrDefault()?.Elements(Xsd + "schema").ToArray() is { Length: > 0 } inline)
