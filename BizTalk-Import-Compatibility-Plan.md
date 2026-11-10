@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,038 service tests
+Latest verification: 2,047 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -42,6 +42,16 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Still refused:** an optional record fed only by direct field links or conditionally gated functoids. BizTalk's rule for those (create only when a source exists) is unproven and the engine has no record-level condition.
 - **Measured effect (292 real maps):** converting maps rose from 23 to 91; the "optional record without a record link" blocker fell from 74 to 3 maps. Next blockers: repeating model groups in the target (22), custom map-level XSLT (21), default/fixed target values (17), oversized schemas (14).
 - **Verification:** 2,038 service tests passed and the solution built.
+
+### Increment: Repeating sequence groups, fixed target values and unused schema constructs
+
+- **Repeating sequence groups:** a repeating `xs:sequence` is no longer unsupported. Each member element is treated as its own repeating record (`SelfRepeating`), and a warning names every produced member. How BizTalk orders members of a repeating group relative to each other is NOT verified; the warning says so. Repeating `xs:choice` groups stay refused. BizTalk addresses unnamed sequence groups as `<Sequence>` steps in link paths; the importer skips them, and the remaining path must still match exactly one schema field.
+- **Optional groups with required members:** no longer block the map. Members are mapped individually and a warning states that group presence is not enforced.
+- **Fixed target values:** compiled output of partner maps writes a required target element's fixed schema value even with nothing linked to it. The importer now writes such values as constants (only when the parent record is emitted) and warns. Still refused: a fixed or default value that is also linked, optional fixed values and default-only values in an emitted record. No compiled evidence exists for those.
+- **Unused unsupported constructs:** the refusal for unsupported or fixed target fields now applies only to fields the map actually writes (or that are part of a scripting stub), instead of any such field anywhere in the schema.
+- **Inspection limit:** expanding repeating groups made large HL7 schemas exceed the old 2,048-node limit, so it is now `XmlSchemaInspector.MaximumNodes` (16,384); the largest schema in the 292 sample maps fit with room to spare.
+- **Measured effect (292 real maps):** converting maps rose from 91 to 97. The "repeating model groups" and "default/fixed" blockers are gone; 31 DFT maps moved past the `<Sequence>` path error and now stop at other, specific blockers (record-linked functoids, optional records fed by direct links, missing record links). Next blockers: custom map-level XSLT (21), schema paths missing or ambiguous (18), functoid inputs below repeating (13), required targets not produced (13), optional records without a record link (13).
+- **Verification:** 2,047 service tests passed and the solution built.
 
 ### Increment: DLL-verified functoid IDs, cheap functoids and Value Mapping
 
@@ -127,7 +137,7 @@ Measured by converting every `.btm` of the 52-project SpaceTRAX solution (292 ma
 
 - **File-path map references:** a map may name its schema by a path relative to the map (`.\Foo.xsd`, `..\Schemas\Foo.xsd`) instead of a class name. It now resolves when a project declares exactly that file; undeclared paths, rooted paths and URLs are still refused.
 - **Class-name imports:** a schema's `xs:import schemaLocation` may name a schema class (`Namespace.Type`), as BizTalk's HL7 schemas do. It now resolves to the one declared file; zero or several matches are refused and named. The error now says which import is undeclared (for example a BizTalk product schema assembly) instead of a generic limit message.
-- **Per-root inspection limit:** the 2,048-node limit used to count every global element an imported schema set declares, which rejected every HL7 map. The converter now inspects only the root named in the map (`XmlSchemaInspector.Analyze(documents, rootLocalName)`); the limit itself is unchanged.
+- **Per-root inspection limit:** the node limit used to count every global element an imported schema set declares, which rejected every HL7 map. The converter now inspects only the root named in the map (`XmlSchemaInspector.Analyze(documents, rootLocalName)`); the limit was later raised from 2,048 to 16,384 nodes.
 - **Still unresolved (45):** schemas the map names that no analyzed project declares (stale references, or projects not in the source paths), plus 14 roots that are genuinely larger than 2,048 nodes.
 - **What now blocks the other maps (top causes, of 224):** a source field below a repeating record with no record link around its target (59, BizTalk's implicit loop); an optional target record without a link (28); repeating model groups in the target schema (22, flat-file schemas; both real Index maps stop here); map-level custom XSLT settings (21); default/fixed target values (17).
 - **Index rule check:** the 15 real Index uses are all in maps that stop at the target schema, so the one-index-per-repeating-level rule is **still unverified** against real data.
@@ -567,7 +577,7 @@ Direct scalar links, constants and **repeating record links** (see the repeats i
 - Show editable JSON, generated XSLT and review warnings before the separate **Replace this node's mapping with proposal** action. Analysis/conversion alone never changes the node. Save/reopen retains the source-root assertion and exact XSD texts. Invalid proposals preserve existing mappings/provenance; stale asynchronous results are discarded after input edits.
 - **Version 2:** Error retains the old exactly-one scalar requirement; Omit suppresses an absent field; Default supplies an explicit literal only when absent. Present empty values remain empty. Repeated/complex values still fail. These are presence-based conditions, not arbitrary business expressions or record loops. Version-1 definitions keep their original strict semantics.
 - **Persisted XSD validation:** proposals embed the supplied schemas and selected source root, including for constant-only maps. The same engine validates source XML before mapping and target XML before returning output in preview and real renders. Manual maps can explicitly attach compiled XSD sets using **Use supplied XSDs for runtime validation**, or explicitly remove that validation. Merely inspecting/uploading schemas does not attach them. Source-root assertions are visible/editable in the node UI.
-- XSD processing never fetches external files/URLs. Imports must resolve from supplied documents; includes/redefine are rejected. DTDs and external XML/XSLT resolution remain prohibited. Schema sets allow 1-16 documents and at most 1,000,000 total characters; inspection is bounded to 2,048 nodes, 32 levels and 32 namespace URIs. The existing 262,144-character mapping JSON cap also applies to embedded schemas, so an oversized proposal fails explicitly.
+- XSD processing never fetches external files/URLs. Imports must resolve from supplied documents; includes/redefine are rejected. DTDs and external XML/XSLT resolution remain prohibited. Schema sets allow 1-16 documents and at most 1,000,000 total characters; inspection is bounded to 16,384 nodes, 32 levels and 32 namespace URIs. The existing 262,144-character mapping JSON cap also applies to embedded schemas, so an oversized proposal fails explicitly.
 - **Script evidence:** persist up to 128 script details per map, with total/omitted counts, source lines, raw language, owning FID where present, character count, SHA-256 and textual BizTalk API-reference hints. Reports show these as untranslated evidence, never script bodies or executable/safety-approved code. Script-only maps remain blocking even if they have no FID or starter XSLT.
 
 ### Completed increment: repeating records in native maps

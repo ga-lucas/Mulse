@@ -14,6 +14,8 @@ public static class BizTalkNativeMapConverter
     private const string Sentinel = "/*[local-name()='<Schema>']";
     private const string AggregateNamespace = "http://schemas.microsoft.com/BizTalk/2003/aggschema";
     private static readonly Regex Segment = new(@"^(@?)\*\[local-name\(\)='([^']+)'\]$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    // BizTalk addresses unnamed sequence groups as <Sequence> path steps; they add no element, so the remaining path must still match exactly one schema field.
+    private static readonly Regex SequenceSegment = new(@"^\*\[local-name\(\)='<Sequence>' and position\(\)='\d+'\]$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     private static readonly HashSet<string> Elements = new(StringComparer.Ordinal)
     {
         "mapsource", "SrcTree", "TrgTree", "Reference", "TreeValues", "TestValues", "ConstantValues", "Value",
@@ -94,9 +96,9 @@ public static class BizTalkNativeMapConverter
         var target = XmlSchemaInspector.Analyze(targetDocuments, RootName("TrgTree"), cancellationToken);
         var sourceRoot = SelectRoot(source, "SrcTree");
         var targetRoot = SelectRoot(target, "TrgTree");
-        var unsupportedTarget = targetRoot.Fields.FirstOrDefault(field => field.UnsupportedReason is not null || field.HasDefaultOrFixed);
+        var unsupportedTarget = targetRoot.Fields.FirstOrDefault(field => field.UnsupportedReason is not null && field.Path.EndsWith("/(choice)", StringComparison.Ordinal));
         if (unsupportedTarget is not null)
-            throw new ArgumentException($"Target '{unsupportedTarget.Path}' requires explicit translation: {unsupportedTarget.UnsupportedReason ?? "default/fixed values are not supported"}. No partial native map was produced.");
+            throw new ArgumentException($"Target '{unsupportedTarget.Path}' requires explicit translation: {unsupportedTarget.UnsupportedReason}. No partial native map was produced.");
         var namespaces = source.Namespaces.ToDictionary(entry => "s" + entry.Key, entry => entry.Value, StringComparer.Ordinal);
         foreach (var entry in target.Namespaces) namespaces.Add("t" + entry.Key, entry.Value);
         var links = new List<(XmlSchemaField From, XmlSchemaField To)>();
@@ -265,14 +267,32 @@ public static class BizTalkNativeMapConverter
             for (var current = path; current.Length > targetRoot.Path.Length; current = current[..current.LastIndexOf('/')]) produced.Add(current);
         bool AroundStub(XmlSchemaField field)
             => stubbedRecords.Any(path => field.Path == path || field.Path.StartsWith(path + "/", StringComparison.Ordinal) || path.StartsWith(field.Path + "/", StringComparison.Ordinal));
-        // Compiled BizTalk output creates an optional record unconditionally when a constant or an ungated functoid below it always writes a value; the native engine also always creates it.
+        var explicitCount = assignments.Count;
+        var fixedPaths = new HashSet<string>(StringComparer.Ordinal);
+        // Compiled BizTalk output writes a required target element's fixed schema value even when nothing is linked to it. Other schema default/fixed values are not proven and are refused when they matter.
+        foreach (var field in targetRoot.Fields.Where(field => field.HasDefaultOrFixed && field.Path != targetRoot.Path && !AroundStub(field)))
+        {
+            if (produced.Contains(field.Path))
+                throw new ArgumentException($"Target '{field.Path}' has a schema default/fixed value and is also written by a link, functoid or constant; how BizTalk combines them is not proven. No partial native map was produced.");
+            var parentPath = field.Path[..field.Path.LastIndexOf('/')];
+            if (parentPath != targetRoot.Path && !produced.Contains(parentPath)) continue;
+            if (!field.Scalar || field.FixedValue is null || !field.RequiredHere || field.UnsupportedReason is not null)
+                throw new ArgumentException($"Target '{field.Path}' requires explicit translation: default values and optional fixed values are not supported (only a required fixed value is written automatically). No partial native map was produced.");
+            assignments.Add((field, new() { Constant = field.FixedValue, TargetPath = TargetPath(field) }));
+            produced.Add(field.Path);
+            fixedPaths.Add(field.Path);
+        }
+        foreach (var field in targetRoot.Fields.Where(field => field.UnsupportedReason is not null && !AroundStub(field) && produced.Contains(field.Path)))
+            throw new ArgumentException($"Target '{field.Path}' requires explicit translation: {field.UnsupportedReason}. No partial native map was produced.");
         bool AlwaysProduces(XmlSchemaField record)
+            // Compiled BizTalk output creates an optional record unconditionally when a constant or an ungated functoid below it always writes a value; the native engine also always creates it.
             => assignments.Any(assignment => (assignment.Mapping.Constant is not null || (assignment.Mapping.Expression is not null && assignment.Mapping.Condition is null))
+                && !fixedPaths.Contains(assignment.Target.Path)
                 && assignment.Target.Path.StartsWith(record.Path + "/", StringComparison.Ordinal)
                 && !targetRoot.Fields.Any(between => between.SelfRepeating && between.Path.Length > record.Path.Length
                     && (between.Path == assignment.Target.Path || assignment.Target.Path.StartsWith(between.Path + "/", StringComparison.Ordinal))));
         var alwaysCreated = new List<string>();
-        foreach (var field in targetRoot.Fields.Where(field => field.Path != targetRoot.Path && !AroundStub(field)))
+        foreach (var field in targetRoot.Fields.Where(field => field.Path != targetRoot.Path && !AroundStub(field) && !field.Path.EndsWith("/(optional-group)", StringComparison.Ordinal)))
         {
             var isProduced = produced.Contains(field.Path);
             // Children of an optional record that is not produced are not emitted either, so their own requirement does not apply.
@@ -286,7 +306,7 @@ public static class BizTalkNativeMapConverter
             }
         }
         foreach (var (_, to) in repeatLinks)
-            if (!assignments.Any(assignment => assignment.Target.Path.StartsWith(to.Path + "/", StringComparison.Ordinal) || assignment.Target == to))
+            if (!assignments.Take(explicitCount).Any(assignment => assignment.Target.Path.StartsWith(to.Path + "/", StringComparison.Ordinal) || assignment.Target == to))
                 throw new ArgumentException($"Record link to '{to.Path}' has no mapped fields below it; empty linked records are not supported. No partial native map was produced.");
         int Order(XmlSchemaField field) => targetRoot.Fields.TakeWhile(candidate => candidate != field).Count();
         var definition = new XmlMappingDefinition
@@ -309,6 +329,15 @@ public static class BizTalkNativeMapConverter
         {
             "Review proposal only: scalar values, constants and record/repeat links were converted using the supplied schemas. No deployed policy association, BizTalk-equivalent output, or execution approval is established. Preview synthetic inputs and compare trusted expected outputs before using the map."
         };
+        if (fixedPaths.Count > 0)
+            warnings.Add($"{fixedPaths.Count} required target element(s) with a fixed schema value were written as constants (for example {string.Join("; ", fixedPaths.Take(3))}). Compiled BizTalk output observed writes the fixed value of a required, unlinked element; it was not compared with this map's own compiled output. Default values and optional fixed values are still refused.");
+        var optionalGroups = targetRoot.Fields.Where(field => field.Path.EndsWith("/(optional-group)", StringComparison.Ordinal) && (field.Path.Length == targetRoot.Path.Length + 17 || produced.Contains(field.Path[..field.Path.LastIndexOf('/')])))
+            .Select(field => field.Path[..field.Path.LastIndexOf('/')]).Distinct().ToArray();
+        if (optionalGroups.Length > 0)
+            warnings.Add($"{optionalGroups.Length} target record(s) contain an optional group of elements (for example {string.Join("; ", optionalGroups.Take(3))}). Each member is mapped on its own and whether the whole group is present is not enforced, so output can omit required members of a group that is present. Check the target schema validation results.");
+        var repeatingGroups = targetRoot.Fields.Where(field => field.GroupRepeating && !field.Path.Contains("/(") && produced.Contains(field.Path)).Select(field => field.Path).ToArray();
+        if (repeatingGroups.Length > 0)
+            warnings.Add($"{repeatingGroups.Length} produced target element(s) belong to a repeating group of elements in the schema (for example {string.Join("; ", repeatingGroups.Take(3))}). Each member is mapped as its own repeating record, so all occurrences of one member are written together before the next member. Whether BizTalk interleaves them as repeating sets was not verified against compiled output.");
         if (firstOccurrence.Count > 0)
             warnings.Add($"{firstOccurrence.Count} direct link(s) read a field below a repeating source record with no record link, so only the first occurrence is mapped (for example {string.Join("; ", firstOccurrence.Take(3))}). Compiled BizTalk output observed for such links uses the first occurrence without a loop; it was not compared with this map's own compiled output.");
         if (alwaysCreated.Count > 0)
@@ -396,7 +425,7 @@ public static class BizTalkNativeMapConverter
         var segments = expression[Sentinel.Length..].Split('/', StringSplitOptions.None);
         if (segments.Length < 2 || segments[0].Length != 0)
             throw new ArgumentException("A link must address an explicit schema root and scalar field.");
-        var names = segments.Skip(1).Select(part =>
+        var names = segments.Skip(1).Where(part => !SequenceSegment.IsMatch(part)).Select(part =>
         {
             var match = Segment.Match(part);
             if (!match.Success) throw new ArgumentException($"Unsupported BizTalk link segment '{part}'.");

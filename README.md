@@ -1240,7 +1240,7 @@ The proposal API is `POST /api/flow-designer/xml-mapping/import` with `mapXml`, 
 `targetSchemas`. Neither endpoint executes scripts, wires an orchestration or approves migration.
 Schema imports resolve only from supplied texts; external resolution, includes and redefine are not
 supported. Schema sets allow at most 16 documents / 1,000,000 total characters; inspection allows
-2,048 nodes / 32 levels / 32 namespace URIs. The mapping limit also includes embedded schema text.
+16,384 nodes / 32 levels / 32 namespace URIs. The mapping limit also includes embedded schema text.
 Preview/runtime limits remain 262,144 mapping characters, 128 fields, 32 prefixes, 32 path segments,
 1,000,000 input characters and 4,000,000 output characters.
 
