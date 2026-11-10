@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,065 service tests
+Latest verification: 2,072 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -66,6 +66,14 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Importer:** an optional record with at least one directly written field below it (no repeating level in between, fixed schema values excluded) now converts, with a warning that it is always created and that the target schema may reject an empty record. Records reached only through record links or across a repeating level are still refused, with a clearer message.
 - **Measured effect (292 real maps):** converting maps rose from 107 to 114. Next: required targets not produced (23), functoid/field inputs below a repeating record (18), functoids linked to records (15), schema paths still missing (10), functoids without a verified equivalent (9).
 - **Verification:** 2,051 service tests passed and the solution built.
+
+### Increment: Loops inferred when fields below repeating records are linked without a record link
+
+- **Evidence:** compiled output of the Froedtert, Tenet and Norton item-sync maps has no record link, yet loops over the nearest repeating source record around the nearest repeating target record that the linked fields write to. This holds for direct links and functoid inputs, and nested repeating records get nested loops.
+- **Importer:** when scalar fields (or functoid inputs) below a repeating source record are linked into a repeating target record that has no record link, a record link is inferred, outer records first, and shown under "Repeating records" for review. A warning states that this follows partner output and was not compared with the map's own compiled output.
+- **Still refused:** inputs from unrelated repeating sources under one target record, inputs outside the enclosing record link, and functoid inputs below a repeating source whose target has no repeating ancestor (BizTalk would loop around a single field; unproven).
+- **Measured effect (292 real maps):** converting maps 114 to 118; the "no record link" refusal dropped from 26 to 12. Next: required targets not produced (25), "no record link and no field written directly below" optional records (9), schema paths missing (10), functoids without a verified equivalent (10).
+- **Verification:** 2,072 service tests passed and the solution built.
 
 ### Increment: Records created only when a logical functoid is true
 

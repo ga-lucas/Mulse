@@ -226,6 +226,41 @@ public static class BizTalkNativeMapConverter
                     throw new ArgumentException($"'{from.Path}' sits below repeating '{repeating.Path}', which has no record link enclosing target '{to.Path}'. No partial native map was produced.");
         }
         foreach (var (from, to) in repeatLinks) RequireRepeatCoverage(from, to);
+        // Without a record link, compiled BizTalk output loops over the nearest repeating source record around the nearest repeating target record that the linked fields write to
+        // (observed for direct links and functoid inputs alike, and at nested levels). The loop is made explicit here so it can be reviewed and edited as a normal repeat.
+        var impliedLoops = new List<(XmlSchemaField From, XmlSchemaField To)>();
+        {
+            XmlSchemaField? DeepestRepeating(XmlSchemaField source)
+                => source is { Scalar: false, SelfRepeating: true }
+                    ? source
+                    : sourceRoot.Fields.Where(field => field.SelfRepeating && field.Path != source.Path && source.Path.StartsWith(field.Path + "/", StringComparison.Ordinal))
+                        .OrderByDescending(field => field.Path.Length).FirstOrDefault();
+            XmlSchemaField? NearestTargetRepeat(XmlSchemaField target)
+                => targetRoot.Fields.Where(field => !field.Scalar && field.SelfRepeating && field.Path != target.Path && target.Path.StartsWith(field.Path + "/", StringComparison.Ordinal))
+                    .OrderByDescending(field => field.Path.Length).FirstOrDefault();
+            var driven = links.Where(link => link.From.Scalar && !link.From.SelfRepeating).Select(link => (Sources: (IReadOnlyList<XmlSchemaField>)[link.From], link.To))
+                .Concat(functoidOutputs.Select(output => (Sources: resolver.Resolve(output.Functoid).Sources, output.To)))
+                .Select(item => (item.Sources, item.To, Repeat: NearestTargetRepeat(item.To)))
+                .Where(item => item.Repeat is not null && item.Sources.Count > 0)
+                .GroupBy(item => item.Repeat!.Path, StringComparer.Ordinal).OrderBy(group => group.Key.Length);
+            foreach (var group in driven)
+            {
+                var targetRecord = group.First().Repeat!;
+                if (repeatLinks.Any(repeat => repeat.To == targetRecord)) continue;
+                var anchors = group.SelectMany(item => item.Sources.Select(source => (Anchor: DeepestRepeating(source), item.To)))
+                    .Where(pair => pair.Anchor is not null && !repeatLinks.Any(repeat => repeat.From == pair.Anchor && pair.To.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal)))
+                    .Select(pair => pair.Anchor!).Distinct().ToList();
+                if (anchors.Count == 0) continue;
+                var deepest = anchors.OrderByDescending(anchor => anchor.Path.Length).First();
+                if (anchors.Any(anchor => anchor != deepest && !deepest.Path.StartsWith(anchor.Path + "/", StringComparison.Ordinal)))
+                    throw new ArgumentException($"Fields written below repeating target '{targetRecord.Path}' (which has no record link) read from unrelated repeating source records ({string.Join(", ", anchors.Select(anchor => anchor.Path))}); which loop BizTalk would build is not proven. No partial native map was produced.");
+                if (EnclosingRepeat(targetRecord) is { } outer && !deepest.Path.StartsWith(outer.From.Path + "/", StringComparison.Ordinal))
+                    throw new ArgumentException($"Fields written below repeating target '{targetRecord.Path}' read repeating source '{deepest.Path}', which is not inside the record link around that target ('{outer.From.Path}'); which loop BizTalk would build is not proven. No partial native map was produced.");
+                RequireRepeatCoverage(deepest, targetRecord);
+                repeatLinks.Add((deepest, targetRecord));
+                impliedLoops.Add((deepest, targetRecord));
+            }
+        }
         var assignments = new List<(XmlSchemaField Target, XmlFieldMappingDefinition Mapping)>();
         var optionalToRequired = new List<string>();
         var firstOccurrence = new List<string>();
@@ -389,6 +424,8 @@ public static class BizTalkNativeMapConverter
         var repeatingGroups = targetRoot.Fields.Where(field => field.GroupRepeating && !field.Path.Contains("/(") && produced.Contains(field.Path)).Select(field => field.Path).ToArray();
         if (repeatingGroups.Length > 0)
             warnings.Add($"{repeatingGroups.Length} produced target element(s) belong to a repeating group of elements in the schema (for example {string.Join("; ", repeatingGroups.Take(3))}). Each member is mapped as its own repeating record, so all occurrences of one member are written together before the next member. Whether BizTalk interleaves them as repeating sets was not verified against compiled output.");
+        if (impliedLoops.Count > 0)
+            warnings.Add($"{impliedLoops.Count} record link(s) were inferred because fields below a repeating source record are linked into a repeating target record without a record link (for example {string.Join("; ", impliedLoops.Take(3).Select(loop => $"{loop.From.Path} -> {loop.To.Path}"))}). Compiled BizTalk output of unrelated partner maps loops this way; it was not compared with this map's own compiled output. Review them under Repeating records.");
         if (firstOccurrence.Count > 0)
             warnings.Add($"{firstOccurrence.Count} direct link(s) read a field below a repeating source record with no record link, so only the first occurrence is mapped (for example {string.Join("; ", firstOccurrence.Take(3))}). Compiled BizTalk output observed for such links uses the first occurrence without a loop; it was not compared with this map's own compiled output.");
         if (alwaysCreated.Count > 0)
