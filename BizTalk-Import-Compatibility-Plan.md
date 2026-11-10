@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,999 service tests
+Latest verification: 2,023 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -81,6 +81,23 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Limits:** folding the record the target sits in, or a record-and-value fold inside a condition, is refused.
 - **Warning at import:** whether BizTalk folds relative to the current record or across the whole message inside a loop, and what the scope input changes, are unproven; review those maps.
 - **Verification:** 1,999 service tests passed and the solution built.
+
+### Increment: multi-input maps (inline aggregate source schema)
+
+- **Measured:** about 25 of the 292 maps take several input messages. Their `.btm` embeds an inline wrapper schema (namespace `http://schemas.microsoft.com/BizTalk/2003/aggschema`, a `Root` with `InputMessagePart_0..N`, each part an `xs:element ref` to an imported schema).
+- **Approach:** the converter reads the inline wrapper under the source tree and adds it to the source schema set. Part schemas are resolved by namespace; the importer's deriver resolves each `schemaLocation` class name through the project's schemas. A missing part schema, a wrapper with another namespace, extra children, or an inline schema beside a reference is refused. Inline *target* schemas remain unsupported.
+- **Runtime input:** the map expects one aggregate document. Build it with `xml-parts-render` (root name, aggschema namespace, parts named `InputMessagePart_N`, in order). Parts carry no namespace.
+- **Not done / unproven:** the importer does not yet wire `xml-parts-render` into generated flows; the part order cannot be recovered from the map. Both are stated in the import warning.
+- **Verification:** 8 new tests.
+
+### Increment: Index functoid (FID 323)
+
+- **Measured:** 15 uses in 2 of 292 maps, both multi-input; the index comes from another input part.
+- **Approach:** becomes the editable formula function `IndexValue(value, level1, index1, [level2, index2, ...])`: the value at the index-th occurrence of each listed repeating ancestor, outermost first, compiled to a pure XPath with positional predicates. Non-constant indexes are hoisted into XSLT variables. A missing or out-of-range index writes an empty value.
+- **Import rules:** the value must be read directly from the source; the number of indexes must equal the number of repeating levels on the value's path (otherwise refused); index inputs may be constants, source values or other functoids, but not repeating values. The converter supplies the level paths, so users edit only the indexes.
+- **Limits:** not usable in a condition when the index is computed.
+- **Warning at import:** the behavior follows BizTalk's documentation; no compiled output was available to confirm it (especially out-of-range indexes).
+- **Verification:** 2,023 service tests passed and the solution built. Functoid 703 now stands in as the example of an unsupported FID.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
 

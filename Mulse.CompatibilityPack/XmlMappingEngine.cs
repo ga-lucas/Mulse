@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
@@ -246,6 +247,7 @@ public sealed partial class XmlMappingEngine
         string Text(XmlValueExpression argument) => argument.Kind == XmlValueExpressionKind.Constant ? Compile(argument, scopes, folds, prelude) : $"string({Compile(argument, scopes, folds, prelude)})";
         var function = expression.Function!.Value;
         if (IsFold(function)) return CompileFold(function, expression, scopes, folds, prelude);
+        if (function == XmlMappingFunction.IndexValue) return CompileIndex(expression, scopes, folds, prelude);
         if (function == XmlMappingFunction.RecordPosition)
         {
             var scope = scopes.ToList().LastIndexOf(expression.Arguments[0].SourcePath!);
@@ -276,6 +278,46 @@ public sealed partial class XmlMappingEngine
         }
     }
 
+    // IndexValue(value, level1, index1, ...) selects the index-th occurrence of each listed ancestor of the value as one XPath: .../level1[position() = i1]/.../value.
+    // A formula index is evaluated once into a variable, because inside a predicate a relative path would refer to the candidate node, not the target's record.
+    private static string CompileIndex(XmlValueExpression expression, IReadOnlyList<string> scopes, FoldContext folds, List<XElement>? prelude)
+    {
+        var arguments = expression.Arguments;
+        var leaf = arguments[0].SourcePath!;
+        if (scopes.Contains(leaf)) throw new ArgumentException($"IndexValue source '{leaf}' is the repeating record the target sits in.");
+        var anchorIndex = scopes.ToList().FindLastIndex(scope => leaf.StartsWith(scope + "/", StringComparison.Ordinal));
+        var anchor = anchorIndex < 0 ? string.Empty : scopes[anchorIndex];
+        var prefix = anchorIndex < 0 || anchorIndex == scopes.Count - 1 ? string.Empty : $"$r{anchorIndex + 1}";
+        var predicates = new Dictionary<string, string>(StringComparer.Ordinal);
+        var previous = anchor;
+        for (var position = 1; position < arguments.Count; position += 2)
+        {
+            var level = arguments[position].SourcePath!;
+            if ((level != leaf && !leaf.StartsWith(level + "/", StringComparison.Ordinal)) || !level.StartsWith(previous + "/", StringComparison.Ordinal))
+                throw new ArgumentException($"IndexValue level '{level}' must be an ancestor of '{leaf}' (or the value itself), below the repeat the target sits in, and listed outermost first.");
+            previous = level;
+            var index = arguments[position + 1];
+            if (index.Kind == XmlValueExpressionKind.Constant) predicates[level] = $"[position() = number({Compile(index, scopes, folds, prelude)})]";
+            else
+            {
+                if (prelude is null) throw new ArgumentException("IndexValue with a computed index cannot be used in a condition; compute it in the target field instead.");
+                var name = $"ix{++folds.Count}";
+                prelude.Add(new XElement(Xsl + "variable", new XAttribute("name", name), new XAttribute("select", $"number({Compile(index, scopes, folds, prelude)})")));
+                predicates[level] = $"[position() = ${name}]";
+            }
+        }
+        var path = new StringBuilder(prefix);
+        var current = string.Empty;
+        foreach (var segment in leaf.Split('/').Skip(1))
+        {
+            current += "/" + segment;
+            if (current.Length <= anchor.Length) continue;
+            if (path.Length > 0 || anchor.Length == 0) path.Append('/');
+            path.Append(segment).Append(predicates.GetValueOrDefault(current));
+        }
+        return path.ToString();
+    }
+
     private static string CompileFold(XmlMappingFunction function, XmlValueExpression expression, IReadOnlyList<string> scopes, FoldContext folds, List<XElement>? prelude)
     {
         var anchor = expression.Arguments[0].SourcePath!;
@@ -304,6 +346,15 @@ public sealed partial class XmlMappingEngine
     {
         if (expression.Function == XmlMappingFunction.RecordCount && expression.Arguments.Count == 1 && expression.Arguments[0].Kind == XmlValueExpressionKind.Source)
             yield return expression.Arguments[0].SourcePath!;
+        else if (expression.Function == XmlMappingFunction.IndexValue)
+        {
+            // The value and its levels are selected by position; the index formulas are ordinary single-value reads.
+            for (var position = 0; position < expression.Arguments.Count; position += position == 0 ? 1 : 2)
+                if (expression.Arguments[position].Kind == XmlValueExpressionKind.Source) yield return expression.Arguments[position].SourcePath!;
+            for (var position = 2; position < expression.Arguments.Count; position += 2)
+                foreach (var path in ExemptPaths(expression.Arguments[position])) yield return path;
+            yield break;
+        }
         else if (expression.Function is { } function && IsFold(function))
         {
             foreach (var path in XmlMappingFunctionCatalog.SourcePaths(expression)) yield return path;
@@ -322,6 +373,10 @@ public sealed partial class XmlMappingEngine
             throw new ArgumentException($"RecordCount in '{target}' must be given a source path.");
         if (expression.Function is { } fold && IsFold(fold) && expression.Arguments[0].Kind != XmlValueExpressionKind.Source)
             throw new ArgumentException($"{fold} in '{target}' must start with a source path (the nodes to fold).");
+        if (expression.Function == XmlMappingFunction.IndexValue
+            && (expression.Arguments.Count % 2 == 0 || expression.Arguments[0].Kind != XmlValueExpressionKind.Source
+                || expression.Arguments.Where((_, position) => position % 2 == 1).Any(level => level.Kind != XmlValueExpressionKind.Source)))
+            throw new ArgumentException($"IndexValue in '{target}' must be a source path followed by pairs of a source path (the repeating record) and an index formula.");
         foreach (var argument in expression.Arguments) RequireRecordPositionSources(argument, repeats, target);
     }
 

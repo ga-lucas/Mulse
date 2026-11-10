@@ -324,6 +324,71 @@ public sealed class XmlMappingExpressionTests
         Assert.Contains("cannot be used in a condition", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(inCondition))).Message);
     }
 
+    private const string Cases = "<Input><Idx>2</Idx><Case><Item><Id>a1</Id></Item><Item><Id>a2</Id></Item></Case><Case><Item><Id>b1</Id></Item><Item><Id>b2</Id></Item><Item><Id>b3</Id></Item></Case></Input>";
+
+    [Theory]
+    [InlineData("1", "2", "a2")]
+    [InlineData("2", "3", "b3")]
+    [InlineData("2", "4", "")]
+    [InlineData("3", "1", "")]
+    [InlineData("x", "1", "")]
+    [InlineData("1", "0", "")]
+    public void IndexValue_SelectsTheIndexedOccurrenceOfEachLevel(string outer, string inner, string expected)
+    {
+        var expression = Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Case"), Const(outer), Src("/Input/Case/Item"), Const(inner));
+        Assert.Equal(expected, Run(expression, Cases));
+    }
+
+    [Fact]
+    public void IndexValue_TakesIndexesFromSourcesAndFormulas()
+    {
+        var fromSource = Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Case"), Const("2"), Src("/Input/Case/Item"), Src("/Input/Idx"));
+        Assert.Equal("b2", Run(fromSource, Cases));
+        var computed = Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Case"), Const("1"), Src("/Input/Case/Item"), Fn(XmlMappingFunction.MathAdd, Src("/Input/Idx"), Const("-1")));
+        Assert.Equal("a1", Run(computed, Cases));
+        var xslt = new XmlMappingEngine(XmlMappingTests.Json(Map(computed))).Xslt;
+        Assert.Contains("[position() = $ix1]", xslt, StringComparison.Ordinal);
+        Assert.Equal("a1", Run(Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Case/Item"), Const("1")), Cases));
+    }
+
+    [Fact]
+    public void IndexValue_InsideARepeat_IndexesBelowTheCurrentRecord()
+    {
+        var map = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Repeats = [new() { SourcePath = "/Input/Case", TargetPath = "C" }],
+            Fields = [new() { TargetPath = "C/Second", Expression = Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Case/Item"), Const("2")) },
+                new() { TargetPath = "C/Pick", Expression = Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Case/Item"), Src("/Input/Idx")) }]
+        };
+        var output = XDocument.Parse(new XmlMappingEngine(XmlMappingTests.Json(map)).Transform(Cases)).Root!;
+        Assert.Equal(["a2", "b2"], output.Elements("C").Select(item => item.Element("Second")!.Value));
+        Assert.Equal(["a2", "b2"], output.Elements("C").Select(item => item.Element("Pick")!.Value));
+    }
+
+    [Fact]
+    public void IndexValue_IsRefusedWhenMisused()
+    {
+        string Message(XmlValueExpression expression) => Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(Map(expression)))).Message;
+        Assert.Contains("pairs of a source path", Message(Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Case"), Const("1"), Src("/Input/Case/Item"))), StringComparison.Ordinal);
+        Assert.Contains("pairs of a source path", Message(Fn(XmlMappingFunction.IndexValue, Const("x"), Src("/Input/Case"), Const("1"))), StringComparison.Ordinal);
+        Assert.Contains("must be an ancestor", Message(Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Other"), Const("1"))), StringComparison.Ordinal);
+        Assert.Contains("outermost first", Message(Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Case/Item"), Const("1"), Src("/Input/Case"), Const("1"))), StringComparison.Ordinal);
+        var inCondition = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Fields = [new() { TargetPath = "A", Expression = Const("x"), Condition = Fn(XmlMappingFunction.LogicalEq, Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Case/Item"), Src("/Input/Idx")), Const("a1")) }]
+        };
+        Assert.Contains("cannot be used in a condition", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(inCondition))).Message);
+        var self = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Repeats = [new() { SourcePath = "/Input/Case", TargetPath = "C" }],
+            Fields = [new() { TargetPath = "C/X", Expression = Fn(XmlMappingFunction.IndexValue, Src("/Input/Case/Item/Id"), Src("/Input/Case"), Const("1")) }]
+        };
+        Assert.Contains("must be an ancestor", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(self))).Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void GeneratedStylesheet_DeclaresTheFunctionNamespaceOnlyWhenUsed()
     {

@@ -120,7 +120,9 @@ public enum XmlMappingFunction
     CumulativeAverage,
     CumulativeMin,
     CumulativeMax,
-    CumulativeConcat
+    CumulativeConcat,
+    // BizTalk Index functoid (323): ported from its documented behavior (the i-th occurrence of each repeating ancestor); not compared with a compiled map.
+    IndexValue
 }
 
 /// <summary>

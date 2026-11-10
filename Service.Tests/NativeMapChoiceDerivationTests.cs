@@ -101,6 +101,52 @@ public sealed class NativeMapChoiceDerivationTests : IDisposable
     }
 
     [Fact]
+    public void MultiInputMap_ResolvesEachPartSchemaByClassNameAndReportsTheAggregateInput()
+    {
+        var project = WriteProject();
+        File.WriteAllText(Path.Combine(_directory, "Schemas", "Extra.xsd"), """
+            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:extra" elementFormDefault="qualified">
+              <xs:element name="Extra"><xs:complexType><xs:sequence><xs:element name="Val" type="xs:string" /></xs:sequence></xs:complexType></xs:element>
+            </xs:schema>
+            """);
+        File.WriteAllText(project, File.ReadAllText(project).Replace("</ItemGroup>",
+            "<Schema Include=\"Schemas\\Extra.xsd\"><Namespace>Acme.Partner.Schemas</Namespace><TypeName>Extra</TypeName></Schema></ItemGroup>", StringComparison.Ordinal));
+        const string aggregate = "http://schemas.microsoft.com/BizTalk/2003/aggschema";
+        string P(string path) => System.Security.SecurityElement.Escape(NativeMapImportTests.Path(path));
+        var wrapper = $"""
+            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:a="urn:source" xmlns:b="urn:extra" targetNamespace="{aggregate}">
+              <xs:import schemaLocation="Acme.Partner.Schemas.Order" namespace="urn:source" />
+              <xs:import schemaLocation="Acme.Partner.Schemas.Extra" namespace="urn:extra" />
+              <xs:element name="Root"><xs:complexType><xs:sequence>
+                <xs:element name="InputMessagePart_0"><xs:complexType><xs:sequence><xs:element ref="a:Order" /></xs:sequence></xs:complexType></xs:element>
+                <xs:element name="InputMessagePart_1"><xs:complexType><xs:sequence><xs:element ref="b:Extra" /></xs:sequence></xs:complexType></xs:element>
+              </xs:sequence></xs:complexType></xs:element>
+            </xs:schema>
+            """;
+        var map = "<mapsource><SrcTree RootNode_Name=\"Root\">" + wrapper + "</SrcTree><TrgTree RootNode_Name=\"Result\"><Reference Location=\"Acme.Partner.Schemas.Result\" /></TrgTree><Pages><Page Name=\"p\"><Links>"
+            + $"<Link LinkID=\"1\" LinkFrom=\"{P("Root/InputMessagePart_0/Order/@code")}\" LinkTo=\"{P("Result/@code")}\" />"
+            + $"<Link LinkID=\"2\" LinkFrom=\"{P("Root/InputMessagePart_1/Extra/Val")}\" LinkTo=\"{P("Result/Number")}\" />"
+            + "</Links></Page></Pages></mapsource>";
+        File.WriteAllText(Path.Combine(_directory, "Maps", "OrderToResult.btm"), map);
+
+        var result = Derive(project, Literals(Good));
+
+        var item = result.Report.Single();
+        Assert.True(item.Status == "Converted", item.Status + ": " + item.Detail);
+        Assert.Contains(item.Warnings, warning => warning.Contains("xml-parts-render", StringComparison.Ordinal));
+        var entry = Assert.Single(RenderDispatchDefinition.Read(result.CasesJson));
+        var output = XDocument.Parse(new XmlMappingEngine(entry.Settings["mappingJson"]).Transform(
+            $"<Root xmlns='{aggregate}'><InputMessagePart_0 xmlns=''><Order xmlns='urn:source' code='A'><Id>1</Id></Order></InputMessagePart_0><InputMessagePart_1 xmlns=''><Extra xmlns='urn:extra'><Val>V</Val></Extra></InputMessagePart_1></Root>"));
+        Assert.Equal("V", output.Root!.Element("Number")!.Value);
+        Assert.Equal("A", output.Root.Attribute("code")!.Value);
+
+        File.WriteAllText(Path.Combine(_directory, "Maps", "OrderToResult.btm"), map.Replace("Acme.Partner.Schemas.Extra", "Acme.Partner.Schemas.Absent", StringComparison.Ordinal));
+        var unresolved = Derive(project, Literals(Good)).Report.Single();
+        Assert.Equal("SchemaUnresolved", unresolved.Status);
+        Assert.Contains("Acme.Partner.Schemas.Absent", unresolved.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ManyValues_StopAtTheRenderDispatchCaseCapAndReportTheRest()
     {
         var project = WriteProject();

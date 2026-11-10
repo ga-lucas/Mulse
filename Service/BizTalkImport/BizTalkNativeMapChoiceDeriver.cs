@@ -94,9 +94,44 @@ internal static class BizTalkNativeMapChoiceDeriver
         return new(report, JsonSerializer.Serialize(cases, Json));
     }
 
+    private static readonly XNamespace Xsd = "http://www.w3.org/2001/XMLSchema";
+
+    // A multi-input map's inline aggregate wrapper names each input part's schema through xs:import schemaLocation (a BizTalk class name).
+    // The converter adds the wrapper itself; the part schemas (and their imports) are resolved here through the source catalog.
+    private static IReadOnlyList<string>? AggregateDocuments(XElement[] inline, BizTalkSchemaSourceCatalog schemas, out string? problem)
+    {
+        problem = null;
+        var locations = inline.Length == 1
+            ? inline[0].Elements(Xsd + "import").Select(static import => (string?)import.Attribute("schemaLocation")).ToArray() : [];
+        if (locations.Length == 0 || locations.Any(string.IsNullOrWhiteSpace))
+        {
+            problem = "The map's inline source schema does not import each input part's schema by a schemaLocation class name.";
+            return null;
+        }
+        var documents = new List<string>();
+        foreach (var location in locations.Distinct(StringComparer.Ordinal))
+        {
+            var evidence = schemas.Resolve(location!);
+            if (evidence.Status != "SourceCandidate" || evidence.Candidates.Count != 1)
+            {
+                problem = $"Input part schema '{location}' is {evidence.Status} ({evidence.Candidates.Count} source candidates); add the owning project to the source paths.";
+                return null;
+            }
+            try { documents.AddRange(schemas.ReadSchemaDocuments(evidence.Candidates[0].SourcePath)); }
+            catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException or XmlException)
+            {
+                problem = $"Input part schema '{location}' could not be read: {Truncate(exception.Message)}";
+                return null;
+            }
+        }
+        return documents.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
     private static IReadOnlyList<string>? SchemaDocuments(XDocument map, string tree, BizTalkSchemaSourceCatalog schemas, out string? problem)
     {
         problem = null;
+        if (tree == "SrcTree" && map.Root?.Elements(tree).SingleOrDefault()?.Elements(Xsd + "schema").ToArray() is { Length: > 0 } inline)
+            return AggregateDocuments(inline, schemas, out problem);
         var location = map.Root?.Elements(tree).SingleOrDefault()?.Elements("Reference").SingleOrDefault()?.Attribute("Location")?.Value;
         if (string.IsNullOrWhiteSpace(location))
         {

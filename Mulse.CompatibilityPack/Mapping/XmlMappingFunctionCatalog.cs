@@ -23,6 +23,7 @@ public static class XmlMappingFunctionCatalog
             or XmlMappingFunction.RecordCount => (1, 1),
         XmlMappingFunction.CumulativeSum or XmlMappingFunction.CumulativeAverage or XmlMappingFunction.CumulativeMin
             or XmlMappingFunction.CumulativeMax or XmlMappingFunction.CumulativeConcat => (1, 3),
+        XmlMappingFunction.IndexValue => (3, 17),
         XmlMappingFunction.StringConcat => (2, 32),
         XmlMappingFunction.LogicalAnd or XmlMappingFunction.LogicalOr or XmlMappingFunction.MathAdd
             or XmlMappingFunction.MathSubtract or XmlMappingFunction.MathMultiply => (2, 16),
@@ -49,7 +50,7 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.LogicalLte => 314, XmlMappingFunction.LogicalOr => 320, XmlMappingFunction.LogicalNot => 705,
         XmlMappingFunction.RecordPosition => 474, XmlMappingFunction.RecordCount => 322,
         XmlMappingFunction.CumulativeSum => 324, XmlMappingFunction.CumulativeAverage => 325, XmlMappingFunction.CumulativeMin => 326,
-        XmlMappingFunction.CumulativeMax => 327, XmlMappingFunction.CumulativeConcat => 328,
+        XmlMappingFunction.CumulativeMax => 327, XmlMappingFunction.CumulativeConcat => 328, XmlMappingFunction.IndexValue => 323,
         _ => null
     };
 
@@ -102,10 +103,11 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.CumulativeMin => "CumulativeMin(source) or CumulativeMin(record, [condition,] value): smallest of the values over every node the source path selects (BizTalk Cumulative Minimum functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Non-numeric values give an empty result. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
         XmlMappingFunction.CumulativeMax => "CumulativeMax(source) or CumulativeMax(record, [condition,] value): largest of the values over every node the source path selects (BizTalk Cumulative Maximum functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Non-numeric values give an empty result. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
         XmlMappingFunction.CumulativeConcat => "CumulativeConcat(source) or CumulativeConcat(record, [condition,] value): the values over every node the source path selects, joined in document order without a separator (BizTalk Cumulative Concatenate functoid; empty when none). With a record, the value formula is evaluated once per record node, only where the optional condition is true. Inside a repeating record only that record's nodes are folded; the record must not be the repeat the target sits in.",
+        XmlMappingFunction.IndexValue => "IndexValue(value, level1, index1, [level2, index2, ...]): the value at a source path, taking the index-th occurrence (1-based) of each listed level (BizTalk Index functoid). Each level is the source path of a repeating record that is an ancestor of the value (or the value itself), listed outermost first; the index is any formula. Empty when no such node exists or an index is not a whole number. Levels must lie below the repeat the target sits in.",
         _ => throw new ArgumentOutOfRangeException(nameof(function))
     };
 
-    /// <summary>Custom function and parameter names: letters, digits and underscore, not starting with a digit.</summary>
+    /// <summary>Custom function and parameter names
     public static bool IsIdentifier(string? name)
         => !string.IsNullOrEmpty(name) && name.Length <= 64 && (char.IsAsciiLetter(name[0]) || name[0] == '_')
             && name.All(static character => char.IsAsciiLetterOrDigit(character) || character == '_');
