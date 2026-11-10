@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,088 service tests
+Latest verification: 2,097 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -66,6 +66,15 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Importer:** an optional record with at least one directly written field below it (no repeating level in between, fixed schema values excluded) now converts, with a warning that it is always created and that the target schema may reject an empty record. Records reached only through record links or across a repeating level are still refused, with a clearer message.
 - **Measured effect (292 real maps):** converting maps rose from 107 to 114. Next: required targets not produced (23), functoid/field inputs below a repeating record (18), functoids linked to records (15), schema paths still missing (10), functoids without a verified equivalent (9).
 - **Verification:** 2,051 service tests passed and the solution built.
+
+### Increment: A record switched on from a repeating list (per-partner on/off settings)
+
+- **Evidence:** in the `CommonBilling_PreProcessingMap` family a repeating `Setting` (`@Name`, `@Value`) feeds C# scripting functoids and `LogicalEq true`, and the result is linked to the `Procedures` / `PostProcedures` records, which the schema allows once. Compiled output loops over `Setting`, tests the result, writes the record and only then loops over the linked source record inside it. The business meaning (confirmed by the user): per-partner switches that turn the procedure sections on or off.
+- **Change:** a logical functoid fed from one repeating source record that no record link carries into the gated record, on a target record that cannot repeat, becomes a record condition with `AnySourcePath` (new, editable in the conditional-record editor). The condition is tried against each source record; the record is written once when one passes, and the run stops when two or more pass (BizTalk would write a duplicate of a record the schema allows once). A record link from a single, non-repeating source record onto the gated record no longer gates it, which matches the compiled order (an absent source record leaves an empty switched-on record).
+- **Still true:** the C# scripts stay documented stubs (the map fails closed until the function body is supplied in the UI); the test shows the stub being filled in with a formula and the switch working. A gated record whose only content comes from a script-built record stays refused.
+- **Measured effect (225 declared maps):** converting maps rose from 136 to 140. Three more PreProcessing maps now stop at a script-built record below the gated record; two stop at a script-built `Setting` list.
+- **Not yet proven against a real message:** no exported input/output pair exists for these maps. Exported pairs would let `ImportMapVerificationTests` prove them.
+- **Verification:** 2,097 service tests passed and the solution built.
 
 ### Increment: Converted maps can be verified against real BizTalk messages
 

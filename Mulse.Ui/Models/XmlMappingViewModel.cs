@@ -45,6 +45,8 @@ public sealed class XmlRecordConditionViewModel
 {
     public string TargetPath { get; set; } = string.Empty;
     public XmlValueExpressionViewModel? Condition { get; set; }
+    /// <summary>Optional repeating source record the condition ranges over; the record is written once when it holds for at least one such record (several is an error).</summary>
+    public string? AnySourcePath { get; set; }
 }
 
 public sealed class XmlFieldMappingViewModel

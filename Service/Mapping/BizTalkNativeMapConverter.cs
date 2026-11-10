@@ -218,9 +218,9 @@ public static class BizTalkNativeMapConverter
         (XmlSchemaField From, XmlSchemaField To)? EnclosingRepeat(XmlSchemaField targetField)
             => repeatLinks.Where(repeat => targetField.Path == repeat.To.Path || targetField.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal))
                 .OrderByDescending(repeat => repeat.To.Path.Length).Select(repeat => ((XmlSchemaField, XmlSchemaField)?)repeat).FirstOrDefault();
-        void RequireRepeatCoverage(XmlSchemaField from, XmlSchemaField to, bool includeRecord = false)
+        void RequireRepeatCoverage(XmlSchemaField from, XmlSchemaField to, bool includeRecord = false, XmlSchemaField? ranging = null)
         {
-            foreach (var repeating in sourceRoot.Fields.Where(field => field.SelfRepeating && field.Path != from.Path
+            foreach (var repeating in sourceRoot.Fields.Where(field => field.SelfRepeating && field.Path != from.Path && field != ranging
                          && from.Path.StartsWith(field.Path + "/", StringComparison.Ordinal)))
                 if (!repeatLinks.Any(repeat => repeat.From == repeating && (to.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal) || (includeRecord && to.Path == repeat.To.Path))))
                     throw new ArgumentException($"'{from.Path}' sits below repeating '{repeating.Path}', which has no record link enclosing target '{to.Path}'. No partial native map was produced.");
@@ -305,6 +305,7 @@ public static class BizTalkNativeMapConverter
             assignments.Add((to, new() { Expression = resolved.Expression, Condition = resolved.Condition, TargetPath = TargetPath(to) }));
         }
         var recordGates = new List<(XmlSchemaField Record, XmlRecordConditionDefinition Definition)>();
+        var rangedGates = new List<string>();
         foreach (var (producer, record) in recordGateLinks)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -314,17 +315,32 @@ public static class BizTalkNativeMapConverter
             if (resolved.Condition is not null)
                 throw new ArgumentException($"Functoid {producer} linked to record '{record.Path}' is itself conditional; that combination is not supported. No partial native map was produced.");
             resolver.NoteTarget(producer, RecordPath(record));
+            // A logical functoid fed by a repeating source record that no record link carries into this record makes BizTalk's compiled output loop over that record around the target and emit the target once per true result.
+            // For a record the schema allows once that is "written once when any such record satisfies the condition"; a second match would make BizTalk write a duplicate, so the native map stops instead.
+            XmlSchemaField? ranging = null;
+            var uncovered = resolved.Sources.Where(field => field.Scalar && !field.SelfRepeating)
+                .SelectMany(field => sourceRoot.Fields.Where(repeating => repeating.SelfRepeating && repeating.Path != field.Path && field.Path.StartsWith(repeating.Path + "/", StringComparison.Ordinal)))
+                .Where(repeating => !repeatLinks.Any(repeat => repeat.From == repeating && (record.Path == repeat.To.Path || record.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal))))
+                .Distinct().ToList();
+            if (uncovered.Count == 1 && !record.SelfRepeating && (resolved.Scopes ?? []).Count == 0)
+            {
+                ranging = uncovered[0];
+                // The loop is outside the record in compiled output; a record link from a single (non-repeating) source record is then only an addressing step inside it, so it no longer gates the record.
+                var own = repeatLinks.FindIndex(repeat => repeat.To == record && !repeat.From.SelfRepeating);
+                if (own >= 0) repeatLinks.RemoveAt(own);
+            }
             var positionRecords = PositionRecordPaths(resolved.Expression).ToHashSet(StringComparer.Ordinal);
             foreach (var field in resolved.Sources)
             {
-                RequireRepeatCoverage(field, record, includeRecord: true);
+                RequireRepeatCoverage(field, record, includeRecord: true, ranging);
                 if (!field.Scalar && positionRecords.Contains(Prefix(field.Path, "s")) && !repeatLinks.Any(repeat => repeat.From == field && (record.Path == repeat.To.Path || record.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal))))
                     throw new ArgumentException($"Iteration over repeating record '{field.Path}' feeds the condition of '{record.Path}', which is not inside a record link from that record. No partial native map was produced.");
             }
             foreach (var scope in resolved.Scopes ?? [])
                 if (!repeatLinks.Any(repeat => repeat.From == scope && (record.Path == repeat.To.Path || record.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal))))
                     throw new ArgumentException($"A cumulative functoid scoped to repeating record '{scope.Path}' feeds the condition of '{record.Path}', which is not inside a record link from that record. No partial native map was produced.");
-            recordGates.Add((record, new() { TargetPath = RecordPath(record), Condition = resolved.Expression }));
+            recordGates.Add((record, new() { TargetPath = RecordPath(record), Condition = resolved.Expression, AnySourcePath = ranging is null ? null : Prefix(ranging.Path, "s") }));
+            if (ranging is not null) rangedGates.Add($"{record.Path} (any {ranging.Path})");
         }
         foreach (var value in root.Descendants("ConstantValues").Elements())
         {
@@ -418,6 +434,8 @@ public static class BizTalkNativeMapConverter
             warnings.Add($"{recordGates.Count} target record(s) are written only when a logical functoid linked to the record is true (for example {string.Join("; ", recordGates.Take(3).Select(gate => gate.Record.Path))}); inside a repeating record the condition is evaluated once per repeated record. Compiled BizTalk output of unrelated partner maps wraps the record in such a test; it was not compared with this map's own compiled output.");
         if (gatedRequired.Count > 0)
             warnings.Add($"Conditional record(s) {string.Join("; ", gatedRequired.Take(3))} are required by the target schema, so output is invalid whenever the condition is false.");
+        if (rangedGates.Count > 0)
+            warnings.Add($"Record(s) {string.Join("; ", rangedGates.Take(3))} are switched on by a functoid fed from a repeating source list: each list entry is tested and the record is written once when one passes. BizTalk would write the record once per passing entry; the native map stops with an error when two or more pass, because the target schema allows the record once.");
         if (fixedPaths.Count > 0)
             warnings.Add($"{fixedPaths.Count} required target element(s) with a fixed schema value were written as constants (for example {string.Join("; ", fixedPaths.Take(3))}). Compiled BizTalk output observed writes the fixed value of a required, unlinked element; it was not compared with this map's own compiled output. Default values and optional fixed values are still refused.");
         var optionalGroups = targetRoot.Fields.Where(field => field.Path.EndsWith("/(optional-group)", StringComparison.Ordinal) && (field.Path.Length == targetRoot.Path.Length + 17 || produced.Contains(field.Path[..field.Path.LastIndexOf('/')])))

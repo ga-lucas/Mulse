@@ -232,12 +232,14 @@ public sealed class XmlMappingUiTests
         {
             Version = 2, TargetRoot = "Out",
             Fields = [new() { SourcePath = "/In/A", TargetPath = "Meta/A" }],
-            RecordConditions = [new() { TargetPath = "Meta", Condition = new() { Kind = Mulse.CompatibilityPack.Mapping.XmlValueExpressionKind.Constant, Constant = "true" } }]
+            RecordConditions = [new() { TargetPath = "Meta", AnySourcePath = "/In/List", Condition = new() { Kind = Mulse.CompatibilityPack.Mapping.XmlValueExpressionKind.Constant, Constant = "true" } }]
         }, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
         var html = await renderer.Dispatcher.InvokeAsync(async () => (await renderer.RenderComponentAsync<XmlMappingEditor>(
             ParameterView.FromDictionary(new Dictionary<string, object?> { [nameof(XmlMappingEditor.Value)] = json }))).ToHtmlString());
         Assert.Contains("Conditional records (1)", html);
         Assert.Contains("XML conditional record target path", html);
+        Assert.Contains("XML conditional record any-of source path", html);
+        Assert.Contains("/In/List", html);
         Assert.Contains("Add conditional record", html);
 
         var editor = new XmlMappingEditor();
@@ -249,6 +251,7 @@ public sealed class XmlMappingUiTests
         var map = Assert.IsType<XmlMappingViewModel>(Field(editor, "_map").GetValue(editor));
         Assert.Equal(2, map.RecordConditions.Count);
         Assert.Contains("\"recordConditions\":[", editor.Value);
+        Assert.Equal("/In/List", map.RecordConditions[0].AnySourcePath);
 
         await (Task)Invoke(editor, "SetRecordConditionAsync", map.RecordConditions[1], "NoSuchFunction(1)")!;
         Assert.NotNull(Field(editor, "_error").GetValue(editor));

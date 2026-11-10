@@ -39,6 +39,11 @@ public sealed record XmlRecordConditionDefinition
 {
     public string TargetPath { get; init; } = string.Empty;
     public XmlValueExpression? Condition { get; init; }
+    /// <summary>
+    /// Optional absolute path of a repeating source record. The condition is then evaluated for each such record (its fields are read from that record) and the target record is written once when it holds for
+    /// at least one of them, like a BizTalk logical functoid fed by a repeating record. When it holds for more than one the run fails, because BizTalk would write the record again.
+    /// </summary>
+    public string? AnySourcePath { get; init; }
 }
 
 public sealed record XmlFieldMappingDefinition

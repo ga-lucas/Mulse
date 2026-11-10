@@ -94,7 +94,10 @@ public sealed class NativeMapRecordConditionTests
             GreaterThanZero(10, 2))), StringComparison.Ordinal);
 
     [Fact]
-    public void ConditionReadingARepeatingFieldOutsideItsRecordLink_IsRefused()
-        => Assert.Contains("Line", Message(Map(Direct(1, "Order/Qty", "Result/Header/Id") + Wire(2, "Order/Line/Qty", 10) + Out(3, 10, "Result/Header"),
-            GreaterThanZero(10, 2))), StringComparison.Ordinal);
+    public void ConditionReadingARepeatingFieldOutsideItsRecordLink_RangesOverThatRecord()
+    {
+        var conversion = Convert(Map(Direct(1, "Order/Qty", "Result/Header/Id") + Wire(2, "Order/Line/Qty", 10) + Out(3, 10, "Result/Header"), GreaterThanZero(10, 2)));
+        var definition = JsonSerializer.Deserialize<XmlMappingDefinition>(conversion.MappingJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.EndsWith(":Line", Assert.Single(definition.RecordConditions).AnySourcePath, StringComparison.Ordinal);
+    }
 }

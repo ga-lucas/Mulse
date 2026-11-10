@@ -136,7 +136,7 @@
         </details>
         <details open="@(map.RecordConditions.Count > 0)">
         <summary>Conditional records (@map.RecordConditions.Count)</summary>
-        <HelpTooltip Label="Conditional records">The target record, with everything below it, is written only when the condition formula equals the text 'true' (for example LogicalGt(/s:Order/s:Lines/s:Line/s:Qty, 0)). For a repeating record the condition runs once per source record, so it can read that record's fields. Imported BizTalk logical functoids that are linked to a record become conditional records. The target path is relative to the target root and the record needs at least one mapped field. If the record is required by the target schema, output may be invalid while the condition is false.</HelpTooltip>
+        <HelpTooltip Label="Conditional records">The target record, with everything below it, is written only when the condition formula equals the text 'true' (for example LogicalGt(/s:Order/s:Lines/s:Line/s:Qty, 0)). For a repeating record the condition runs once per source record, so it can read that record's fields. Imported BizTalk logical functoids that are linked to a record become conditional records. To switch a record on from a repeating list (for example a list of name/value settings), enter that list's source path in the optional 'ranging' box: the condition is tried against each entry and the record is written once when one matches; two or more matches stop the run. The target path is relative to the target root and the record needs at least one mapped field. If the record is required by the target schema, output may be invalid while the condition is false.</HelpTooltip>
         @foreach (var record in map.RecordConditions)
         {
             <fieldset @key="record">
@@ -145,6 +145,8 @@
                 <input class="mapping-input" aria-label="XML conditional record target path" value="@record.TargetPath" @onchange="async e => { record.TargetPath = e.Value?.ToString() ?? string.Empty; _map!.Version = 2; await WriteAsync(); }" />
                 <label class="field-label">Write this record only when</label>
                 <textarea class="mapping-input" rows="2" aria-label="XML conditional record condition" value="@(record.Condition is null ? string.Empty : XmlFormula.Format(record.Condition))" @onchange="e => SetRecordConditionAsync(record, e.Value?.ToString())"></textarea>
+                <label class="field-label">Repeating source record the condition ranges over (optional)</label>
+                <input class="mapping-input" aria-label="XML conditional record any-of source path" value="@record.AnySourcePath" @onchange="async e => { record.AnySourcePath = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value!.ToString(); _map!.Version = 2; await WriteAsync(); }" />
                 <button class="secondary-button" @onclick="async () => { map.RecordConditions.Remove(record); await WriteAsync(); }">Remove conditional record</button>
             </fieldset>
         }

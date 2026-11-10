@@ -215,9 +215,18 @@ public sealed partial class XmlMappingEngine
             ValidateExpression(recordCondition.Condition, recordCondition.TargetPath, 1, ref conditionNodes, sourcePaths, custom, null);
             var expanded = 0;
             var expandedCondition = Expand(recordCondition.Condition, null, custom, [], ref expanded, 1, allowStubs, recordCondition.TargetPath);
+            var anyScope = recordCondition.AnySourcePath;
+            if (anyScope is not null)
+            {
+                if (ParsePath(anyScope, absolute: true, map)[^1].IsAttribute) throw new ArgumentException($"Record condition '{recordCondition.TargetPath}' must range over a repeating record element, not an attribute.");
+                if (XmlMappingFunctionCatalog.SourcePaths(expandedCondition).Any(path => path.StartsWith(anyScope + "/", StringComparison.Ordinal) && map.Repeats.Any(repeat => repeat.SourcePath != anyScope && path.StartsWith(repeat.SourcePath + "/", StringComparison.Ordinal) && repeat.SourcePath.StartsWith(anyScope + "/", StringComparison.Ordinal))))
+                    throw new ArgumentException($"Record condition '{recordCondition.TargetPath}' reads a record nested below '{anyScope}' that is itself repeated; the condition may only read single values of the records it ranges over.");
+            }
             RequireRecordPositionSources(expandedCondition, map.Repeats, recordCondition.TargetPath);
-            RequireEnclosingRepeats(map, repeatTargets, segments, recordCondition.TargetPath, sourcePaths, ExemptPaths(expandedCondition));
+            RequireEnclosingRepeats(map, repeatTargets, segments, recordCondition.TargetPath, sourcePaths,
+                ExemptPaths(expandedCondition).Concat(anyScope is null ? [] : sourcePaths.Where(path => path == anyScope || path.StartsWith(anyScope + "/", StringComparison.Ordinal))));
             node.RecordCondition = expandedCondition;
+            node.RecordConditionScope = anyScope;
         }
         var folds = new FoldContext();
         var rootChecks = new List<XElement>();
@@ -511,7 +520,25 @@ public sealed partial class XmlMappingEngine
         if (node.RecordCondition is { } recordCondition)
         {
             // The source checks of a conditional record live inside its gate: a skipped record must not fail on sources it never reads.
-            result = new XElement(Xsl + "if", new XAttribute("test", $"string({Compile(recordCondition, inner, folds, null)}) = 'true'"), scopeChecks, result);
+            if (node.RecordConditionScope is { } anyScope)
+            {
+                // The condition is tried against every record of the scope; the record is written once for one match and the run fails for several.
+                var matches = $"gate{++folds.Count}";
+                var level = inner.Count + 1;
+                var ranging = new XElement(Xsl + "for-each", new XAttribute("select", SourceExpression(anyScope, inner)));
+                ranging.Add(new XElement(Xsl + "variable", new XAttribute("name", $"r{level}"), new XAttribute("select", ".")));
+                ranging.Add(new XElement(Xsl + "variable", new XAttribute("name", $"p{level}"), new XAttribute("select", "position()")));
+                ranging.Add(new XElement(Xsl + "if", new XAttribute("test", $"string({Compile(recordCondition, [.. inner, anyScope], folds, null)}) = 'true'"), new XElement("m")));
+                var matchCount = $"count({NodeSetPrefix}:node-set(${matches})/m)";
+                folds.UsesNodeSet = true;
+                result = new XElement(Xsl + "for-each", new XAttribute("select", "."),
+                    new XElement(Xsl + "variable", new XAttribute("name", matches), ranging),
+                    new XElement(Xsl + "if", new XAttribute("test", $"{matchCount} > 1"),
+                        new XElement(Xsl + "message", new XAttribute("terminate", "yes"), $"The condition of record '{node.Name.LocalName}' holds for more than one '{anyScope}' record; BizTalk would write the record once for each, which the mapping does not support.")),
+                    new XElement(Xsl + "if", new XAttribute("test", $"{matchCount} = 1"), scopeChecks, result));
+            }
+            else
+                result = new XElement(Xsl + "if", new XAttribute("test", $"string({Compile(recordCondition, inner, folds, null)}) = 'true'"), scopeChecks, result);
             scopeChecks = [];
         }
         if (node.Repeat is null) return result;
@@ -567,6 +594,7 @@ public sealed partial class XmlMappingEngine
         public XmlFieldMappingDefinition? Assignment { get; set; }
         public XmlRepeatMappingDefinition? Repeat { get; set; }
         public XmlValueExpression? RecordCondition { get; set; }
+        public string? RecordConditionScope { get; set; }
     }
 
     private sealed class BoundedWriter(CancellationToken cancellationToken) : StringWriter(CultureInfo.InvariantCulture)
