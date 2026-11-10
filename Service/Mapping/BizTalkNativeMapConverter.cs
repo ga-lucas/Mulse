@@ -368,6 +368,7 @@ public static class BizTalkNativeMapConverter
                 throw new ArgumentException($"Logical functoid is linked to record '{gated.Path}', which has no mapped fields below it; an empty conditional record is not supported. No partial native map was produced.");
         var alwaysCreated = new List<string>();
         var gatedRequired = new List<string>();
+        var omittedRequired = new List<string>();
         foreach (var field in targetRoot.Fields.Where(field => field.Path != targetRoot.Path && !AroundStub(field) && !field.Path.EndsWith("/(optional-group)", StringComparison.Ordinal)))
         {
             var isProduced = produced.Contains(field.Path);
@@ -379,7 +380,11 @@ public static class BizTalkNativeMapConverter
                 continue;
             }
             if (!isProduced && field.RequiredInParent)
-                throw new ArgumentException($"Required target '{field.Path}' is not produced by any link or constant; the native engine cannot emit empty required records. No partial native map was produced.");
+            {
+                // Compiled BizTalk output of unrelated partner maps writes nothing for a required target element that has no link, constant or fixed value; the native engine does the same.
+                omittedRequired.Add(field.Path);
+                continue;
+            }
             if (isProduced && !field.Scalar && !field.RequiredInParent && !repeatLinks.Any(repeat => repeat.To == field))
             {
                 if (AlwaysProduces(field)) { alwaysCreated.Add(field.Path); continue; }
@@ -430,6 +435,8 @@ public static class BizTalkNativeMapConverter
             warnings.Add($"{firstOccurrence.Count} direct link(s) read a field below a repeating source record with no record link, so only the first occurrence is mapped (for example {string.Join("; ", firstOccurrence.Take(3))}). Compiled BizTalk output observed for such links uses the first occurrence without a loop; it was not compared with this map's own compiled output.");
         if (alwaysCreated.Count > 0)
             warnings.Add($"{alwaysCreated.Count} optional target record(s) with no record link are always created, even when every source below them is absent (for example {string.Join("; ", alwaysCreated.Take(3))}). Compiled BizTalk output of unrelated partner maps does the same: the record is written unconditionally and only the fields below it are guarded; it was not compared with this map's own compiled output. The target schema may still reject an empty record. Optional records fed only through record links are still refused.");
+        if (omittedRequired.Count > 0)
+            warnings.Add($"{omittedRequired.Count} required target element(s) have no link, constant or fixed value and are not written (for example {string.Join("; ", omittedRequired.Take(3))}). Compiled BizTalk output of unrelated partner maps omits such elements too, so the output can violate the target schema. Link them, or add a constant in the mapping editor, if the receiver needs them.");
         if (optionalToRequired.Count > 0)
             warnings.Add($"{optionalToRequired.Count} link(s) feed a required target from an optional source (for example {string.Join("; ", optionalToRequired.Take(3))}). Like BizTalk, the target element is omitted when the source is absent, so the output can then violate the target schema.");
         if (resolver.Used.Count > 0)

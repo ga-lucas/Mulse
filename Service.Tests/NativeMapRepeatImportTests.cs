@@ -130,8 +130,18 @@ public sealed class NativeMapRepeatImportTests
     }
 
     [Fact]
-    public void RequiredTargetWithoutALink_IsRejected()
-        => Assert.Contains("not produced", Assert.Throws<ArgumentException>(() => Convert(Standard.Where(link => link != "Order/Lines/Line/Sku>Result/Rows/Row/Sku"))).Message);
+    public void RequiredTargetWithoutALink_IsOmittedAndWarned()
+    {
+        var conversion = Convert(Standard.Where(link => link != "Order/Lines/Line/Sku>Result/Rows/Row/Sku"));
+        Assert.Contains(conversion.Warnings, warning => warning.Contains("required target element(s) have no link", StringComparison.Ordinal) && warning.Contains("Sku", StringComparison.Ordinal));
+        var output = XDocument.Parse(new XmlMappingEngine(conversion.MappingJson).Transform("<s:Order xmlns:s=\"urn:s\"><Id>7</Id><Lines><Line><Sku>A</Sku><Qty>2</Qty></Line></Lines></s:Order>"));
+        Assert.Single(output.Descendants("Row"));
+        Assert.Empty(output.Descendants("Sku"));
+    }
+
+    [Fact]
+    public void FullyMappedRequiredTargets_DoNotWarn()
+        => Assert.DoesNotContain(Convert(Standard).Warnings, warning => warning.Contains("required target element(s) have no link", StringComparison.Ordinal));
 
     [Fact]
     public void OptionalRecordCreatedWithoutARecordLink_IsRejected()

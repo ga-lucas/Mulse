@@ -141,7 +141,7 @@ public sealed class NativeMapImportTests
         Assert.Throws<ArgumentException>(() => BizTalkNativeMapConverter.Convert(document.ToString(), [SourceXsd], [TargetXsd]));
         document = XDocument.Parse(Map());
         document.Descendants("Link").Last().Remove();
-        Assert.Throws<ArgumentException>(() => BizTalkNativeMapConverter.Convert(document.ToString(), [SourceXsd], [TargetXsd]));
+        Assert.Contains(BizTalkNativeMapConverter.Convert(document.ToString(), [SourceXsd], [TargetXsd]).Warnings, warning => warning.Contains("required target element(s) have no link", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,072 service tests
+Latest verification: 2,073 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -66,6 +66,13 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Importer:** an optional record with at least one directly written field below it (no repeating level in between, fixed schema values excluded) now converts, with a warning that it is always created and that the target schema may reject an empty record. Records reached only through record links or across a repeating level are still refused, with a clearer message.
 - **Measured effect (292 real maps):** converting maps rose from 107 to 114. Next: required targets not produced (23), functoid/field inputs below a repeating record (18), functoids linked to records (15), schema paths still missing (10), functoids without a verified equivalent (9).
 - **Verification:** 2,051 service tests passed and the solution built.
+
+### Increment: Required target elements without a link are omitted, with a warning
+
+- **Evidence:** compiled output of the Morris, Northbay, Banner, Beacon, Steward and Kaiser maps contains no element at all for required target elements that have no link, constant or fixed value (for example the HL7 event-type, patient-class and identifier-list segments). BizTalk does not synthesize empty required elements; the output can then fail schema validation downstream.
+- **Importer:** such targets are no longer a refusal. They are simply not written, and a warning lists them and says the output can violate the target schema. Add a link or constant in the mapping editor if the receiver needs them. Required elements with a fixed schema value are still written, as before.
+- **Measured effect (292 real maps):** converting maps 118 to 138. Next: "no record link" refusal (12), optional record with no record link and no field written directly below it (11), schema paths missing (10), functoids without a verified equivalent (10).
+- **Verification:** 2,073 service tests passed and the solution built.
 
 ### Increment: Loops inferred when fields below repeating records are linked without a record link
 
