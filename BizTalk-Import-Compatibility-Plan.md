@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,047 service tests
+Latest verification: 2,051 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -52,6 +52,13 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Inspection limit:** expanding repeating groups made large HL7 schemas exceed the old 2,048-node limit, so it is now `XmlSchemaInspector.MaximumNodes` (16,384); the largest schema in the 292 sample maps fit with room to spare.
 - **Measured effect (292 real maps):** converting maps rose from 91 to 97. The "repeating model groups" and "default/fixed" blockers are gone; 31 DFT maps moved past the `<Sequence>` path error and now stop at other, specific blockers (record-linked functoids, optional records fed by direct links, missing record links). Next blockers: custom map-level XSLT (21), schema paths missing or ambiguous (18), functoid inputs below repeating (13), required targets not produced (13), optional records without a record link (13).
 - **Verification:** 2,047 service tests passed and the solution built.
+
+### Increment: Empty XsltEngine setting and bare `<Sequence>` link steps
+
+- **Finding:** the 21 maps refused as "custom map-level XSLT" did not use custom XSLT. Each carried only an empty `XsltEngine=""` attribute (25 of the 292 maps have it) that the importer did not recognize. The importer now accepts it when empty; a named engine, `CustomXSLTPath` and any other unknown map attribute are still refused.
+- **`<Sequence>` steps:** link paths may also contain a bare `<Sequence>` step without `position()`; it is skipped like the positional form, and the remaining path must still match exactly one schema field.
+- **Measured effect (292 real maps):** converting maps rose from 97 to 107. Most of the freed maps stop at later blockers. Next: functoid/field inputs below a repeating record (18), required targets not produced (17), optional records without a record link (16), functoids linked to records (15), schema paths still missing (10).
+- **Verification:** 2,051 service tests passed and the solution built.
 
 ### Increment: DLL-verified functoid IDs, cheap functoids and Value Mapping
 

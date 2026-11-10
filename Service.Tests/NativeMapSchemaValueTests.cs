@@ -96,6 +96,16 @@ public sealed class NativeMapSchemaValueTests
     }
 
     [Fact]
+    public void BareSequenceGroupSegment_IsAlsoSkipped()
+    {
+        const string body = "<xs:sequence><xs:element name=\"A\" type=\"xs:string\" /></xs:sequence>";
+        var to = Path("Result/A").Replace("/*[local-name()='A']", "/*[local-name()='<Sequence>']/*[local-name()='A']", StringComparison.Ordinal);
+        var link = $"<Link LinkID=\"1\" LinkFrom=\"{SecurityElement.Escape(Path("Order/Note"))}\" LinkTo=\"{SecurityElement.Escape(to)}\" />";
+        var result = XDocument.Parse(new XmlMappingEngine(Convert(link, body).MappingJson).Transform("<Order xmlns='urn:val'><Note>n</Note></Order>")).Root!;
+        Assert.Equal("n", result.Element(Ns + "A")!.Value);
+    }
+
+    [Fact]
     public void RepeatingChoiceGroup_IsStillRefused()
         => Assert.Contains("requires explicit translation", Assert.Throws<ArgumentException>(() => Convert(Direct(1, "Order/Note", "Result/Note"),
             "<xs:choice maxOccurs=\"unbounded\"><xs:element name=\"A\" type=\"xs:string\" /><xs:element name=\"B\" type=\"xs:string\" /></xs:choice>" + Note)).Message);

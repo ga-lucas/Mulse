@@ -15,7 +15,7 @@ public static class BizTalkNativeMapConverter
     private const string AggregateNamespace = "http://schemas.microsoft.com/BizTalk/2003/aggschema";
     private static readonly Regex Segment = new(@"^(@?)\*\[local-name\(\)='([^']+)'\]$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     // BizTalk addresses unnamed sequence groups as <Sequence> path steps; they add no element, so the remaining path must still match exactly one schema field.
-    private static readonly Regex SequenceSegment = new(@"^\*\[local-name\(\)='<Sequence>' and position\(\)='\d+'\]$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    private static readonly Regex SequenceSegment = new(@"^\*\[local-name\(\)='<Sequence>'( and position\(\)='\d+')?\]$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     private static readonly HashSet<string> Elements = new(StringComparer.Ordinal)
     {
         "mapsource", "SrcTree", "TrgTree", "Reference", "TreeValues", "TestValues", "ConstantValues", "Value",
@@ -42,7 +42,7 @@ public static class BizTalkNativeMapConverter
     private static readonly HashSet<string> MetadataAttributes = new(StringComparer.Ordinal)
     {
         "Name", "Version", "BizTalkServerMapperTool_Version", "XRange", "YRange", "OmitXmlDeclaration", "TreatElementsAsRecords",
-        "OptimizeValueMapping", "GenerateDefaultFixedNodes", "PreserveSequenceOrder", "IgnoreNamespacesForLinks", "method", "CopyPIs", "xmlVersion", "UseXSLTransform"
+        "OptimizeValueMapping", "GenerateDefaultFixedNodes", "PreserveSequenceOrder", "IgnoreNamespacesForLinks", "method", "CopyPIs", "xmlVersion", "UseXSLTransform", "XsltEngine"
     };
 
     /// <param name="embedSchemas">Persist the XSD documents in the mapping (default). Disable for compact derived choices; the persisted map never validates against them either way, and keeps its source-root assertion.</param>
@@ -92,6 +92,8 @@ public static class BizTalkNativeMapConverter
         CheckSetting("OmitXmlDeclaration", "Yes");
         CheckSetting("UseXSLTransform", "Undefined", "No");
         CheckSetting("PreserveSequenceOrder", "No");
+        // An empty engine means the map names none (the default); a named engine is an explicit choice that is not proven equivalent.
+        CheckSetting("XsltEngine", string.Empty);
         var source = XmlSchemaInspector.Analyze(sourceDocuments, RootName("SrcTree"), cancellationToken);
         var target = XmlSchemaInspector.Analyze(targetDocuments, RootName("TrgTree"), cancellationToken);
         var sourceRoot = SelectRoot(source, "SrcTree");

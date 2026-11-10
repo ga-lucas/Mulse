@@ -142,6 +142,9 @@ public sealed class NativeMapRepeatImportTests
     [InlineData("UseXSLTransform", "Undefined", true)]
     [InlineData("UseXSLTransform", "Yes", false)]
     [InlineData("PreserveSequenceOrder", "Yes", false)]
+    [InlineData("XsltEngine", "", true)]
+    [InlineData("XsltEngine", "Custom", false)]
+    [InlineData("CustomXSLTPath", "x.xsl", false)]
     public void MapSettingsForRepeatingMaps_AreChecked(string name, string value, bool accepted)
     {
         var attributes = $"{name}='{value}'";
