@@ -86,6 +86,50 @@ public sealed class XmlFormulaUiTests
     }
 
     [Fact]
+    public async Task EditorCondition_RoundTripsSurvivesFormulaEditsAndDrawsItsSources()
+    {
+        var json = JsonSerializer.Serialize(new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Out",
+            Fields = [new()
+            {
+                TargetPath = "B",
+                Expression = new() { Kind = XmlValueExpressionKind.Source, SourcePath = "/In/A" },
+                Condition = new()
+                {
+                    Kind = XmlValueExpressionKind.Function, Function = XmlMappingFunction.LogicalEq,
+                    Arguments = [new() { Kind = XmlValueExpressionKind.Source, SourcePath = "/In/Kind" }, new() { Kind = XmlValueExpressionKind.Constant, Constant = "X" }]
+                }
+            }]
+        }, Web);
+        var editor = new XmlMappingEditor();
+        Property(editor, "Value").SetValue(editor, json);
+        Invoke(editor, "OnParametersSet");
+        Assert.Null(Field(editor, "_error").GetValue(editor));
+        var map = (XmlMappingViewModel)Field(editor, "_map").GetValue(editor)!;
+        var field = map.Fields[0];
+        Assert.Equal(["/In/A", "/In/Kind"], XmlMappingGraph.SourcePaths(field).Order(StringComparer.Ordinal));
+
+        await (Task)Invoke(editor, "SetFormulaAsync", field, "StringUpperCase(/In/A)")!;
+        var saved = JsonSerializer.Deserialize<XmlMappingDefinition>(editor.Value, Web)!;
+        Assert.Equal(XmlMappingFunction.LogicalEq, saved.Fields[0].Condition!.Function);
+        Assert.Equal("AB", System.Xml.Linq.XDocument.Parse(new XmlMappingEngine(editor.Value).Transform("<In><A>ab</A><Kind>X</Kind></In>")).Root!.Element("B")!.Value);
+        Assert.Null(System.Xml.Linq.XDocument.Parse(new XmlMappingEngine(editor.Value).Transform("<In><A>ab</A><Kind>Y</Kind></In>")).Root!.Element("B"));
+
+        var before = editor.Value;
+        await (Task)Invoke(editor, "SetConditionAsync", field, "LogicalEq(/In/Kind")!;
+        Assert.Equal(before, editor.Value);
+        Assert.Contains("Formula error", Assert.IsType<string>(Field(editor, "_error").GetValue(editor)));
+
+        await (Task)Invoke(editor, "SetConditionAsync", field, "")!;
+        Assert.Null(JsonSerializer.Deserialize<XmlMappingDefinition>(editor.Value, Web)!.Fields[0].Condition);
+
+        await (Task)Invoke(editor, "SetConditionAsync", field, "LogicalEq(/In/Kind, 'Y')")!;
+        await (Task)Invoke(editor, "SetKindAsync", field, "Constant")!;
+        Assert.Null(JsonSerializer.Deserialize<XmlMappingDefinition>(editor.Value, Web)!.Fields[0].Condition);
+    }
+
+    [Fact]
     public async Task EditorFormula_SavesAsEngineJsonAndRunsNatively()
     {
         var editor = new XmlMappingEditor();

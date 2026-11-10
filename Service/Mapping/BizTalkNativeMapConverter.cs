@@ -20,14 +20,18 @@ public static class BizTalkNativeMapConverter
         "Functoid", "Input-Parameters", "Parameter", "ScripterCode", "Script"
     };
 
-    /// <summary>Functoids whose BizTalk helper bodies were verified against compiled maps (*.btm.cs). Anything else stays unconverted and is named in the error.</summary>
+    /// <summary>Functoids with a native equivalent: those flagged by <see cref="XmlMappingFunctionCatalog.HelperVerified"/> match a helper body BizTalk compiled into a real map, the rest follow the documented behavior and are reported as unverified. Anything else stays unconverted and is named in the error.</summary>
     private static readonly IReadOnlyDictionary<int, XmlMappingFunction> FunctoidCatalog = new Dictionary<int, XmlMappingFunction>
     {
         [102] = XmlMappingFunction.StringLeft, [104] = XmlMappingFunction.StringRight, [105] = XmlMappingFunction.StringSize,
         [107] = XmlMappingFunction.StringConcat, [110] = XmlMappingFunction.StringUpperCase, [112] = XmlMappingFunction.MathInt,
         [121] = XmlMappingFunction.MathDivide, [123] = XmlMappingFunction.DateCurrentDate, [125] = XmlMappingFunction.DateCurrentDateTime,
         [311] = XmlMappingFunction.LogicalGt, [315] = XmlMappingFunction.LogicalEq, [316] = XmlMappingFunction.LogicalNe,
-        [321] = XmlMappingFunction.LogicalAnd, [701] = XmlMappingFunction.LogicalExistence
+        [321] = XmlMappingFunction.LogicalAnd, [701] = XmlMappingFunction.LogicalExistence,
+        [103] = XmlMappingFunction.StringLowerCase, [108] = XmlMappingFunction.StringTrimLeft, [109] = XmlMappingFunction.StringTrimRight,
+        [111] = XmlMappingFunction.MathAbs, [118] = XmlMappingFunction.MathAdd, [119] = XmlMappingFunction.MathSubtract,
+        [120] = XmlMappingFunction.MathMultiply, [312] = XmlMappingFunction.LogicalGte, [313] = XmlMappingFunction.LogicalLt,
+        [314] = XmlMappingFunction.LogicalLte, [320] = XmlMappingFunction.LogicalOr, [705] = XmlMappingFunction.LogicalNot
     };
     private static readonly HashSet<string> MetadataAttributes = new(StringComparer.Ordinal)
     {
@@ -166,7 +170,7 @@ public static class BizTalkNativeMapConverter
             var resolved = resolver.Resolve(producer);
             resolver.NoteTarget(producer, TargetPath(to));
             foreach (var field in resolved.Sources) RequireRepeatCoverage(field, to);
-            assignments.Add((to, new() { Expression = resolved.Expression, TargetPath = TargetPath(to) }));
+            assignments.Add((to, new() { Expression = resolved.Expression, Condition = resolved.Condition, TargetPath = TargetPath(to) }));
         }
         foreach (var value in root.Descendants("ConstantValues").Elements())
         {
@@ -215,7 +219,14 @@ public static class BizTalkNativeMapConverter
         if (optionalToRequired.Count > 0)
             warnings.Add($"{optionalToRequired.Count} link(s) feed a required target from an optional source (for example {string.Join("; ", optionalToRequired.Take(3))}). Like BizTalk, the target element is omitted when the source is absent, so the output can then violate the target schema.");
         if (resolver.Used.Count > 0)
+        {
             warnings.Add($"Functoid formulas were converted for {functoidOutputs.Count} target(s) (FID {string.Join(", ", resolver.Used.Order())}). Their behavior ports the helper code BizTalk compiled into other maps; it has not been compared with this map's compiled output. Current-date functions use the Mulse host's local time. Compare trusted expected outputs before use.");
+            var unverified = resolver.Used.Where(fid => FunctoidCatalog.TryGetValue(fid, out var used) && !XmlMappingFunctionCatalog.HelperVerified(used)).Order().ToArray();
+            if (unverified.Length > 0)
+                warnings.Add($"FID {string.Join(", ", unverified)} follow the functoid's documented behavior; no compiled BizTalk helper for them was available to compare. Check their outputs against trusted expected data first.");
+        }
+        if (resolver.ValueMappings.Count > 0)
+            warnings.Add($"Value Mapping functoid(s) (FID {string.Join(", ", resolver.ValueMappings.Order())}) became conditional targets: the target is written only when the condition equals the text 'true' (BizTalk's compiled test), and nothing is written otherwise. FID 374 (flattening) is converted with the same per-record behavior, which is only equivalent while its inputs are single values in scope. A missing value input reads as empty text. Compare trusted expected outputs before use.");
         if (functoids.Count > 0 && resolver.Contributing.Count < functoids.Count)
             warnings.Add($"{functoids.Count - resolver.Contributing.Count} functoid(s) (for example unconnected sample script stubs) are not connected to any target and were ignored, as BizTalk generates no output for them.");
         if (resolver.PendingFunctions.Count > 0)
@@ -274,7 +285,7 @@ public static class BizTalkNativeMapConverter
 
     private sealed record Functoid(int Id, int Fid, XElement Element);
 
-    private sealed record ResolvedFunctoid(XmlValueExpression Expression, IReadOnlyList<XmlSchemaField> Sources, int Nodes, int Depth);
+    private sealed record ResolvedFunctoid(XmlValueExpression Expression, IReadOnlyList<XmlSchemaField> Sources, int Nodes, int Depth, XmlValueExpression? Condition = null);
 
     private static Dictionary<int, Functoid> ReadFunctoids(XElement root)
     {
@@ -328,6 +339,7 @@ public static class BizTalkNativeMapConverter
         public IReadOnlyCollection<int> Contributing => cache.Keys;
         public IReadOnlyCollection<string> PendingFunctions => stubsByKey.Values.Select(stub => stub.Name).ToArray();
         public HashSet<int> Used { get; } = [];
+        public HashSet<int> ValueMappings { get; } = [];
 
         public ResolvedFunctoid Resolve(int id)
         {
@@ -337,8 +349,9 @@ public static class BizTalkNativeMapConverter
             {
                 var functoid = functoids[id];
                 var isScript = functoid.Fid == ScriptFid;
+                var isValueMapping = functoid.Fid is ValueMappingFid or ValueMappingFlatteningFid;
                 XmlMappingFunction function = default;
-                if (!isScript && !FunctoidCatalog.TryGetValue(functoid.Fid, out function)) throw Unsupported(functoid);
+                if (!isScript && !isValueMapping && !FunctoidCatalog.TryGetValue(functoid.Fid, out function)) throw Unsupported(functoid);
                 var inputNotes = new List<string>();
                 var idText = id.ToString(CultureInfo.InvariantCulture);
                 var parameters = functoid.Element.Elements("Input-Parameters").Elements("Parameter")
@@ -370,6 +383,8 @@ public static class BizTalkNativeMapConverter
                             if (FunctoidReference(fromText, functoids) is { } inner)
                             {
                                 var child = Resolve(inner);
+                                if (child.Condition is not null)
+                                    throw new ArgumentException($"Value Mapping functoid {inner} feeds functoid {id}. A Value Mapping produces no value when its condition is false, which a formula cannot express; only a direct link from a Value Mapping to a target field is supported. No partial native map was produced.");
                                 (children.TryGetValue(id, out var childIds) ? childIds : children[id] = []).Add(inner);
                                 inputNotes.Add($"result of functoid {inner} (FID {functoids[inner].Fid})");
                                 arguments.Add(child.Expression);
@@ -403,6 +418,17 @@ public static class BizTalkNativeMapConverter
                     var stub = new ResolvedFunctoid(call, sources, nodes, childDepth + 1);
                     cache[id] = stub;
                     return stub;
+                }
+                if (isValueMapping)
+                {
+                    if (arguments.Count != 2)
+                        throw new ArgumentException($"Value Mapping functoid {id} (FID {functoid.Fid}) has {arguments.Count} input(s); it needs a condition and a value. No partial native map was produced.");
+                    if (nodes > XmlMappingFunctionCatalog.MaxNodes || childDepth + 1 > XmlMappingFunctionCatalog.MaxDepth)
+                        throw new ArgumentException($"Functoid {id} produces a formula larger than the native limit ({XmlMappingFunctionCatalog.MaxNodes} nodes, depth {XmlMappingFunctionCatalog.MaxDepth}). No partial native map was produced.");
+                    ValueMappings.Add(functoid.Fid);
+                    var conditional = new ResolvedFunctoid(arguments[1], sources, nodes, childDepth + 1, arguments[0]);
+                    cache[id] = conditional;
+                    return conditional;
                 }
                 var (min, max) = XmlMappingFunctionCatalog.Arity(function);
                 if (arguments.Count < min || arguments.Count > max)
@@ -508,6 +534,8 @@ public static class BizTalkNativeMapConverter
     }
 
     private const int ScriptFid = 260;
+    private const int ValueMappingFlatteningFid = 374;
+    private const int ValueMappingFid = 375;
 
     private sealed class ScriptStub(string name, string code, BizTalkScriptSignature? signature, IReadOnlyList<string> parameterNames)
     {

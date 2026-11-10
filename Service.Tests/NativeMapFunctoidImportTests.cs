@@ -75,6 +75,35 @@ public sealed class NativeMapFunctoidImportTests
         Assert.Equal(new XmlMappingEngine(conversion.MappingJson).Xslt, conversion.Xslt);
     }
 
+    [Theory]
+    [InlineData(111, "-5", "", "5")]
+    [InlineData(118, "2", "3", "5")]
+    [InlineData(119, "9", "4", "5")]
+    [InlineData(120, "2", "3", "6")]
+    [InlineData(312, "5", "5", "true")]
+    [InlineData(313, "4", "5", "true")]
+    [InlineData(314, "6", "5", "false")]
+    [InlineData(320, "false", "true", "true")]
+    [InlineData(103, "ABC", "", "abc")]
+    [InlineData(108, "  x", "", "x")]
+    [InlineData(109, "x  ", "", "x")]
+    [InlineData(705, "false", "", "true")]
+    public void BizTalkMathLogicAndTrimFunctoids_ConvertAndRun(int fid, string first, string second, string expected)
+    {
+        var inputs = fid is 111 or 103 or 108 or 109 or 705 ? new[] { Const(first, 0) } : [Const(first, 0), Const(second, 1)];
+        var conversion = Convert(Build(Out(1, 10, "Result/Number"), F(10, fid, inputs)));
+        Assert.Equal(expected, Run(conversion, "<Order xmlns='urn:source' code='x'/>").Root!.Element("Number")!.Value);
+    }
+
+    [Fact]
+    public void UnverifiedFunctoids_AreListedInTheirOwnWarning()
+    {
+        var conversion = Convert(Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number") + Wire(3, "Order/Id", 20) + Out(4, 20, "Result/Text"),
+            F(10, 111, Link("1", 0)) + F(20, 108, Link("3", 0))));
+        Assert.Contains(conversion.Warnings, warning => warning.StartsWith("FID 108 follow the functoid's documented behavior", StringComparison.Ordinal));
+        Assert.DoesNotContain(conversion.Warnings, warning => warning.Contains("FID 111 follow", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void NestedFunctoidsOrderInputsByLinkIndexNotDocumentOrder()
     {
@@ -117,7 +146,6 @@ public sealed class NativeMapFunctoidImportTests
     }
 
     [Theory]
-    [InlineData(374)]
     [InlineData(424)]
     [InlineData(474)]
     public void UnverifiedFunctoid_IsNamedAndNothingIsProduced(int fid)
@@ -127,6 +155,50 @@ public sealed class NativeMapFunctoidImportTests
         Assert.Contains($"FID {fid}", message, StringComparison.Ordinal);
         Assert.Contains("No partial native map", message, StringComparison.Ordinal);
     }
+
+    private static string ValueMappingMap(int fid, string conditionConstant = "42")
+        => Build(L(1, "20", "10") + Wire(2, "Order/Id", 10) + Wire(3, "Order/Id", 20) + Out(4, 10, "Result/Number"),
+            F(10, fid, Link("1", 0), Link("2", 1)) + F(20, 315, Link("3", 0), Const(conditionConstant, 1)));
+
+    [Theory]
+    [InlineData(375)]
+    [InlineData(374)]
+    public void ValueMapping_BecomesAConditionalTarget(int fid)
+    {
+        var conversion = Convert(ValueMappingMap(fid));
+        var definition = JsonSerializer.Deserialize<XmlMappingDefinition>(conversion.MappingJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        var field = Assert.Single(definition.Fields, candidate => candidate.TargetPath == "Number");
+        Assert.Equal(XmlMappingFunction.LogicalEq, field.Condition!.Function);
+        Assert.Equal("/sn1:Order/sn1:Id", field.Expression!.SourcePath);
+        Assert.Contains(conversion.Warnings, warning => warning.Contains($"Value Mapping functoid(s) (FID {fid})", StringComparison.Ordinal));
+        Assert.Equal("42", Run(conversion, "<Order xmlns='urn:source' code='x'><Id>42</Id></Order>").Root!.Element("Number")!.Value);
+        Assert.Null(Run(conversion, "<Order xmlns='urn:source' code='x'><Id>7</Id></Order>").Root!.Element("Number"));
+    }
+
+    [Fact]
+    public void ValueMappingConditionFromAField_MustBeExactlyTrue()
+    {
+        var map = Build(Wire(1, "Order/Optional", 10) + Wire(2, "Order/Id", 10) + Out(3, 10, "Result/Number"),
+            F(10, 375, Link("1", 0), Link("2", 1)));
+        var conversion = Convert(map);
+        Assert.Equal("5", Run(conversion, "<Order xmlns='urn:source' code='x'><Id>5</Id><Optional>true</Optional></Order>").Root!.Element("Number")!.Value);
+        Assert.Null(Run(conversion, "<Order xmlns='urn:source' code='x'><Id>5</Id><Optional>yes</Optional></Order>").Root!.Element("Number"));
+        Assert.Null(Run(conversion, "<Order xmlns='urn:source' code='x'><Id>5</Id></Order>").Root!.Element("Number"));
+    }
+
+    [Fact]
+    public void ValueMappingFeedingAnotherFunctoid_IsRejected()
+    {
+        var map = Build(L(1, "20", "10") + Wire(2, "Order/Id", 10) + Wire(3, "Order/Id", 20) + L(5, "10", "30") + Out(6, 30, "Result/Number"),
+            F(10, 375, Link("1", 0), Link("2", 1)) + F(20, 315, Link("3", 0), Const("1", 1)) + F(30, 105, Link("5", 0)));
+        var message = Message(map);
+        Assert.Contains("Value Mapping functoid 10", message, StringComparison.Ordinal);
+        Assert.Contains("No partial native map", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValueMappingWithOneInput_IsRejected()
+        => Assert.Contains("FID 375", Message(Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number"), F(10, 375, Link("1", 0)))), StringComparison.Ordinal);
 
     private static string Script(int id, string code, params string[] inputs)
         => $"<Functoid FunctoidID=\"{id}\" Functoid-FID=\"260\" X-Cell=\"1\" Y-Cell=\"1\"><Input-Parameters>{string.Concat(inputs)}</Input-Parameters><ScripterCode><Script Language=\"CSharp\"><![CDATA[{code}]]></Script></ScripterCode></Functoid>";

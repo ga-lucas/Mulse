@@ -38,7 +38,9 @@ public static class XmlFormula
         ["LogicalGt"] = (2, 2), ["LogicalEq"] = (2, 2), ["LogicalNe"] = (2, 2), ["LogicalAnd"] = (2, 16), ["LogicalExistence"] = (1, 1),
         ["NewGuid"] = (0, 0), ["DateNow"] = (1, 1), ["DateReformat"] = (3, 3), ["DateValid"] = (2, 2), ["Conditional"] = (3, 3),
         ["LogicalOr"] = (2, 16), ["LogicalNot"] = (1, 1), ["StringLowerCase"] = (1, 1), ["StringTrim"] = (1, 1),
-        ["StringReplace"] = (3, 3), ["StringSubstring"] = (3, 3), ["StringContains"] = (2, 2)
+        ["StringReplace"] = (3, 3), ["StringSubstring"] = (3, 3), ["StringContains"] = (2, 2),
+        ["MathAbs"] = (1, 1), ["MathAdd"] = (2, 16), ["MathSubtract"] = (2, 16), ["MathMultiply"] = (2, 16),
+        ["LogicalGte"] = (2, 2), ["LogicalLt"] = (2, 2), ["LogicalLte"] = (2, 2), ["StringTrimLeft"] = (1, 1), ["StringTrimRight"] = (1, 1)
     };
 
     /// <summary>One-line semantics per function (mirrors the engine catalog; a test keeps them equal). Given to whoever writes a custom function body.</summary>
@@ -69,7 +71,16 @@ public static class XmlFormula
         ["StringTrim"] = "StringTrim(text): removes leading and trailing white space.",
         ["StringReplace"] = "StringReplace(text, find, replacement): replaces every ordinal, case-sensitive occurrence; unchanged when find is empty.",
         ["StringSubstring"] = "StringSubstring(text, start, length): zero-based start; empty when start is not a valid position or either number is not numeric; length is cut at the end of the text.",
-        ["StringContains"] = "StringContains(text, search): true when text contains search (ordinal, case-sensitive)."
+        ["StringContains"] = "StringContains(text, search): true when text contains search (ordinal, case-sensitive).",
+        ["MathAbs"] = "MathAbs(number): absolute value; empty when not numeric.",
+        ["MathAdd"] = "MathAdd(a, b, ...): sum of 2 to 16 numbers with 15 significant digits; empty when any is not numeric.",
+        ["MathSubtract"] = "MathSubtract(a, b, ...): a minus every following number (2 to 16 values); empty when any is not numeric.",
+        ["MathMultiply"] = "MathMultiply(a, b, ...): product of 2 to 16 numbers with 15 significant digits; empty when any is not numeric.",
+        ["LogicalGte"] = "LogicalGte(a, b): true when a >= b (numeric when both are numbers, otherwise ordinal text).",
+        ["LogicalLt"] = "LogicalLt(a, b): true when a < b (numeric when both are numbers, otherwise ordinal text).",
+        ["LogicalLte"] = "LogicalLte(a, b): true when a <= b (numeric when both are numbers, otherwise ordinal text).",
+        ["StringTrimLeft"] = "StringTrimLeft(text): removes leading white space.",
+        ["StringTrimRight"] = "StringTrimRight(text): removes trailing white space."
     };
 
     public const int MaxCustomFunctions = 64;

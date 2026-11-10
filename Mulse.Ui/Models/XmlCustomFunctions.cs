@@ -42,7 +42,7 @@ public static class XmlCustomFunctions
     }
 
     public static bool IsReferenced(XmlMappingViewModel map, string name)
-        => map.Fields.Any(field => field.Expression is not null && Calls(field.Expression, name))
+        => map.Fields.Any(field => (field.Expression is not null && Calls(field.Expression, name)) || (field.Condition is not null && Calls(field.Condition, name)))
             || map.CustomFunctions.Any(other => other.Name != name && other.Body is not null && Calls(other.Body, name));
 
     private static bool Calls(XmlValueExpressionViewModel expression, string name)

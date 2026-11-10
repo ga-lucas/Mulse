@@ -9,7 +9,7 @@ public static class XmlMappingGraph
 {
     /// <summary>Every source path a field reads: its formula's sources, nothing for a constant, otherwise its own path.</summary>
     public static IReadOnlyList<string> SourcePaths(XmlFieldMappingViewModel field)
-        => field.Expression is not null ? XmlFormula.SourcePaths(field.Expression).Distinct(StringComparer.Ordinal).ToArray()
+        => field.Expression is not null ? XmlFormula.SourcePaths(field.Expression).Concat(field.Condition is null ? [] : XmlFormula.SourcePaths(field.Condition)).Distinct(StringComparer.Ordinal).ToArray()
             : field.Constant is null ? [field.SourcePath] : [];
 
     public static string Key(string? path, IReadOnlyDictionary<string, string> namespaces)

@@ -45,6 +45,8 @@ public sealed class XmlFieldMappingViewModel
     public string TargetPath { get; set; } = string.Empty;
     public string? Constant { get; set; }
     public XmlValueExpressionViewModel? Expression { get; set; }
+    /// <summary>Optional (formula fields only): the target is written only when this formula yields the text 'true'. Imported BizTalk Value Mapping functoids become this.</summary>
+    public XmlValueExpressionViewModel? Condition { get; set; }
     public string MissingValueBehavior { get; set; } = "Error";
     public string? DefaultValue { get; set; }
     public List<XmlStringOperationViewModel> Operations { get; set; } = [];

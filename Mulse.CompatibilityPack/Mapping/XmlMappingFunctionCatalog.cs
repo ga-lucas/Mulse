@@ -18,18 +18,21 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.DateCurrentDate or XmlMappingFunction.DateCurrentDateTime or XmlMappingFunction.NewGuid => (0, 0),
         XmlMappingFunction.StringSize or XmlMappingFunction.StringUpperCase or XmlMappingFunction.MathInt
             or XmlMappingFunction.LogicalExistence or XmlMappingFunction.LogicalNot or XmlMappingFunction.StringLowerCase
-            or XmlMappingFunction.StringTrim or XmlMappingFunction.DateNow => (1, 1),
+            or XmlMappingFunction.StringTrim or XmlMappingFunction.DateNow or XmlMappingFunction.MathAbs
+            or XmlMappingFunction.StringTrimLeft or XmlMappingFunction.StringTrimRight => (1, 1),
         XmlMappingFunction.StringConcat => (2, 32),
-        XmlMappingFunction.LogicalAnd or XmlMappingFunction.LogicalOr => (2, 16),
+        XmlMappingFunction.LogicalAnd or XmlMappingFunction.LogicalOr or XmlMappingFunction.MathAdd
+            or XmlMappingFunction.MathSubtract or XmlMappingFunction.MathMultiply => (2, 16),
         XmlMappingFunction.StringLeft or XmlMappingFunction.StringRight or XmlMappingFunction.MathDivide
             or XmlMappingFunction.LogicalGt or XmlMappingFunction.LogicalEq or XmlMappingFunction.LogicalNe
-            or XmlMappingFunction.DateValid or XmlMappingFunction.StringContains => (2, 2),
+            or XmlMappingFunction.DateValid or XmlMappingFunction.StringContains or XmlMappingFunction.LogicalGte
+            or XmlMappingFunction.LogicalLt or XmlMappingFunction.LogicalLte => (2, 2),
         XmlMappingFunction.DateReformat or XmlMappingFunction.Conditional or XmlMappingFunction.StringReplace
             or XmlMappingFunction.StringSubstring => (3, 3),
         _ => throw new ArgumentOutOfRangeException(nameof(function))
     };
 
-    /// <summary>The BizTalk functoid ID a function was verified against, or null for a Mulse-native function.</summary>
+    /// <summary>The BizTalk functoid ID a function corresponds to (see <see cref="HelperVerified"/>), or null for a Mulse-native function.</summary>
     public static int? Fid(XmlMappingFunction function) => function switch
     {
         XmlMappingFunction.StringLeft => 102, XmlMappingFunction.StringRight => 104, XmlMappingFunction.StringSize => 105,
@@ -37,8 +40,16 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.MathDivide => 121, XmlMappingFunction.DateCurrentDate => 123, XmlMappingFunction.DateCurrentDateTime => 125,
         XmlMappingFunction.LogicalGt => 311, XmlMappingFunction.LogicalEq => 315, XmlMappingFunction.LogicalNe => 316,
         XmlMappingFunction.LogicalAnd => 321, XmlMappingFunction.LogicalExistence => 701,
+        XmlMappingFunction.StringLowerCase => 103, XmlMappingFunction.StringTrimLeft => 108, XmlMappingFunction.StringTrimRight => 109,
+        XmlMappingFunction.MathAbs => 111, XmlMappingFunction.MathAdd => 118, XmlMappingFunction.MathSubtract => 119,
+        XmlMappingFunction.MathMultiply => 120, XmlMappingFunction.LogicalGte => 312, XmlMappingFunction.LogicalLt => 313,
+        XmlMappingFunction.LogicalLte => 314, XmlMappingFunction.LogicalOr => 320, XmlMappingFunction.LogicalNot => 705,
         _ => null
     };
+
+    /// <summary>True when the function's behavior was compared with a helper body BizTalk compiled into a real map; false when it was ported from the functoid's documented behavior.</summary>
+    public static bool HelperVerified(XmlMappingFunction function)
+        => Fid(function) is { } fid && (fid is 102 or 104 or 105 or 107 or 110 or 111 or 112 or 121 or 123 or 125 or 311 or 315 or 316 or 321 or 701);
 
     /// <summary>One-line semantics shown in the editor and given to whoever writes a replacement formula. Arguments are text.</summary>
     public static string Summary(XmlMappingFunction function) => function switch
@@ -69,6 +80,15 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.StringReplace => "StringReplace(text, find, replacement): replaces every ordinal, case-sensitive occurrence; unchanged when find is empty.",
         XmlMappingFunction.StringSubstring => "StringSubstring(text, start, length): zero-based start; empty when start is not a valid position or either number is not numeric; length is cut at the end of the text.",
         XmlMappingFunction.StringContains => "StringContains(text, search): true when text contains search (ordinal, case-sensitive).",
+        XmlMappingFunction.MathAbs => "MathAbs(number): absolute value; empty when not numeric.",
+        XmlMappingFunction.MathAdd => "MathAdd(a, b, ...): sum of 2 to 16 numbers with 15 significant digits; empty when any is not numeric.",
+        XmlMappingFunction.MathSubtract => "MathSubtract(a, b, ...): a minus every following number (2 to 16 values); empty when any is not numeric.",
+        XmlMappingFunction.MathMultiply => "MathMultiply(a, b, ...): product of 2 to 16 numbers with 15 significant digits; empty when any is not numeric.",
+        XmlMappingFunction.LogicalGte => "LogicalGte(a, b): true when a >= b (numeric when both are numbers, otherwise ordinal text).",
+        XmlMappingFunction.LogicalLt => "LogicalLt(a, b): true when a < b (numeric when both are numbers, otherwise ordinal text).",
+        XmlMappingFunction.LogicalLte => "LogicalLte(a, b): true when a <= b (numeric when both are numbers, otherwise ordinal text).",
+        XmlMappingFunction.StringTrimLeft => "StringTrimLeft(text): removes leading white space.",
+        XmlMappingFunction.StringTrimRight => "StringTrimRight(text): removes trailing white space.",
         _ => throw new ArgumentOutOfRangeException(nameof(function))
     };
 

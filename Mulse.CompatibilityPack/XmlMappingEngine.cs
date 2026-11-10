@@ -141,6 +141,8 @@ public sealed partial class XmlMappingEngine
                 throw new ArgumentException($"Mapping '{field.TargetPath}' has an invalid missing-value policy. Omit/default requires version 2, a source path, and a default value only for the Default policy.");
             var sourcePaths = new List<string>();
             var effective = field;
+            if (field.Condition is not null && (map.Version != 2 || field.Expression is null))
+                throw new ArgumentException($"Mapping '{field.TargetPath}' uses a condition, which requires version 2 and an expression value.");
             if (field.Expression is not null)
             {
                 if (map.Version != 2 || !string.IsNullOrEmpty(field.SourcePath) || field.Constant is not null
@@ -149,7 +151,14 @@ public sealed partial class XmlMappingEngine
                 var nodes = 0;
                 ValidateExpression(field.Expression, field.TargetPath, 1, ref nodes, sourcePaths, custom, null);
                 var expanded = 0;
-                effective = field with { Expression = Expand(field.Expression, null, custom, [], ref expanded, 1, allowStubs, field.TargetPath) };
+                XmlValueExpression? condition = null;
+                if (field.Condition is not null)
+                {
+                    var conditionNodes = 0;
+                    ValidateExpression(field.Condition, field.TargetPath, 1, ref conditionNodes, sourcePaths, custom, null);
+                    condition = Expand(field.Condition, null, custom, [], ref expanded, 1, allowStubs, field.TargetPath);
+                }
+                effective = field with { Expression = Expand(field.Expression, null, custom, [], ref expanded, 1, allowStubs, field.TargetPath), Condition = condition };
             }
             else if (field.Constant is null) sourcePaths.Add(field.SourcePath);
             var enclosing = new HashSet<XmlRepeatMappingDefinition>(repeatTargets
@@ -213,6 +222,9 @@ public sealed partial class XmlMappingEngine
             case XmlMappingFunction.LogicalExistence: return $"{FunctionPrefix}:LogicalExistence(boolean({Compile(expression.Arguments[0], scopes)}))";
             case XmlMappingFunction.LogicalAnd:
             case XmlMappingFunction.LogicalOr:
+            case XmlMappingFunction.MathAdd:
+            case XmlMappingFunction.MathSubtract:
+            case XmlMappingFunction.MathMultiply:
                 var result = arguments[0];
                 for (var index = 1; index < arguments.Length; index++)
                     result = $"{FunctionPrefix}:{function}(string({result}), {arguments[index]})";
@@ -308,7 +320,9 @@ public sealed partial class XmlMappingEngine
             element.Add(Emit(child, inner, scopeChecks));
         XElement result = node.Assignment is { MissingValueBehavior: MissingXmlValueBehavior.Omit }
             ? new XElement(Xsl + "if", new XAttribute("test", $"count({source}) = 1"), element)
-            : element;
+            : node.Assignment?.Condition is { } condition
+                ? new XElement(Xsl + "if", new XAttribute("test", $"string({Compile(condition, inner)}) = 'true'"), element)
+                : element;
         if (node.Repeat is null) return result;
         var loop = new XElement(Xsl + "for-each", new XAttribute("select", SourceExpression(node.Repeat.SourcePath, scopes)));
         loop.Add(new XElement(Xsl + "variable", new XAttribute("name", $"r{inner.Count}"), new XAttribute("select", ".")));

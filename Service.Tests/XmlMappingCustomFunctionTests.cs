@@ -93,6 +93,101 @@ public sealed class XmlMappingCustomFunctionTests
         Assert.Equal("false", RunExpression(Fn(XmlMappingFunction.StringContains, Const("abcd"), Const("x"))));
     }
 
+    [Theory]
+    [InlineData("MathAbs", "-3.5", "", "3.5")]
+    [InlineData("MathAbs", "abc", "", "")]
+    [InlineData("MathAdd", "1.5", "2", "3.5")]
+    [InlineData("MathAdd", "1", "x", "")]
+    [InlineData("MathSubtract", "10", "4", "6")]
+    [InlineData("MathMultiply", "1.5", "4", "6")]
+    [InlineData("LogicalGte", "2", "2", "true")]
+    [InlineData("LogicalGte", "1", "2", "false")]
+    [InlineData("LogicalLt", "9", "10", "true")]
+    [InlineData("LogicalLt", "b", "a", "false")]
+    [InlineData("LogicalLte", "2", "2", "true")]
+    [InlineData("LogicalLte", "3", "2", "false")]
+    [InlineData("StringTrimLeft", "  a ", "", "a ")]
+    [InlineData("StringTrimRight", "  a ", "", "  a")]
+    public void BizTalkFunctoidFunctions_Work(string name, string first, string second, string expected)
+    {
+        var function = Enum.Parse<XmlMappingFunction>(name);
+        var arguments = XmlMappingFunctionCatalog.Arity(function).Min == 1 ? new[] { Const(first) } : [Const(first), Const(second)];
+        Assert.Equal(expected, RunExpression(Fn(function, arguments)));
+    }
+
+    [Fact]
+    public void VariadicMath_FoldsAllArguments()
+    {
+        Assert.Equal("6", RunExpression(Fn(XmlMappingFunction.MathAdd, Const("1"), Const("2"), Const("3"))));
+        Assert.Equal("5", RunExpression(Fn(XmlMappingFunction.MathSubtract, Const("10"), Const("3"), Const("2"))));
+        Assert.Equal("24", RunExpression(Fn(XmlMappingFunction.MathMultiply, Const("2"), Const("3"), Const("4"))));
+        Assert.Equal("", RunExpression(Fn(XmlMappingFunction.MathAdd, Const("1"), Const("x"), Const("3"))));
+    }
+
+    [Fact]
+    public void OnlyCompiledHelperFunctoids_AreMarkedVerified()
+    {
+        Assert.True(XmlMappingFunctionCatalog.HelperVerified(XmlMappingFunction.MathAbs));
+        Assert.True(XmlMappingFunctionCatalog.HelperVerified(XmlMappingFunction.StringConcat));
+        Assert.False(XmlMappingFunctionCatalog.HelperVerified(XmlMappingFunction.MathAdd));
+        Assert.False(XmlMappingFunctionCatalog.HelperVerified(XmlMappingFunction.LogicalOr));
+        Assert.False(XmlMappingFunctionCatalog.HelperVerified(XmlMappingFunction.Conditional));
+    }
+
+    [Fact]
+    public void FieldCondition_WritesTheTargetOnlyWhenExactlyTrue()
+    {
+        var map = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Fields = [new() { TargetPath = "Result", Expression = Src("/Input/Value"), Condition = Fn(XmlMappingFunction.LogicalEq, Src("/Input/Kind"), Const("A")) }]
+        };
+        var engine = new XmlMappingEngine(XmlMappingTests.Json(map));
+        Assert.Equal("1", XDocument.Parse(engine.Transform("<Input><Kind>A</Kind><Value>1</Value></Input>")).Root!.Element("Result")!.Value);
+        Assert.Null(XDocument.Parse(engine.Transform("<Input><Kind>B</Kind><Value>1</Value></Input>")).Root!.Element("Result"));
+        Assert.Contains("= 'true'", engine.Xslt);
+    }
+
+    [Fact]
+    public void FieldCondition_ExpandsCustomFunctionsAndNeedsAnExpression()
+    {
+        var map = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            CustomFunctions = [Function("IsA", ["x"], Fn(XmlMappingFunction.LogicalEq, Param("x"), Const("A")))],
+            Fields = [new() { TargetPath = "Result", Expression = Const("ok"), Condition = Call("IsA", Src("/Input/Kind")) }]
+        };
+        var engine = new XmlMappingEngine(XmlMappingTests.Json(map));
+        Assert.DoesNotContain("Unimplemented", engine.Xslt);
+        Assert.Equal("ok", XDocument.Parse(engine.Transform("<Input><Kind>A</Kind></Input>")).Root!.Element("Result")!.Value);
+        Assert.Null(XDocument.Parse(engine.Transform("<Input><Kind>Z</Kind></Input>")).Root!.Element("Result"));
+
+        var noExpression = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Fields = [new() { TargetPath = "Result", Constant = "x", Condition = Const("true") }]
+        };
+        Assert.Contains("condition", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(noExpression))).Message);
+        var version1 = noExpression with { Version = 1 };
+        Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(version1)));
+    }
+
+    [Fact]
+    public void FieldCondition_ReadingARepeatFieldMustSitInsideTheRepeat()
+    {
+        var map = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Repeats = [new() { SourcePath = "/Input/Row", TargetPath = "Row" }],
+            Fields = [new() { TargetPath = "Row/Value", Expression = Src("/Input/Row/V"), Condition = Fn(XmlMappingFunction.LogicalGt, Src("/Input/Row/V"), Const("1")) }]
+        };
+        var output = XDocument.Parse(new XmlMappingEngine(XmlMappingTests.Json(map)).Transform("<Input><Row><V>1</V></Row><Row><V>2</V></Row></Input>")).Root!;
+        Assert.Equal(2, output.Elements("Row").Count());
+        Assert.Equal(["2"], output.Descendants("Value").Select(value => value.Value));
+        var outside = map with { Fields = [new() { TargetPath = "Result", Expression = Const("x"), Condition = Fn(XmlMappingFunction.LogicalGt, Src("/Input/Row/V"), Const("1")) }] };
+        Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(outside)));
+    }
+
     [Fact]
     public void CustomFunction_IsInlinedWithItsParameters()
     {

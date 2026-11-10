@@ -64,6 +64,9 @@
                 {
                     <label class="field-label">Formula</label>
                     <textarea class="mapping-input" rows="3" aria-label="XML mapping formula" value="@XmlFormula.Format(field.Expression)" @onchange="e => SetFormulaAsync(field, e.Value?.ToString())"></textarea>
+                    <label class="field-label">Write this target only when (optional condition)</label>
+                    <textarea class="mapping-input" rows="2" aria-label="XML mapping condition" value="@(field.Condition is null ? string.Empty : XmlFormula.Format(field.Condition))" @onchange="e => SetConditionAsync(field, e.Value?.ToString())"></textarea>
+                    <HelpTooltip Label="Condition">Leave empty to always write the target. With a condition formula, the target is written only when the condition equals the text 'true' (for example LogicalEq(/s:Order/s:Type, 'A')); otherwise nothing is written for it. BizTalk Value Mapping functoids are imported this way: the condition is their first input, the formula is their second.</HelpTooltip>
                     <HelpTooltip Label="Formula">Functions: @string.Join(", ", XmlFormula.Functions.Select(function => function.Key)). Sources are absolute named paths such as /s:Order/s:Id; text constants are 'single quoted' (write '' for a quote) and bare numbers are constants. Example: StringConcat(/s:Order/s:Id, '-', StringUpperCase(/s:Order/s:Name)). A formula target is always written, like a BizTalk functoid output; a missing source reads as empty text. Comparisons are numeric when both sides are numbers, logical results are the text true/false, and current-date functions use the server's local time. Custom functions (below) can be called by name, e.g. FormatBirthDate(/s:Order/s:Dob). Use ordered string operations below for further changes.</HelpTooltip>
                 }
                 else if (field.Constant is null)
@@ -194,6 +197,7 @@
             if (_map is null || _map.Version is not (1 or 2) || _map.Namespaces is null || _map.Fields is null || _map.CustomFunctions is null
                 || _map.Fields.Any(field => field is null || field.Operations is null || field.Operations.Count > 16
                     || (field.Expression is not null && (field.Constant is not null || XmlFormula.Validate(field.Expression, XmlCustomFunctions.ContextFor(_map.CustomFunctions)) is not null || _map.Version != 2))
+                    || (field.Condition is not null && (field.Expression is null || XmlFormula.Validate(field.Condition, XmlCustomFunctions.ContextFor(_map.CustomFunctions)) is not null))
                     || (_map.Version == 1 && field.Operations.Count > 0)
                     || field.Operations.Any(operation => operation is null || !OperationKinds.Contains(operation.Kind, StringComparer.Ordinal)
                         || (operation.Kind is "Prefix" or "Suffix" ? operation.Argument is null || operation.Argument.Length > 4096 : operation.Argument is not null)))
@@ -244,6 +248,7 @@
     {
         field.Constant = kind == "Constant" ? string.Empty : null;
         field.Expression = kind == "Formula" ? XmlFormula.Starter() : null;
+        field.Condition = null;
         if (kind == "Formula") _map!.Version = 2;
         field.SourcePath = string.Empty;
         field.MissingValueBehavior = "Error";
@@ -260,6 +265,23 @@
         }
         field.Expression = expression;
         _map!.Version = 2;
+        await WriteAsync();
+    }
+
+    private async Task SetConditionAsync(XmlFieldMappingViewModel field, string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            field.Condition = null;
+            await WriteAsync();
+            return;
+        }
+        if (!XmlFormula.TryParse(text, out var condition, out var error, XmlCustomFunctions.ContextFor(_map!.CustomFunctions)))
+        {
+            _error = error;
+            return;
+        }
+        field.Condition = condition;
         await WriteAsync();
     }
 

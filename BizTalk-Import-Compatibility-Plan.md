@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,900 service tests passed and the solution built.
+Latest verification: 1,937 service tests passed and the solution built.
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -25,6 +25,15 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Measured Billing effect (re-measured with a stand-in config helper; indicative only):** unresolved nodes BillingServiceProcess 136 -> 126, BatchDoubleBody 54 -> 46, BatchWithTrailer 60 -> 48. The original `GlobalInterfaceAppSettings` source was not found on disk, so helper-derived values differ from a real run. Flows stay disabled; no BizTalk equivalence is claimed.
 - **Next measured gaps (Billing):** native map choices are now derived from the rule exports (see "Completed increment: map choices derived from policy exports"); the remaining work there is the maps that cannot convert (functoids, unresolved schemas, maps in projects not supplied), 9 Sends without a unique physical binding,
 - **Verification:** 1,550 service tests passed and the solution built.
+
+### Increment: DLL-verified functoid IDs, cheap functoids and Value Mapping
+
+- **FID catalog verified** by decompiling the owner-supplied `Microsoft.BizTalk.BaseFunctoids.dll` (class -> FID; the DLL holds metadata only, not XSLT). Notable: 374 = Value Mapping Flattening, 375 = Value Mapping, 424 = Looping, 474 = Iteration, 802 = Mass Copy, 322 = Count, 323 = Index, 324-328 = cumulative functoids, 703/704 = Table Looping/Extractor, 706 = IsNil, 707 = Assert.
+- **Measured over the 292 supplied `.btm` maps** (FID usage): fully importable maps 152 -> 160 with the cheap functoids -> about 233 with Value Mapping. Looping/Iteration (about 32 more maps) is the next gap; 802 (11 maps), 322 (8), 324 (6) and the rest stay documented unsupported.
+- **New native functions (compatibility pack, UI-editable, mirrored in the formula editor):** MathAbs, MathAdd, MathSubtract, MathMultiply (variadic, pairwise fold), LogicalGte/Lt/Lte, StringTrimLeft/Right. Only FIDs whose behavior was compared with compiled BizTalk helpers in the repository (102, 104, 105, 107, 110, 111, 112, 121, 123, 125, 311, 315, 316, 321, 701) are `HelperVerified`; every other imported FID follows documented behavior and the import adds a warning listing those FIDs.
+- **Value Mapping (375) and Value Mapping Flattening (374):** a field mapping gains an optional `Condition` formula (version 2, expression fields only). The target element is written only when the condition equals the exact, case-sensitive text `true`, matching BizTalk's `string(cond)='true'` output. The first input is the condition, the second is the value; a missing value reads as empty text. A Value Mapping must feed scalar targets directly (feeding another functoid is rejected, because a formula cannot express "no value"). FID 374 is converted with per-record semantics and a warning. The condition is editable in the Mapping Designer ("Write this target only when") and survives formula edits and kind changes.
+- **Deliberately not converted (fail closed, unverified semantics):** 101 StringFind, 106 Extract (1-based inclusive), 113-117, 122, 124, 317-319, 322-328, 424/474, 703/704, 802.
+- **Verification:** 1,937 service tests passed and the solution built.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
 

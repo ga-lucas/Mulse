@@ -35,6 +35,8 @@ public sealed record XmlFieldMappingDefinition
     public string? Constant { get; init; }
     /// <summary>A computed value (source paths, constants and catalog functions). Mutually exclusive with SourcePath/Constant; the target is always emitted, like a BizTalk functoid output.</summary>
     public XmlValueExpression? Expression { get; init; }
+    /// <summary>Only with an Expression (version 2): the target is emitted only when this expression evaluates to the exact text 'true', like a BizTalk Value Mapping functoid. Otherwise nothing is written for the target.</summary>
+    public XmlValueExpression? Condition { get; init; }
     public MissingXmlValueBehavior MissingValueBehavior { get; init; } = MissingXmlValueBehavior.Error;
     public string? DefaultValue { get; init; }
     public IReadOnlyList<XmlStringOperation> Operations { get; init; } = [];
@@ -98,7 +100,17 @@ public enum XmlMappingFunction
     StringTrim,
     StringReplace,
     StringSubstring,
-    StringContains
+    StringContains,
+    // BizTalk functoids ported from their documented behavior (only MathAbs was compared with a compiled helper body).
+    MathAbs,
+    MathAdd,
+    MathSubtract,
+    MathMultiply,
+    LogicalGte,
+    LogicalLt,
+    LogicalLte,
+    StringTrimLeft,
+    StringTrimRight
 }
 
 /// <summary>

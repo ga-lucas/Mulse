@@ -101,6 +101,28 @@ public sealed class XmlMappingFunctions(TimeProvider timeProvider)
 
     public bool StringContains(string str, string search) => str is not null && search is not null && str.Contains(search, StringComparison.Ordinal);
 
+    public string MathAbs(string val) => IsNumeric(val, out var d) ? d < 0 ? Format(-d) : Format(d) : string.Empty;
+
+    // Variadic math is folded pairwise by the engine; an empty intermediate result stays empty.
+    public string MathAdd(string val1, string val2) => IsNumeric(val1, out var d1) && IsNumeric(val2, out var d2) ? Format(d1 + d2) : string.Empty;
+
+    public string MathSubtract(string val1, string val2) => IsNumeric(val1, out var d1) && IsNumeric(val2, out var d2) ? Format(d1 - d2) : string.Empty;
+
+    public string MathMultiply(string val1, string val2) => IsNumeric(val1, out var d1) && IsNumeric(val2, out var d2) ? Format(d1 * d2) : string.Empty;
+
+    public bool LogicalGte(string val1, string val2)
+        => IsNumeric(val1, out var d1) && IsNumeric(val2, out var d2) ? d1 >= d2 : string.CompareOrdinal(val1, val2) >= 0;
+
+    public bool LogicalLt(string val1, string val2)
+        => IsNumeric(val1, out var d1) && IsNumeric(val2, out var d2) ? d1 < d2 : string.CompareOrdinal(val1, val2) < 0;
+
+    public bool LogicalLte(string val1, string val2)
+        => IsNumeric(val1, out var d1) && IsNumeric(val2, out var d2) ? d1 <= d2 : string.CompareOrdinal(val1, val2) <= 0;
+
+    public string StringTrimLeft(string str) => str?.TrimStart() ?? string.Empty;
+
+    public string StringTrimRight(string str) => str?.TrimEnd() ?? string.Empty;
+
     /// <summary>Raised when a map calls a custom function that is still an imported stub.</summary>
     public string Unimplemented(string name) => throw new InvalidOperationException($"Custom function '{name}' is an unimplemented stub. Supply its formula before running this map.");
 
