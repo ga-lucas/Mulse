@@ -87,7 +87,9 @@ internal static class BizTalkNativeMapChoiceDeriver
                 continue;
             }
             cases.Add(entry);
-            report.Add(Result("Converted", map.MapPath, Limitation, conversion.Warnings));
+            report.Add(conversion.PendingFunctions.Count == 0
+                ? Result("Converted", map.MapPath, Limitation, conversion.Warnings)
+                : Result("ConvertedWithStubs", map.MapPath, $"{Limitation} {conversion.PendingFunctions.Count} scripting functoid(s) are unimplemented stubs ({Truncate(string.Join(", ", conversion.PendingFunctions))}); this choice fails closed until each has a formula.", conversion.Warnings));
         }
         return new(report, JsonSerializer.Serialize(cases, Json));
     }

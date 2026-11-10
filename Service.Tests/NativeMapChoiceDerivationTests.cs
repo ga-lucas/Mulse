@@ -79,6 +79,28 @@ public sealed class NativeMapChoiceDerivationTests : IDisposable
     }
 
     [Fact]
+    public void MapWithScriptingFunctoid_IsConvertedWithStubsAndFailsClosedAtRunTime()
+    {
+        var project = WriteProject();
+        string P(string path) => System.Security.SecurityElement.Escape(NativeMapImportTests.Path(path));
+        var map = WithReferences("<mapsource><SrcTree RootNode_Name=\"Order\" /><TrgTree RootNode_Name=\"Result\" /><Pages><Page Name=\"p\"><Links>"
+            + $"<Link LinkID=\"1\" LinkFrom=\"{P("Order/@code")}\" LinkTo=\"{P("Result/@code")}\" />"
+            + $"<Link LinkID=\"2\" LinkFrom=\"{P("Order/Id")}\" LinkTo=\"10\" /><Link LinkID=\"3\" LinkFrom=\"10\" LinkTo=\"{P("Result/Number")}\" />"
+            + "</Links><Functoids><Functoid FunctoidID=\"10\" Functoid-FID=\"260\" X-Cell=\"1\" Y-Cell=\"1\"><Input-Parameters><Parameter Type=\"link\" Value=\"2\" Guid=\"g\" linkIndex=\"0\" /></Input-Parameters>"
+            + "<ScripterCode><Script Language=\"CSharp\"><![CDATA[public string Tidy(string a) { return a.Trim(); }]]></Script></ScripterCode></Functoid></Functoids></Page></Pages></mapsource>");
+        File.WriteAllText(Path.Combine(_directory, "Maps", "OrderToResult.btm"), map);
+
+        var result = Derive(project, Literals(Good));
+
+        var item = result.Report.Single();
+        Assert.True(item.Status == "ConvertedWithStubs", item.Status + ": " + item.Detail);
+        Assert.Contains("Tidy", item.Detail, StringComparison.Ordinal);
+        var entry = Assert.Single(RenderDispatchDefinition.Read(result.CasesJson));
+        var error = Assert.Throws<ArgumentException>(() => new XmlMappingEngine(entry.Settings["mappingJson"]));
+        Assert.Contains("unimplemented stub", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ManyValues_StopAtTheRenderDispatchCaseCapAndReportTheRest()
     {
         var project = WriteProject();

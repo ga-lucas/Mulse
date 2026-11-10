@@ -7,7 +7,7 @@ using Mulse.Modules.Mapping;
 
 namespace Service.Mapping;
 
-public sealed record NativeMapConversion(string MappingJson, string Xslt, IReadOnlyList<string> Warnings);
+public sealed record NativeMapConversion(string MappingJson, string Xslt, IReadOnlyList<string> Warnings, IReadOnlyList<string> PendingFunctions);
 
 public static class BizTalkNativeMapConverter
 {
@@ -164,6 +164,7 @@ public static class BizTalkNativeMapConverter
         {
             cancellationToken.ThrowIfCancellationRequested();
             var resolved = resolver.Resolve(producer);
+            resolver.NoteTarget(producer, TargetPath(to));
             foreach (var field in resolved.Sources) RequireRepeatCoverage(field, to);
             assignments.Add((to, new() { Expression = resolved.Expression, TargetPath = TargetPath(to) }));
         }
@@ -198,6 +199,7 @@ public static class BizTalkNativeMapConverter
             TargetRoot = Prefix(targetRoot.Path[1..], "t"), Namespaces = namespaces,
             SourceSchemas = embedSchemas ? sourceSchemas.ToArray() : [], TargetSchemas = embedSchemas ? targetSchemas.ToArray() : [],
             ValidateSource = false, ValidateTarget = false,
+            CustomFunctions = resolver.CustomFunctions((string?)root.Attribute("Name") ?? "unnamed map"),
             Fields = assignments.OrderBy(assignment => Order(assignment.Target)).Select(assignment => assignment.Mapping).ToArray(),
             Repeats = repeatLinks.OrderBy(repeat => Order(repeat.To)).Select(repeat => new XmlRepeatMappingDefinition
             {
@@ -205,7 +207,7 @@ public static class BizTalkNativeMapConverter
             }).ToArray()
         };
         var json = JsonSerializer.Serialize(definition, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        var engine = new XmlMappingEngine(json);
+        var engine = new XmlMappingEngine(json, allowStubs: true);
         var warnings = new List<string>
         {
             "Review proposal only: scalar values, constants and record/repeat links were converted using the supplied schemas. No deployed policy association, BizTalk-equivalent output, or execution approval is established. Preview synthetic inputs and compare trusted expected outputs before using the map."
@@ -216,7 +218,9 @@ public static class BizTalkNativeMapConverter
             warnings.Add($"Functoid formulas were converted for {functoidOutputs.Count} target(s) (FID {string.Join(", ", resolver.Used.Order())}). Their behavior ports the helper code BizTalk compiled into other maps; it has not been compared with this map's compiled output. Current-date functions use the Mulse host's local time. Compare trusted expected outputs before use.");
         if (functoids.Count > 0 && resolver.Contributing.Count < functoids.Count)
             warnings.Add($"{functoids.Count - resolver.Contributing.Count} functoid(s) (for example unconnected sample script stubs) are not connected to any target and were ignored, as BizTalk generates no output for them.");
-        return new(json, engine.Xslt, warnings);
+        if (resolver.PendingFunctions.Count > 0)
+            warnings.Add($"{resolver.PendingFunctions.Count} scripting functoid(s) were imported as unimplemented stubs ({string.Join(", ", resolver.PendingFunctions.Take(8))}{(resolver.PendingFunctions.Count > 8 ? ", ..." : string.Empty)}). The original C# is kept as documentation only and is never run. Until each stub has a formula, this map fails closed and cannot run: fill them in from the custom functions editor (an AI prompt is generated there) or replace the calls.");
+        return new(json, engine.Xslt, warnings, resolver.PendingFunctions.ToArray());
 
         bool RequiredWithin(XmlSchemaRoot tree, string scope, XmlSchemaField field)
             => tree.Fields.Where(candidate => candidate.Path.StartsWith(scope + "/", StringComparison.Ordinal)
@@ -299,13 +303,16 @@ public static class BizTalkNativeMapConverter
 
     private sealed class FunctoidResolver
     {
-        private static readonly Regex ScriptMethod = new(@"\bpublic\s+[\w.<>\[\]]+\s+(\w+)\s*\(", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         private readonly Dictionary<int, Functoid> functoids;
         private readonly XElement[] links;
         private readonly Dictionary<string, XElement> linksById = new(StringComparer.Ordinal);
         private readonly XmlSchemaRoot sourceRoot;
         private readonly Dictionary<int, ResolvedFunctoid> cache = [];
         private readonly HashSet<int> active = [];
+        private readonly Dictionary<int, List<int>> children = [];
+        private readonly Dictionary<string, ScriptStub> stubsByKey = new(StringComparer.Ordinal);
+        private readonly Dictionary<int, ScriptStub> scriptsByFunctoid = [];
+        private readonly Dictionary<int, List<string>> targetsByFunctoid = [];
 
         public FunctoidResolver(Dictionary<int, Functoid> functoids, XElement[] links, XmlSchemaRoot sourceRoot)
         {
@@ -319,6 +326,7 @@ public static class BizTalkNativeMapConverter
         }
 
         public IReadOnlyCollection<int> Contributing => cache.Keys;
+        public IReadOnlyCollection<string> PendingFunctions => stubsByKey.Values.Select(stub => stub.Name).ToArray();
         public HashSet<int> Used { get; } = [];
 
         public ResolvedFunctoid Resolve(int id)
@@ -328,7 +336,10 @@ public static class BizTalkNativeMapConverter
             try
             {
                 var functoid = functoids[id];
-                if (!FunctoidCatalog.TryGetValue(functoid.Fid, out var function)) throw Unsupported(functoid);
+                var isScript = functoid.Fid == ScriptFid;
+                XmlMappingFunction function = default;
+                if (!isScript && !FunctoidCatalog.TryGetValue(functoid.Fid, out function)) throw Unsupported(functoid);
+                var inputNotes = new List<string>();
                 var idText = id.ToString(CultureInfo.InvariantCulture);
                 var parameters = functoid.Element.Elements("Input-Parameters").Elements("Parameter")
                     .Select(parameter => (Parameter: parameter, Index: int.TryParse((string?)parameter.Attribute("linkIndex"), NumberStyles.None, CultureInfo.InvariantCulture, out var index) ? index : -1))
@@ -347,6 +358,7 @@ public static class BizTalkNativeMapConverter
                     {
                         case "constant":
                             arguments.Add(new XmlValueExpression { Kind = XmlValueExpressionKind.Constant, Constant = value });
+                            inputNotes.Add($"constant \"{BizTalkScriptStub.Clip(value, 60)}\"");
                             nodes++;
                             childDepth = Math.Max(childDepth, 1);
                             break;
@@ -358,6 +370,8 @@ public static class BizTalkNativeMapConverter
                             if (FunctoidReference(fromText, functoids) is { } inner)
                             {
                                 var child = Resolve(inner);
+                                (children.TryGetValue(id, out var childIds) ? childIds : children[id] = []).Add(inner);
+                                inputNotes.Add($"result of functoid {inner} (FID {functoids[inner].Fid})");
                                 arguments.Add(child.Expression);
                                 sources.AddRange(child.Sources);
                                 nodes += child.Nodes;
@@ -369,6 +383,7 @@ public static class BizTalkNativeMapConverter
                                 if (!field.Scalar || field.SelfRepeating || field.UnsupportedReason is not null || field.HasDefaultOrFixed)
                                     throw new ArgumentException($"Functoid {id} reads '{field.Path}', which is a record, a repeating value, or otherwise unsupported as a functoid input. No partial native map was produced.");
                                 arguments.Add(new XmlValueExpression { Kind = XmlValueExpressionKind.Source, SourcePath = Prefix(field.Path, "s") });
+                                inputNotes.Add($"source {field.Path}");
                                 sources.Add(field);
                                 nodes++;
                                 childDepth = Math.Max(childDepth, 1);
@@ -380,6 +395,15 @@ public static class BizTalkNativeMapConverter
                 }
                 if (links.Count(link => (string?)link.Attribute("LinkTo") == idText) != linkInputs)
                     throw new ArgumentException($"Functoid {id} has links that its input list does not account for. No partial native map was produced.");
+                if (isScript)
+                {
+                    if (nodes > XmlMappingFunctionCatalog.MaxNodes || childDepth + 1 > XmlMappingFunctionCatalog.MaxDepth)
+                        throw new ArgumentException($"Functoid {id} produces a formula larger than the native limit ({XmlMappingFunctionCatalog.MaxNodes} nodes, depth {XmlMappingFunctionCatalog.MaxDepth}). No partial native map was produced.");
+                    var call = new XmlValueExpression { Kind = XmlValueExpressionKind.Custom, Name = RegisterScript(functoid, inputNotes), Arguments = arguments };
+                    var stub = new ResolvedFunctoid(call, sources, nodes, childDepth + 1);
+                    cache[id] = stub;
+                    return stub;
+                }
                 var (min, max) = XmlMappingFunctionCatalog.Arity(function);
                 if (arguments.Count < min || arguments.Count > max)
                     throw new ArgumentException($"Functoid {id} (FID {functoid.Fid}, {function}) has {arguments.Count} input(s); the native function accepts {min}..{max}. No partial native map was produced.");
@@ -397,12 +421,100 @@ public static class BizTalkNativeMapConverter
         }
 
         private static ArgumentException Unsupported(Functoid functoid)
+            => new($"Functoid {functoid.Id} (FID {functoid.Fid}) has no verified native equivalent and requires explicit translation. No partial native map was produced.");
+
+        public void NoteTarget(int producer, string targetPath)
         {
-            if (functoid.Fid != 260)
-                return new($"Functoid {functoid.Id} (FID {functoid.Fid}) has no verified native equivalent and requires explicit translation. No partial native map was produced.");
-            var code = functoid.Element.Elements("ScripterCode").Elements("Script").Select(script => script.Value).FirstOrDefault() ?? string.Empty;
-            var name = ScriptMethod.Match(code) is { Success: true } match ? match.Groups[1].Value : "unnamed";
-            return new($"Functoid {functoid.Id} is a scripting functoid with inline C# ('{name}'). Scripts are never auto-translated; translate it explicitly or configure a replacement. No partial native map was produced.");
+            var seen = new HashSet<int>();
+            var pending = new Stack<int>([producer]);
+            while (pending.Count > 0)
+            {
+                var current = pending.Pop();
+                if (!seen.Add(current)) continue;
+                if (scriptsByFunctoid.ContainsKey(current))
+                {
+                    var list = targetsByFunctoid.TryGetValue(current, out var known) ? known : targetsByFunctoid[current] = [];
+                    if (!list.Contains(targetPath)) list.Add(targetPath);
+                }
+                if (children.TryGetValue(current, out var inner)) foreach (var child in inner) pending.Push(child);
+            }
         }
+
+        private string RegisterScript(Functoid functoid, IReadOnlyList<string> inputNotes)
+        {
+            var code = functoid.Element.Elements("ScripterCode").Elements("Script").Select(script => script.Value).FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(code))
+                throw new ArgumentException($"Functoid {functoid.Id} is a scripting functoid without any code. No partial native map was produced.");
+            var signature = BizTalkScriptStub.Parse(BizTalkScriptStub.Strip(code));
+            var baseName = signature?.Name;
+            if (baseName is null || !XmlMappingFunctionCatalog.IsIdentifier(baseName) || baseName.Length > 56 || Enum.TryParse<XmlMappingFunction>(baseName, out _))
+                baseName = $"Script_{functoid.Id.ToString(CultureInfo.InvariantCulture)}";
+            var key = $"{baseName}\0{inputNotes.Count}\0{code}";
+            if (!stubsByKey.TryGetValue(key, out var stub))
+            {
+                var name = baseName;
+                for (var suffix = 2; stubsByKey.Values.Any(existing => existing.Name == name); suffix++) name = $"{baseName}_{suffix}";
+                var names = signature?.Parameters is { } declared && declared.Count == inputNotes.Count && declared.Select(parameter => parameter.Name).Distinct(StringComparer.Ordinal).Count() == declared.Count
+                    ? declared.Select(parameter => parameter.Name).ToArray()
+                    : Enumerable.Range(1, inputNotes.Count).Select(index => $"param{index}").ToArray();
+                stub = new ScriptStub(name, code, signature, names);
+                stubsByKey[key] = stub;
+            }
+            stub.Uses.Add((functoid.Id, inputNotes.ToArray()));
+            scriptsByFunctoid[functoid.Id] = stub;
+            return stub.Name;
+        }
+
+        public IReadOnlyList<XmlCustomFunctionDefinition> CustomFunctions(string mapName)
+        {
+            if (stubsByKey.Count > XmlMappingFunctionCatalog.MaxCustomFunctions)
+                throw new ArgumentException($"The map has {stubsByKey.Count} distinct scripting functoids; at most {XmlMappingFunctionCatalog.MaxCustomFunctions} can be imported as stubs. No partial native map was produced.");
+            return stubsByKey.Values.Select(stub =>
+            {
+                var stripped = BizTalkScriptStub.Strip(stub.Code);
+                var text = new System.Text.StringBuilder();
+                text.AppendLine($"Imported BizTalk scripting functoid (FID {ScriptFid}) from map '{mapName}'. The original C# is kept below for reference and is never run: implement this function as a formula (Body) to use the map.");
+                if (stub.Signature is { } signature)
+                {
+                    text.AppendLine($"Original signature: {signature.Display}");
+                    text.AppendLine($"Returns: {signature.ReturnType}");
+                    if (signature.PublicMethods > 1) text.AppendLine($"Note: the script declares {signature.PublicMethods} public methods; the first was described.");
+                }
+                else text.AppendLine("The method signature could not be read from the script.");
+                var first = stub.Uses[0];
+                for (var index = 0; index < stub.ParameterNames.Count; index++)
+                    text.AppendLine($"Input {index + 1} ({stub.ParameterNames[index]}{(stub.Signature?.Parameters is { } declared && declared.Count == stub.ParameterNames.Count ? ": " + declared[index].Type : string.Empty)}) - first use: {first.Inputs[index]}");
+                var hints = BizTalkScriptStub.Hints(stripped);
+                if (hints.Count > 0) text.AppendLine("Detected behavior: " + string.Join("; ", hints) + ".");
+                var usages = stub.Uses.Take(XmlMappingFunctionCatalog.MaxUsages).Select(use =>
+                    BizTalkScriptStub.Clip($"Map '{mapName}', functoid {use.FunctoidId}: inputs ({string.Join("; ", use.Inputs)})"
+                        + (targetsByFunctoid.TryGetValue(use.FunctoidId, out var targets) && targets.Count > 0 ? " -> feeds " + string.Join(", ", targets) : string.Empty),
+                        XmlMappingFunctionCatalog.MaxUsageLength)).ToArray();
+                return new XmlCustomFunctionDefinition
+                {
+                    Name = stub.Name,
+                    Description = BizTalkScriptStub.Clip(text.ToString().TrimEnd(), XmlMappingFunctionCatalog.MaxDescriptionLength),
+                    Parameters = stub.ParameterNames.Select((name, index) => new XmlCustomFunctionParameter
+                    {
+                        Name = name,
+                        Description = BizTalkScriptStub.Clip(stub.Signature?.Parameters is { } declared && declared.Count == stub.ParameterNames.Count ? declared[index].Type : "unknown type", XmlMappingFunctionCatalog.MaxDescriptionLength)
+                    }).ToArray(),
+                    OriginalSource = BizTalkScriptStub.Clip(stub.Code.Trim(), XmlMappingFunctionCatalog.MaxOriginalSourceLength),
+                    OriginalSourceLanguage = "CSharp",
+                    Usages = usages
+                };
+            }).ToArray();
+        }
+    }
+
+    private const int ScriptFid = 260;
+
+    private sealed class ScriptStub(string name, string code, BizTalkScriptSignature? signature, IReadOnlyList<string> parameterNames)
+    {
+        public string Name { get; } = name;
+        public string Code { get; } = code;
+        public BizTalkScriptSignature? Signature { get; } = signature;
+        public IReadOnlyList<string> ParameterNames { get; } = parameterNames;
+        public List<(int FunctoidId, string[] Inputs)> Uses { get; } = [];
     }
 }

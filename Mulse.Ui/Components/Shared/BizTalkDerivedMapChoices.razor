@@ -1,8 +1,8 @@
 @if (Choices.Count > 0)
 {
     <section aria-label="Derived native map choices">
-        <h3>Native map choices from policy (@Choices.Count(choice => choice.Status == "Converted") of @Choices.Count converted)</h3>
-        <p class="field-hint">Each row is an exact map-name value found in the rule exports. Converted rows were turned into native map choices; they are not verified equivalents of the BizTalk maps. Every other row has no native choice and fails closed at run time: fix the cause (for example add the owning project to the source paths) or add a manual choice in the choices editor.</p>
+        <h3>Native map choices from policy (@Choices.Count(choice => choice.Status == "Converted") of @Choices.Count converted@(Choices.Any(choice => choice.Status == "ConvertedWithStubs") ? $", {Choices.Count(choice => choice.Status == "ConvertedWithStubs")} waiting on script stubs" : string.Empty))</h3>
+        <p class="field-hint">Each row is an exact map-name value found in the rule exports. Converted rows were turned into native map choices; they are not verified equivalents of the BizTalk maps. Rows waiting on script stubs have a choice that fails closed until every scripting functoid has a formula (open the map in the mapping editor's custom functions section). Every other row has no native choice and fails closed at run time: fix the cause (for example add the owning project to the source paths) or add a manual choice in the choices editor.</p>
         <table class="data-table">
             <thead><tr><th>Status</th><th>Map-name value</th><th>Detail</th></tr></thead>
             <tbody>

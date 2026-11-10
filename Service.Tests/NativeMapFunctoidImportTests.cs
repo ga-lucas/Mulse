@@ -128,14 +128,119 @@ public sealed class NativeMapFunctoidImportTests
         Assert.Contains("No partial native map", message, StringComparison.Ordinal);
     }
 
+    private static string Script(int id, string code, params string[] inputs)
+        => $"<Functoid FunctoidID=\"{id}\" Functoid-FID=\"260\" X-Cell=\"1\" Y-Cell=\"1\"><Input-Parameters>{string.Concat(inputs)}</Input-Parameters><ScripterCode><Script Language=\"CSharp\"><![CDATA[{code}]]></Script></ScripterCode></Functoid>";
+
+    private const string FormatDateCode = "// formats a date\r\npublic string FormatDate(string raw, string pattern) { switch (raw) { case \"I\": return \"In\"; case \"O\": return \"Out\"; } return DateTime.Parse(raw).ToString(\"yyyy-MM-dd\"); }";
+
+    private static XmlMappingDefinition Definition(NativeMapConversion conversion)
+        => JsonSerializer.Deserialize<XmlMappingDefinition>(conversion.MappingJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+
+    private static NativeMapConversion ConvertFormatDate()
+        => Convert(Build(Wire(1, "Order/Id", 10) + Out(3, 10, "Result/Number"),
+            Script(10, FormatDateCode, Link("1", 0), Const("yyyy", 1))));
+
     [Fact]
-    public void ConnectedScriptFunctoid_IsNeverTranslated_AndNamesTheMethod()
+    public void ConnectedScriptFunctoid_BecomesADocumentedStubAndACustomCall()
     {
-        var script = "<Functoid FunctoidID=\"10\" Functoid-FID=\"260\" X-Cell=\"1\" Y-Cell=\"1\"><Input-Parameters>" + Link("1", 0)
-            + "</Input-Parameters><ScripterCode><Script Language=\"CSharp\"><![CDATA[public string FormatDate(string a) { return a; }]]></Script></ScripterCode></Functoid>";
-        var message = Message(Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number"), script));
-        Assert.Contains("FormatDate", message, StringComparison.Ordinal);
-        Assert.Contains("never auto-translated", message, StringComparison.Ordinal);
+        var conversion = ConvertFormatDate();
+        var definition = Definition(conversion);
+        var call = definition.Fields.Single(field => field.TargetPath == "Number").Expression!;
+        Assert.Equal(XmlValueExpressionKind.Custom, call.Kind);
+        Assert.Equal("FormatDate", call.Name);
+        Assert.Equal(2, call.Arguments.Count);
+        Assert.Equal("/sn1:Order/sn1:Id", call.Arguments[0].SourcePath);
+        Assert.Equal("yyyy", call.Arguments[1].Constant);
+        Assert.Equal(["FormatDate"], conversion.PendingFunctions);
+        var function = Assert.Single(definition.CustomFunctions);
+        Assert.Null(function.Body);
+        Assert.Equal(["raw", "pattern"], function.Parameters.Select(parameter => parameter.Name));
+        Assert.Contains("Original signature", function.Description, StringComparison.Ordinal);
+        Assert.Contains("string FormatDate", function.Description, StringComparison.Ordinal);
+        Assert.Contains("yyyy-MM-dd", function.Description, StringComparison.Ordinal);
+        Assert.Contains("\"I\"", function.Description, StringComparison.Ordinal);
+        Assert.Contains("feeds Number", Assert.Single(function.Usages), StringComparison.Ordinal);
+        Assert.Contains("public string FormatDate", function.OriginalSource, StringComparison.Ordinal);
+        Assert.Equal("CSharp", function.OriginalSourceLanguage);
+        Assert.Contains(conversion.Warnings, warning => warning.Contains("unimplemented stubs", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void StubbedMap_FailsClosedUntilTheStubHasAFormula()
+    {
+        var conversion = ConvertFormatDate();
+        var error = Assert.Throws<ArgumentException>(() => new XmlMappingEngine(conversion.MappingJson));
+        Assert.Contains("unimplemented stub", error.Message, StringComparison.Ordinal);
+        Assert.Contains("FormatDate", error.Message, StringComparison.Ordinal);
+
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var json = System.Text.Json.Nodes.JsonNode.Parse(conversion.MappingJson)!;
+        var body = new XmlValueExpression
+        {
+            Kind = XmlValueExpressionKind.Function,
+            Function = XmlMappingFunction.StringUpperCase,
+            Arguments = [new XmlValueExpression { Kind = XmlValueExpressionKind.Parameter, Name = "raw" }]
+        };
+        json["customFunctions"]![0]!["body"] = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(body, options));
+        var implemented = new XmlMappingEngine(json.ToJsonString());
+        var output = XDocument.Parse(implemented.Transform("<Order xmlns='urn:source' code='x'><Id>abc</Id></Order>")).Root!;
+        Assert.Equal("ABC", output.Element("Number")!.Value);
+    }
+
+    [Fact]
+    public void SameScriptUsedTwice_SharesOneStubWithBothUsages()
+    {
+        var conversion = Convert(Build(
+            Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number") + Wire(3, "Order/Optional", 11) + Out(4, 11, "Result/Text"),
+            Script(10, FormatDateCode, Link("1", 0), Const("a", 1)) + Script(11, FormatDateCode, Link("3", 0), Const("b", 1))));
+        var function = Assert.Single(Definition(conversion).CustomFunctions);
+        Assert.Equal(2, function.Usages.Count);
+        Assert.Equal(["FormatDate"], conversion.PendingFunctions);
+    }
+
+    [Fact]
+    public void DifferentScriptsWithTheSameName_AreSuffixed()
+    {
+        var other = "public string FormatDate(string raw, string pattern) { return raw + pattern; }";
+        var conversion = Convert(Build(
+            Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number") + Wire(3, "Order/Optional", 11) + Out(4, 11, "Result/Text"),
+            Script(10, FormatDateCode, Link("1", 0), Const("a", 1)) + Script(11, other, Link("3", 0), Const("b", 1))));
+        Assert.Equal(["FormatDate", "FormatDate_2"], Definition(conversion).CustomFunctions.Select(function => function.Name).Order());
+    }
+
+    [Fact]
+    public void UnreadableScriptSignature_FallsBackToGenericNamesAndStillImports()
+    {
+        var conversion = Convert(Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number"), Script(10, "this is not C#", Link("1", 0))));
+        var function = Assert.Single(Definition(conversion).CustomFunctions);
+        Assert.Equal("Script_10", function.Name);
+        Assert.Equal(["param1"], function.Parameters.Select(parameter => parameter.Name));
+        Assert.Contains("could not be read", function.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ScriptNamedLikeABuiltInFunction_GetsASafeName()
+    {
+        var conversion = Convert(Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number"),
+            Script(10, "public string StringConcat(string a) { return a; }", Link("1", 0))));
+        Assert.Equal("Script_10", Assert.Single(Definition(conversion).CustomFunctions).Name);
+    }
+
+    [Fact]
+    public void HugeScript_IsTruncatedInTheStubNotRejected()
+    {
+        var code = "public string Big(string a) { return \"" + new string('x', 40000) + "\"; }";
+        var function = Assert.Single(Definition(Convert(Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number"), Script(10, code, Link("1", 0))))).CustomFunctions);
+        Assert.Contains("truncated", function.OriginalSource, StringComparison.Ordinal);
+        Assert.True(function.OriginalSource!.Length <= XmlMappingFunctionCatalog.MaxOriginalSourceLength);
+    }
+
+    [Fact]
+    public void ConnectedInlineXsltScript_IsStillRejected()
+    {
+        var xslt = "<Functoid FunctoidID=\"10\" Functoid-FID=\"260\" X-Cell=\"1\" Y-Cell=\"1\"><Input-Parameters>" + Link("1", 0)
+            + "</Input-Parameters><ScripterCode><Script Language=\"Xslt\"><![CDATA[<x/>]]></Script></ScripterCode></Functoid>";
+        Assert.Contains("inline XSLT", Message(Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number"), xslt)), StringComparison.Ordinal);
     }
 
     [Fact]

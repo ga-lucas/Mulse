@@ -64,7 +64,7 @@
                 {
                     <label class="field-label">Formula</label>
                     <textarea class="mapping-input" rows="3" aria-label="XML mapping formula" value="@XmlFormula.Format(field.Expression)" @onchange="e => SetFormulaAsync(field, e.Value?.ToString())"></textarea>
-                    <HelpTooltip Label="Formula">Functions: @string.Join(", ", XmlFormula.Functions.Select(function => function.Key)). Sources are absolute named paths such as /s:Order/s:Id; text constants are 'single quoted' (write '' for a quote) and bare numbers are constants. Example: StringConcat(/s:Order/s:Id, '-', StringUpperCase(/s:Order/s:Name)). A formula target is always written, like a BizTalk functoid output; a missing source reads as empty text. Comparisons are numeric when both sides are numbers, logical results are the text true/false, and current-date functions use the server's local time. Use ordered string operations below for further changes.</HelpTooltip>
+                    <HelpTooltip Label="Formula">Functions: @string.Join(", ", XmlFormula.Functions.Select(function => function.Key)). Sources are absolute named paths such as /s:Order/s:Id; text constants are 'single quoted' (write '' for a quote) and bare numbers are constants. Example: StringConcat(/s:Order/s:Id, '-', StringUpperCase(/s:Order/s:Name)). A formula target is always written, like a BizTalk functoid output; a missing source reads as empty text. Comparisons are numeric when both sides are numbers, logical results are the text true/false, and current-date functions use the server's local time. Custom functions (below) can be called by name, e.g. FormatBirthDate(/s:Order/s:Dob). Use ordered string operations below for further changes.</HelpTooltip>
                 }
                 else if (field.Constant is null)
                 {
@@ -129,6 +129,7 @@
         }
         <button class="secondary-button" disabled="@(map.Repeats.Count >= 256)" @onclick="AddRepeatAsync">Add repeating record</button>
         </details>
+        <XmlCustomFunctionsEditor Map="map" Changed="WriteAsync" />
     }
     <details>
         <summary>Mapping definition JSON</summary>
@@ -190,13 +191,14 @@
         try
         {
             _map = JsonSerializer.Deserialize<XmlMappingViewModel>(Value, Options);
-            if (_map is null || _map.Version is not (1 or 2) || _map.Namespaces is null || _map.Fields is null
+            if (_map is null || _map.Version is not (1 or 2) || _map.Namespaces is null || _map.Fields is null || _map.CustomFunctions is null
                 || _map.Fields.Any(field => field is null || field.Operations is null || field.Operations.Count > 16
-                    || (field.Expression is not null && (field.Constant is not null || XmlFormula.Validate(field.Expression) is not null || _map.Version != 2))
+                    || (field.Expression is not null && (field.Constant is not null || XmlFormula.Validate(field.Expression, XmlCustomFunctions.ContextFor(_map.CustomFunctions)) is not null || _map.Version != 2))
                     || (_map.Version == 1 && field.Operations.Count > 0)
                     || field.Operations.Any(operation => operation is null || !OperationKinds.Contains(operation.Kind, StringComparer.Ordinal)
                         || (operation.Kind is "Prefix" or "Suffix" ? operation.Argument is null || operation.Argument.Length > 4096 : operation.Argument is not null)))
-                || _map.SourceSchemas is null || _map.TargetSchemas is null || _map.Repeats is null)
+                || _map.SourceSchemas is null || _map.TargetSchemas is null || _map.Repeats is null
+                || XmlCustomFunctions.Validate(_map.CustomFunctions) is not null || (_map.CustomFunctions.Count > 0 && _map.Version != 2))
             {
                 _map = null;
                 _error = "Mapping editor requires version 1 or 2 with valid namespace, field and operation collections. Correct the JSON; the original definition is preserved.";
@@ -251,7 +253,7 @@
 
     private async Task SetFormulaAsync(XmlFieldMappingViewModel field, string? text)
     {
-        if (!XmlFormula.TryParse(text, out var expression, out var error))
+        if (!XmlFormula.TryParse(text, out var expression, out var error, XmlCustomFunctions.ContextFor(_map!.CustomFunctions)))
         {
             _error = error;
             return;

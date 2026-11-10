@@ -270,7 +270,7 @@ public sealed partial class BizTalkImportService : IBizTalkImportService
                 .SelectMany(path => BizTalkRulePolicyAnalyzer.ReadMapNameLiterals(path, request.NativePolicyVersions, cancellationToken)).ToArray();
             derivedChoices = BizTalkNativeMapChoiceDeriver.Derive(hydratedProjects.Select(project => project.ProjectPath), literals, nativeSchemas!, request.NativeMapChoicesJson, cancellationToken);
             mapChoicesJson = derivedChoices.CasesJson;
-            warnings.Add($"{derivedChoices.Report.Count(static item => item.Status == "Converted")} of {derivedChoices.Report.Count} policy map-name values were converted to native map choices; the rest are listed with reasons and stay fail-closed. Derived choices are not verified equivalents of the BizTalk maps.");
+            warnings.Add($"{derivedChoices.Report.Count(static item => item.Status is "Converted" or "ConvertedWithStubs")} of {derivedChoices.Report.Count} policy map-name values were converted to native map choices (some may wait on script stubs); the rest are listed with reasons and stay fail-closed. Derived choices are not verified equivalents of the BizTalk maps.");
         }
         var reservedFlowIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var flowCandidates = candidateProjects

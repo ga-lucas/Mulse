@@ -1,0 +1,169 @@
+@using Mulse.Ui.Models
+
+<details open="@(_pending > 0)">
+    <summary>Custom functions (@Map.CustomFunctions.Count@(_pending > 0 ? $", {_pending} stub(s) to implement" : string.Empty))</summary>
+    <HelpTooltip Label="Custom functions">A custom function is a reusable, named formula with parameters, like a BizTalk scripting functoid. Imported scripting functoids arrive as stubs: the original code is kept for reference only and is never run, and any map that calls a stub fails closed until the stub has a formula. Write the formula yourself, or copy the generated prompt into an AI assistant and paste its reply back. Inside a body read a parameter as $name; bodies cannot read the message directly.</HelpTooltip>
+    @if (_error is not null)
+    {
+        <p class="status-banner error" role="alert">@_error</p>
+    }
+    @if (_pending > 0)
+    {
+        <p class="status-banner" role="status">@_pending custom function(s) have no formula yet. Maps that call them cannot run or be previewed until each is implemented.</p>
+    }
+    @foreach (var function in Map.CustomFunctions)
+    {
+        var stub = XmlCustomFunctions.IsStub(function);
+        <fieldset @key="function">
+            <legend>@XmlCustomFunctions.Signature(function) - @(stub ? "stub (not implemented)" : "implemented")</legend>
+            @if (!string.IsNullOrWhiteSpace(function.Description))
+            {
+                <pre class="field-hint" aria-label="@($"Description of {function.Name}")">@function.Description</pre>
+            }
+            <label class="field-label">Parameters (comma separated names)</label>
+            <input class="mapping-input" aria-label="@($"Parameters of {function.Name}")" value="@string.Join(", ", function.Parameters.Select(parameter => parameter.Name))" @onchange="e => SetParametersAsync(function, e.Value?.ToString())" />
+            @if (function.Parameters.Any(parameter => !string.IsNullOrWhiteSpace(parameter.Description)))
+            {
+                <ul>
+                    @foreach (var parameter in function.Parameters.Where(parameter => !string.IsNullOrWhiteSpace(parameter.Description)))
+                    {
+                        <li><code>$@parameter.Name</code>: @parameter.Description</li>
+                    }
+                </ul>
+            }
+            @if (function.OriginalSource is not null)
+            {
+                <details>
+                    <summary>Original @(function.OriginalSourceLanguage ?? "source") (reference only, never run)</summary>
+                    <pre aria-label="@($"Original source of {function.Name}")">@function.OriginalSource</pre>
+                </details>
+            }
+            @if (function.Usages.Count > 0)
+            {
+                <details>
+                    <summary>Where it is used (@function.Usages.Count)</summary>
+                    <ul>@foreach (var usage in function.Usages) { <li>@usage</li> }</ul>
+                </details>
+            }
+            <label class="field-label">Formula body</label>
+            <textarea class="mapping-input" rows="3" aria-label="@($"Formula body of {function.Name}")" value="@(function.Body is null ? string.Empty : XmlFormula.Format(function.Body))" @onchange="e => SetBodyAsync(function, e.Value?.ToString())"></textarea>
+            <details>
+                <summary>Generate the formula with an AI assistant (copy and paste)</summary>
+                <p class="field-hint">1. Copy this prompt into Copilot, ChatGPT or any assistant. It contains only this function's documentation, no message data. 2. Paste the reply below and apply it. The formula is checked before it is accepted; review it against the original code and trusted expected output.</p>
+                <textarea class="sample-textarea" readonly rows="10" aria-label="@($"AI prompt for {function.Name}")" value="@XmlCustomFunctions.BuildPrompt(function, Map.CustomFunctions)"></textarea>
+                <textarea class="mapping-input" rows="3" aria-label="@($"AI reply for {function.Name}")" @bind="Reply(function).Text" @bind:event="oninput"></textarea>
+                <button class="secondary-button" @onclick="() => ApplyReplyAsync(function)">Apply AI reply to @function.Name</button>
+            </details>
+            @if (!stub)
+            {
+                <button class="secondary-button" @onclick="() => ClearBodyAsync(function)">Clear formula (make @function.Name a stub)</button>
+            }
+            <button class="secondary-button" @onclick="() => RemoveAsync(function)">Remove custom function @function.Name</button>
+        </fieldset>
+    }
+    <div class="inline-row">
+        <input class="mapping-input" aria-label="New custom function name" @bind="_newName" placeholder="FormatDate" />
+        <button class="secondary-button" disabled="@(Map.CustomFunctions.Count >= XmlFormula.MaxCustomFunctions)" @onclick="AddAsync">Add custom function</button>
+    </div>
+</details>
+
+@code {
+    [Parameter, EditorRequired] public XmlMappingViewModel Map { get; set; } = new();
+    [Parameter] public EventCallback Changed { get; set; }
+    private sealed class ReplyBox { public string Text { get; set; } = string.Empty; }
+    private readonly Dictionary<XmlCustomFunctionViewModel, ReplyBox> _replies = new();
+    private string? _error;
+    private string _newName = string.Empty;
+    private int _pending => Map.CustomFunctions.Count(XmlCustomFunctions.IsStub);
+
+    private ReplyBox Reply(XmlCustomFunctionViewModel function)
+        => _replies.TryGetValue(function, out var box) ? box : _replies[function] = new();
+
+    private async Task CommitAsync()
+    {
+        _error = null;
+        Map.Version = 2;
+        await Changed.InvokeAsync();
+    }
+
+    private async Task SetBodyAsync(XmlCustomFunctionViewModel function, string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) { await ClearBodyAsync(function); return; }
+        if (!XmlFormula.TryParse(text, out var body, out var error, XmlCustomFunctions.ContextForBody(Map.CustomFunctions, function)))
+        {
+            _error = $"{function.Name}: {error}";
+            return;
+        }
+        var previous = function.Body;
+        function.Body = body;
+        if (XmlCustomFunctions.Validate(Map.CustomFunctions) is { } invalid)
+        {
+            function.Body = previous;
+            _error = invalid;
+            return;
+        }
+        await CommitAsync();
+    }
+
+    private async Task ApplyReplyAsync(XmlCustomFunctionViewModel function)
+    {
+        var formula = XmlCustomFunctions.ExtractFormula(Reply(function).Text, out var error);
+        if (formula is null) { _error = error; return; }
+        await SetBodyAsync(function, formula);
+        if (_error is null) Reply(function).Text = string.Empty;
+    }
+
+    private async Task ClearBodyAsync(XmlCustomFunctionViewModel function)
+    {
+        if (function.Body is null) return;
+        function.Body = null;
+        await CommitAsync();
+    }
+
+    private async Task SetParametersAsync(XmlCustomFunctionViewModel function, string? text)
+    {
+        var names = (text ?? string.Empty).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var previous = function.Parameters;
+        function.Parameters = names.Select(name => new XmlCustomFunctionParameterViewModel
+        {
+            Name = name, Description = previous.FirstOrDefault(parameter => parameter.Name == name)?.Description ?? string.Empty
+        }).ToList();
+        var context = XmlCustomFunctions.ContextFor(Map.CustomFunctions);
+        var error = XmlCustomFunctions.Validate(Map.CustomFunctions)
+            ?? Map.Fields.Select(field => field.Expression is null ? null : XmlFormula.Validate(field.Expression, context)).FirstOrDefault(message => message is not null);
+        if (error is not null)
+        {
+            function.Parameters = previous;
+            _error = $"Parameters not changed: {error}";
+            return;
+        }
+        await CommitAsync();
+    }
+
+    private async Task AddAsync()
+    {
+        var name = _newName.Trim();
+        var added = new XmlCustomFunctionViewModel { Name = name };
+        Map.CustomFunctions.Add(added);
+        if (XmlCustomFunctions.Validate(Map.CustomFunctions) is { } error)
+        {
+            Map.CustomFunctions.Remove(added);
+            _error = error;
+            return;
+        }
+        _newName = string.Empty;
+        await CommitAsync();
+    }
+
+    private async Task RemoveAsync(XmlCustomFunctionViewModel function)
+    {
+        if (XmlCustomFunctions.IsReferenced(Map, function.Name))
+        {
+            _error = $"{function.Name} is still called by a field or another function. Remove those calls first.";
+            return;
+        }
+        Map.CustomFunctions.Remove(function);
+        _replies.Remove(function);
+        await CommitAsync();
+    }
+}

@@ -29,12 +29,16 @@
     <textarea class="sample-textarea" aria-label="BizTalk map XML" value="@_mapXml" @onchange="e => { _mapXml = e.Value?.ToString() ?? string.Empty; Invalidate(); }"></textarea>
     <InputFile OnChange="ReadMapAsync" accept=".btm" disabled="@_busy" />
     <button class="secondary-button" disabled="@_busy" @onclick="ConvertAsync">Create native map proposal</button>
-    <HelpTooltip Label="Native map proposals">Requires source/target XSDs. Only complete supported scalar-link/constant maps are accepted. Optional links require optional targets and use an explicit presence condition. Repeating sources, structured copies, functoids, scripts, custom XSLT, unknown constructs and unsupported targets fail explicitly; no partial map replaces your work.</HelpTooltip>
+    <HelpTooltip Label="Native map proposals">Requires source/target XSDs. Supported links, repeats and built-in functoids are converted. Scripting functoids become custom function stubs: the original code is kept for reference and each stub must be given a formula (by hand, or by pasting an AI assistant's reply) before the map can run. Inline XSLT, unknown functoids and unsupported targets fail explicitly; no partial map replaces your work.</HelpTooltip>
     @if (_proposal is { } proposal)
     {
         @foreach (var warning in proposal.Warnings)
         {
             <p class="warning-panel">@warning</p>
+        }
+        @if (proposal.PendingFunctions is { Count: > 0 } pending)
+        {
+            <p class="warning-panel" role="status">Stubs to implement after applying: @string.Join(", ", pending). The map fails closed until each has a formula (see Custom functions in the mapping editor).</p>
         }
         <details><summary>Proposed native mapping JSON</summary><pre>@proposal.MappingJson</pre></details>
         <details><summary>Proposed XSLT</summary><pre>@proposal.Xslt</pre></details>
