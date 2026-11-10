@@ -49,6 +49,15 @@ public sealed class NativeMapOptionalRecordTests
     }
 
     [Fact]
-    public void OptionalRecord_WithOnlyDirectLinksBelow_IsStillRefused()
-        => Assert.Contains("Optional record", Assert.Throws<ArgumentException>(() => Convert(Map(Direct(1, "Order/Note", "Result/Meta/Note")))).Message);
+    public void OptionalRecord_WithOnlyDirectLinksBelow_IsAlwaysCreated_WithGuardedFields()
+    {
+        var conversion = Convert(Map(Direct(1, "Order/Note", "Result/Meta/Note")));
+        var engine = new XmlMappingEngine(conversion.MappingJson);
+        var without = XDocument.Parse(engine.Transform("<Order xmlns='urn:opt'/>")).Root!;
+        Assert.NotNull(without.Element(Ns + "Meta"));
+        Assert.Null(without.Element(Ns + "Meta")!.Element(Ns + "Note"));
+        var with = XDocument.Parse(engine.Transform("<Order xmlns='urn:opt'><Note>n</Note></Order>")).Root!;
+        Assert.Equal("n", with.Element(Ns + "Meta")!.Element(Ns + "Note")!.Value);
+        Assert.Contains(conversion.Warnings, warning => warning.Contains("always created", StringComparison.Ordinal));
+    }
 }

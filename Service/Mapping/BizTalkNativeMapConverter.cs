@@ -287,9 +287,8 @@ public static class BizTalkNativeMapConverter
         foreach (var field in targetRoot.Fields.Where(field => field.UnsupportedReason is not null && !AroundStub(field) && produced.Contains(field.Path)))
             throw new ArgumentException($"Target '{field.Path}' requires explicit translation: {field.UnsupportedReason}. No partial native map was produced.");
         bool AlwaysProduces(XmlSchemaField record)
-            // Compiled BizTalk output creates an optional record unconditionally when a constant or an ungated functoid below it always writes a value; the native engine also always creates it.
-            => assignments.Any(assignment => (assignment.Mapping.Constant is not null || (assignment.Mapping.Expression is not null && assignment.Mapping.Condition is null))
-                && !fixedPaths.Contains(assignment.Target.Path)
+            // Compiled BizTalk output of unrelated partner maps writes an optional record without a record link unconditionally and guards only the fields below it; the native engine does the same.
+            => assignments.Any(assignment => !fixedPaths.Contains(assignment.Target.Path)
                 && assignment.Target.Path.StartsWith(record.Path + "/", StringComparison.Ordinal)
                 && !targetRoot.Fields.Any(between => between.SelfRepeating && between.Path.Length > record.Path.Length
                     && (between.Path == assignment.Target.Path || assignment.Target.Path.StartsWith(between.Path + "/", StringComparison.Ordinal))));
@@ -304,7 +303,7 @@ public static class BizTalkNativeMapConverter
             if (isProduced && !field.Scalar && !field.RequiredInParent && !repeatLinks.Any(repeat => repeat.To == field))
             {
                 if (AlwaysProduces(field)) { alwaysCreated.Add(field.Path); continue; }
-                throw new ArgumentException($"Optional record '{field.Path}' would be created without a record link; BizTalk emits it only when a source exists. No partial native map was produced.");
+                throw new ArgumentException($"Optional record '{field.Path}' has no record link and no field written directly below it (it is only reached through record links or across a repeating level); when BizTalk emits it is not proven. No partial native map was produced.");
             }
         }
         foreach (var (_, to) in repeatLinks)
@@ -343,7 +342,7 @@ public static class BizTalkNativeMapConverter
         if (firstOccurrence.Count > 0)
             warnings.Add($"{firstOccurrence.Count} direct link(s) read a field below a repeating source record with no record link, so only the first occurrence is mapped (for example {string.Join("; ", firstOccurrence.Take(3))}). Compiled BizTalk output observed for such links uses the first occurrence without a loop; it was not compared with this map's own compiled output.");
         if (alwaysCreated.Count > 0)
-            warnings.Add($"{alwaysCreated.Count} optional target record(s) are always created because a constant or functoid below them always writes a value (for example {string.Join("; ", alwaysCreated.Take(3))}). Compiled BizTalk output observed does the same, even when the other fields below the record are absent; it was not compared with this map's own compiled output. Optional records with only direct field links are still refused.");
+            warnings.Add($"{alwaysCreated.Count} optional target record(s) with no record link are always created, even when every source below them is absent (for example {string.Join("; ", alwaysCreated.Take(3))}). Compiled BizTalk output of unrelated partner maps does the same: the record is written unconditionally and only the fields below it are guarded; it was not compared with this map's own compiled output. The target schema may still reject an empty record. Optional records fed only through record links are still refused.");
         if (optionalToRequired.Count > 0)
             warnings.Add($"{optionalToRequired.Count} link(s) feed a required target from an optional source (for example {string.Join("; ", optionalToRequired.Take(3))}). Like BizTalk, the target element is omitted when the source is absent, so the output can then violate the target schema.");
         if (resolver.Used.Count > 0)

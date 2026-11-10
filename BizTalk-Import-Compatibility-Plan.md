@@ -60,6 +60,13 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Measured effect (292 real maps):** converting maps rose from 97 to 107. Most of the freed maps stop at later blockers. Next: functoid/field inputs below a repeating record (18), required targets not produced (17), optional records without a record link (16), functoids linked to records (15), schema paths still missing (10).
 - **Verification:** 2,051 service tests passed and the solution built.
 
+### Increment: Optional records without a record link are always created
+
+- **Evidence:** compiled output of three unrelated partner maps (Kaiser, Houston, UHS) writes an optional record that has no record link unconditionally and guards only the fields below it. This corrects the earlier assumption that BizTalk emits such a record only when a source exists. The native engine already works the same way (records are emitted unconditionally, scalar fields are guarded), so no engine change was needed.
+- **Importer:** an optional record with at least one directly written field below it (no repeating level in between, fixed schema values excluded) now converts, with a warning that it is always created and that the target schema may reject an empty record. Records reached only through record links or across a repeating level are still refused, with a clearer message.
+- **Measured effect (292 real maps):** converting maps rose from 107 to 114. Next: required targets not produced (23), functoid/field inputs below a repeating record (18), functoids linked to records (15), schema paths still missing (10), functoids without a verified equivalent (9).
+- **Verification:** 2,051 service tests passed and the solution built.
+
 ### Increment: DLL-verified functoid IDs, cheap functoids and Value Mapping
 
 - **FID catalog verified** by decompiling the owner-supplied `Microsoft.BizTalk.BaseFunctoids.dll` (class -> FID; the DLL holds metadata only, not XSLT). Notable: 374 = Value Mapping Flattening, 375 = Value Mapping, 424 = Looping, 474 = Iteration, 802 = Mass Copy, 322 = Count, 323 = Index, 324-328 = cumulative functoids, 703/704 = Table Looping/Extractor, 706 = IsNil, 707 = Assert.
