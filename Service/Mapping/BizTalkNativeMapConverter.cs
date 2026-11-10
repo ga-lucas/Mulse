@@ -358,11 +358,9 @@ public static class BizTalkNativeMapConverter
         foreach (var field in targetRoot.Fields.Where(field => field.UnsupportedReason is not null && !AroundStub(field) && produced.Contains(field.Path)))
             throw new ArgumentException($"Target '{field.Path}' requires explicit translation: {field.UnsupportedReason}. No partial native map was produced.");
         bool AlwaysProduces(XmlSchemaField record)
-            // Compiled BizTalk output of unrelated partner maps writes an optional record without a record link unconditionally and guards only the fields below it; the native engine does the same.
+            // Compiled BizTalk output of unrelated partner maps writes an optional record without a record link unconditionally and guards only the fields below it, with any loop for a repeating child inside it (an empty record when nothing loops); the native engine does the same.
             => assignments.Any(assignment => !fixedPaths.Contains(assignment.Target.Path)
-                && assignment.Target.Path.StartsWith(record.Path + "/", StringComparison.Ordinal)
-                && !targetRoot.Fields.Any(between => between.SelfRepeating && between.Path.Length > record.Path.Length
-                    && (between.Path == assignment.Target.Path || assignment.Target.Path.StartsWith(between.Path + "/", StringComparison.Ordinal))));
+                && assignment.Target.Path.StartsWith(record.Path + "/", StringComparison.Ordinal));
         foreach (var (gated, _) in recordGates)
             if (!produced.Contains(gated.Path))
                 throw new ArgumentException($"Logical functoid is linked to record '{gated.Path}', which has no mapped fields below it; an empty conditional record is not supported. No partial native map was produced.");
@@ -434,7 +432,7 @@ public static class BizTalkNativeMapConverter
         if (firstOccurrence.Count > 0)
             warnings.Add($"{firstOccurrence.Count} direct link(s) read a field below a repeating source record with no record link, so only the first occurrence is mapped (for example {string.Join("; ", firstOccurrence.Take(3))}). Compiled BizTalk output observed for such links uses the first occurrence without a loop; it was not compared with this map's own compiled output.");
         if (alwaysCreated.Count > 0)
-            warnings.Add($"{alwaysCreated.Count} optional target record(s) with no record link are always created, even when every source below them is absent (for example {string.Join("; ", alwaysCreated.Take(3))}). Compiled BizTalk output of unrelated partner maps does the same: the record is written unconditionally and only the fields below it are guarded; it was not compared with this map's own compiled output. The target schema may still reject an empty record. Optional records fed only through record links are still refused.");
+            warnings.Add($"{alwaysCreated.Count} optional target record(s) with no record link are always created, even when every source below them is absent (for example {string.Join("; ", alwaysCreated.Take(3))}). Compiled BizTalk output of unrelated partner maps does the same: the record is written unconditionally, any loop for a repeating child sits inside it, and only the fields below are guarded; it was not compared with this map's own compiled output. The target schema may still reject an empty record.");
         if (omittedRequired.Count > 0)
             warnings.Add($"{omittedRequired.Count} required target element(s) have no link, constant or fixed value and are not written (for example {string.Join("; ", omittedRequired.Take(3))}). Compiled BizTalk output of unrelated partner maps omits such elements too, so the output can violate the target schema. Link them, or add a constant in the mapping editor, if the receiver needs them.");
         if (optionalToRequired.Count > 0)

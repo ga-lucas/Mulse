@@ -67,6 +67,13 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Measured effect (292 real maps):** converting maps rose from 107 to 114. Next: required targets not produced (23), functoid/field inputs below a repeating record (18), functoids linked to records (15), schema paths still missing (10), functoids without a verified equivalent (9).
 - **Verification:** 2,051 service tests passed and the solution built.
 
+### Increment: Optional records without a record link are created around repeating children
+
+- **Evidence:** compiled output of the Tenet, Froedtert and Norton item-sync maps writes the optional `Packages` container unconditionally. Its repeating child is written directly (no loop) when the source is not repeating, and inside a loop within the container when it is.
+- **Importer:** an optional non-repeating record with no record link is now always created when anything is mapped below it, including when the mapped fields sit below a repeating child. Previously only direct children counted and the map was refused. The existing "always created" warning lists these records and notes an empty container is written when nothing loops.
+- **Measured effect (292 real maps):** converting maps 138 to 149. Next: "no record link" refusal (12), schema paths missing (10), functoids without a verified equivalent (10), unsupported map constructs (7), invalid namespace prefix (7).
+- **Verification:** 2,073 service tests passed and the solution built.
+
 ### Increment: Required target elements without a link are omitted, with a warning
 
 - **Evidence:** compiled output of the Morris, Northbay, Banner, Beacon, Steward and Kaiser maps contains no element at all for required target elements that have no link, constant or fixed value (for example the HL7 event-type, patient-class and identifier-list segments). BizTalk does not synthesize empty required elements; the output can then fail schema validation downstream.

@@ -144,9 +144,13 @@ public sealed class NativeMapRepeatImportTests
         => Assert.DoesNotContain(Convert(Standard).Warnings, warning => warning.Contains("required target element(s) have no link", StringComparison.Ordinal));
 
     [Fact]
-    public void OptionalRecordCreatedWithoutARecordLink_IsRejected()
-        => Assert.Contains("Optional record", Assert.Throws<ArgumentException>(() => Convert(
-            Standard.Where(link => link != "Order/Lines/Line/Parts>Result/Rows/Row/Parts"))).Message);
+    public void OptionalRecordWithoutARecordLink_IsAlwaysCreatedAroundItsRepeatingChildren()
+    {
+        var conversion = Convert(Standard.Where(link => link != "Order/Lines/Line/Parts>Result/Rows/Row/Parts"));
+        Assert.Contains(conversion.Warnings, warning => warning.Contains("always created", StringComparison.Ordinal) && warning.Contains("Parts", StringComparison.Ordinal));
+        var output = XDocument.Parse(new XmlMappingEngine(conversion.MappingJson).Transform("<s:Order xmlns:s=\"urn:s\"><Id>7</Id><Lines><Line><Sku>A</Sku></Line></Lines></s:Order>"));
+        Assert.NotNull(output.Descendants("Parts").SingleOrDefault());
+    }
 
     [Theory]
     [InlineData("UseXSLTransform", "Undefined", true)]
