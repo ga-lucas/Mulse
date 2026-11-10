@@ -41,7 +41,7 @@ public static class XmlFormula
         ["StringReplace"] = (3, 3), ["StringSubstring"] = (3, 3), ["StringContains"] = (2, 2),
         ["MathAbs"] = (1, 1), ["MathAdd"] = (2, 16), ["MathSubtract"] = (2, 16), ["MathMultiply"] = (2, 16),
         ["LogicalGte"] = (2, 2), ["LogicalLt"] = (2, 2), ["LogicalLte"] = (2, 2), ["StringTrimLeft"] = (1, 1), ["StringTrimRight"] = (1, 1),
-        ["RecordPosition"] = (1, 1)
+        ["RecordPosition"] = (1, 1), ["RecordCount"] = (1, 1)
     };
 
     /// <summary>One-line semantics per function (mirrors the engine catalog; a test keeps them equal). Given to whoever writes a custom function body.</summary>
@@ -82,7 +82,8 @@ public static class XmlFormula
         ["LogicalLte"] = "LogicalLte(a, b): true when a <= b (numeric when both are numbers, otherwise ordinal text).",
         ["StringTrimLeft"] = "StringTrimLeft(text): removes leading white space.",
         ["StringTrimRight"] = "StringTrimRight(text): removes trailing white space.",
-        ["RecordPosition"] = "RecordPosition(record): 1-based position of the current repeat of the source record (BizTalk Iteration functoid). The argument must be the source path of a repeating record that the target sits inside."
+        ["RecordPosition"] = "RecordPosition(record): 1-based position of the current repeat of the source record (BizTalk Iteration functoid). The argument must be the source path of a repeating record that the target sits inside.",
+        ["RecordCount"] = "RecordCount(source): number of nodes selected by the source path (BizTalk Record Count functoid); inside a repeating record the count is taken within the current record. The argument must be a source path, not the repeating record the target sits in."
     };
 
     public const int MaxCustomFunctions = 64;

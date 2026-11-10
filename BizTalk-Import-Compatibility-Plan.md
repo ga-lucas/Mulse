@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 1,968 service tests
+Latest verification: 1,976 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -62,6 +62,15 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Warning at import:** states how many copies were expanded into how many links, and that undeclared elements, comments and exact whitespace are not carried over.
 - **Generic completeness fix:** the required-target check no longer demands children of an optional record that is not produced.
 - **Verification:** 1,968 service tests passed and the solution built.
+
+### Increment: Record Count (FID 322)
+
+- **Measured:** 8 of the 292 maps. No compiled `.btm.cs` shows the XSLT it emits, so BizTalk's exact behavior is **unproven**.
+- **Approach:** becomes the editable formula function `RecordCount(source)`, which runs natively as `string(count(path))`. It appears in the mapping UI like any other formula and its result can feed other functions.
+- **Scope rules:** a count of a path outside every repeat is global. Inside a repeating record the count is taken within the current record. Counting the repeating record the target itself sits in is refused (use a different path). Counting values below a repeat from outside that repeat's record link is refused at import.
+- **Input rules (import stops with the reason otherwise):** exactly one input, read directly from the source message (a record or a value the schema supports); constants, no input, several inputs or functoid-fed inputs are refused.
+- **Warning at import:** says whether counting inside a loop is relative to the current record or global in BizTalk is unproven; review those maps.
+- **Verification:** 1,976 service tests passed and the solution built.
 
 ### Increment: `InvokeTransform` (UDF bridge) and `FilenameMaker`
 

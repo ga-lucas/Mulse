@@ -112,7 +112,9 @@ public enum XmlMappingFunction
     StringTrimLeft,
     StringTrimRight,
     // BizTalk Iteration functoid (474): BizTalk compiles it to position(); verified against a compiled map.
-    RecordPosition
+    RecordPosition,
+    // BizTalk Record Count functoid (322): ported from its documented behavior (count of the nodes at a source path); not compared with a compiled map.
+    RecordCount
 }
 
 /// <summary>

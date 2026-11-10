@@ -147,7 +147,7 @@ public sealed class NativeMapFunctoidImportTests
 
     [Theory]
     [InlineData(424)]
-    [InlineData(322)]
+    [InlineData(324)]
     public void UnverifiedFunctoid_IsNamedAndNothingIsProduced(int fid)
     {
         var map = Build(Wire(1, "Order/Id", 10) + Out(2, 10, "Result/Number"), F(10, fid, Link("1", 0)));

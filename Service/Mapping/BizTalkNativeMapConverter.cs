@@ -32,7 +32,7 @@ public static class BizTalkNativeMapConverter
         [111] = XmlMappingFunction.MathAbs, [118] = XmlMappingFunction.MathAdd, [119] = XmlMappingFunction.MathSubtract,
         [120] = XmlMappingFunction.MathMultiply, [312] = XmlMappingFunction.LogicalGte, [313] = XmlMappingFunction.LogicalLt,
         [314] = XmlMappingFunction.LogicalLte, [320] = XmlMappingFunction.LogicalOr, [705] = XmlMappingFunction.LogicalNot,
-        [IterationFid] = XmlMappingFunction.RecordPosition
+        [IterationFid] = XmlMappingFunction.RecordPosition, [RecordCountFid] = XmlMappingFunction.RecordCount
     };
     private static readonly HashSet<string> MetadataAttributes = new(StringComparer.Ordinal)
     {
@@ -226,10 +226,11 @@ public static class BizTalkNativeMapConverter
             cancellationToken.ThrowIfCancellationRequested();
             var resolved = resolver.Resolve(producer);
             resolver.NoteTarget(producer, TargetPath(to));
+            var positionRecords = PositionRecordPaths(resolved.Expression).Concat(resolved.Condition is null ? [] : PositionRecordPaths(resolved.Condition)).ToHashSet(StringComparer.Ordinal);
             foreach (var field in resolved.Sources)
             {
                 RequireRepeatCoverage(field, to);
-                if (!field.Scalar && !repeatLinks.Any(repeat => repeat.From == field && to.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal)))
+                if (!field.Scalar && positionRecords.Contains(Prefix(field.Path, "s")) && !repeatLinks.Any(repeat => repeat.From == field && to.Path.StartsWith(repeat.To.Path + "/", StringComparison.Ordinal)))
                     throw new ArgumentException($"Iteration over repeating record '{field.Path}' feeds '{to.Path}', which is not inside a record link from that record. BizTalk would wrap a loop around just that field, which a native map cannot express. No partial native map was produced.");
             }
             assignments.Add((to, new() { Expression = resolved.Expression, Condition = resolved.Condition, TargetPath = TargetPath(to) }));
@@ -297,6 +298,8 @@ public static class BizTalkNativeMapConverter
             warnings.Add($"{resolver.MassCopies.Count} Mass Copy functoid(s) (FID {MassCopyFid}) were expanded into {copyLinks.Count} explicit record and field link(s) by matching the source and target record structure (identical qualified names, kinds and order). BizTalk copies the source nodes verbatim, so anything outside the declared schemas (undeclared elements, comments, exact whitespace) is not carried over, and optional values follow the normal missing-value rules. Edit the expanded links in the Mapping Designer; compare trusted expected outputs before use.");
         if (resolver.Used.Contains(IterationFid))
             warnings.Add($"Iteration functoid(s) (FID {IterationFid}) became RecordPosition: the 1-based position of the current record among its siblings under the same parent, as BizTalk's compiled position() reports it. Compare trusted expected outputs before use.");
+        if (resolver.Used.Contains(RecordCountFid))
+            warnings.Add($"Record Count functoid(s) (FID {RecordCountFid}) became RecordCount: the number of nodes at the counted source path (inside a repeating record, within the current record). No compiled BizTalk output was available to confirm this, in particular whether BizTalk counts inside a loop relative to the current record or across the whole message. Compare trusted expected outputs before use.");
         if (resolver.ValueMappings.Count > 0)
             warnings.Add($"Value Mapping functoid(s) (FID {string.Join(", ", resolver.ValueMappings.Order())}) became conditional targets: the target is written only when the condition equals the text 'true' (BizTalk's compiled test), and nothing is written otherwise. FID 374 (flattening) is converted with the same per-record behavior, which is only equivalent while its inputs are single values in scope. A missing value input reads as empty text. Compare trusted expected outputs before use.");
         if (functoids.Count > 0 && resolver.Contributing.Count < functoids.Count)
@@ -365,6 +368,13 @@ public static class BizTalkNativeMapConverter
     private sealed record Functoid(int Id, int Fid, XElement Element, ScriptChoice? Script = null);
 
     private sealed record ResolvedFunctoid(XmlValueExpression Expression, IReadOnlyList<XmlSchemaField> Sources, int Nodes, int Depth, XmlValueExpression? Condition = null);
+
+    private static IEnumerable<string> PositionRecordPaths(XmlValueExpression expression)
+    {
+        if (expression.Function == XmlMappingFunction.RecordPosition && expression.Arguments[0].SourcePath is { } path) yield return path;
+        foreach (var argument in expression.Arguments ?? [])
+            foreach (var inner in PositionRecordPaths(argument)) yield return inner;
+    }
 
     private static readonly string[] DefaultScriptPrecedence = ["CSharp", "ExternalAssembly", "VbNet", "JScript", "XsltCallTemplate", "Xslt"];
 
@@ -534,12 +544,18 @@ public static class BizTalkNativeMapConverter
                             else
                             {
                                 var field = Find(sourceRoot, fromText);
-                                if (functoid.Fid == IterationFid
-                                    ? field.Scalar || !field.SelfRepeating || field.UnsupportedReason is not null || field.HasDefaultOrFixed
-                                    : !field.Scalar || field.SelfRepeating || field.UnsupportedReason is not null || field.HasDefaultOrFixed)
-                                    throw new ArgumentException(functoid.Fid == IterationFid
-                                        ? $"Iteration functoid {id} must read a repeating source record, but '{field.Path}' is not one. No partial native map was produced."
-                                        : $"Functoid {id} reads '{field.Path}', which is a record, a repeating value, or otherwise unsupported as a functoid input. No partial native map was produced.");
+                                if (functoid.Fid switch
+                                    {
+                                        IterationFid => field.Scalar || !field.SelfRepeating || field.UnsupportedReason is not null || field.HasDefaultOrFixed,
+                                        RecordCountFid => field.UnsupportedReason is not null,
+                                        _ => !field.Scalar || field.SelfRepeating || field.UnsupportedReason is not null || field.HasDefaultOrFixed
+                                    })
+                                    throw new ArgumentException(functoid.Fid switch
+                                    {
+                                        IterationFid => $"Iteration functoid {id} must read a repeating source record, but '{field.Path}' is not one. No partial native map was produced.",
+                                        RecordCountFid => $"Record Count functoid {id} reads '{field.Path}', which is unsupported ({field.UnsupportedReason}). No partial native map was produced.",
+                                        _ => $"Functoid {id} reads '{field.Path}', which is a record, a repeating value, or otherwise unsupported as a functoid input. No partial native map was produced."
+                                    });
                                 arguments.Add(new XmlValueExpression { Kind = XmlValueExpressionKind.Source, SourcePath = Prefix(field.Path, "s") });
                                 inputNotes.Add($"source {field.Path}");
                                 sources.Add(field);
@@ -555,6 +571,8 @@ public static class BizTalkNativeMapConverter
                     throw new ArgumentException($"Functoid {id} has links that its input list does not account for. No partial native map was produced.");
                 if (functoid.Fid == IterationFid && (arguments.Count != 1 || arguments[0].Kind != XmlValueExpressionKind.Source))
                     throw new ArgumentException($"Iteration functoid {id} needs exactly one source record input. No partial native map was produced.");
+                if (functoid.Fid == RecordCountFid && (arguments.Count != 1 || arguments[0].Kind != XmlValueExpressionKind.Source))
+                    throw new ArgumentException($"Record Count functoid {id} needs exactly one input read directly from the source message (not a constant or another functoid). No partial native map was produced.");
                 if (isScript)
                 {
                     if (nodes > XmlMappingFunctionCatalog.MaxNodes || childDepth + 1 > XmlMappingFunctionCatalog.MaxDepth)
@@ -789,6 +807,7 @@ public static class BizTalkNativeMapConverter
     private const int LoopingFid = 424;
     private const int MassCopyFid = 802;
     private const int IterationFid = 474;
+    private const int RecordCountFid = 322;
     private const int ValueMappingFlatteningFid = 374;
     private const int ValueMappingFid = 375;
 

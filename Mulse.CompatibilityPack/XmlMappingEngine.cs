@@ -166,9 +166,15 @@ public sealed partial class XmlMappingEngine
             var enclosing = new HashSet<XmlRepeatMappingDefinition>(repeatTargets
                 .Where(item => item.Segments.Count <= segments.Count && item.Segments.Zip(segments).All(pair => pair.First == pair.Second))
                 .Select(item => item.Repeat));
+            // A counted path is only counted, never read as a value, so counting a repeating record from outside it is allowed.
+            var scoped = sourcePaths.ToList();
+            if (effective.Expression is not null)
+                foreach (var counted in CountedPaths(effective.Expression).Concat(effective.Condition is null ? [] : CountedPaths(effective.Condition)))
+                    scoped.Remove(counted);
             foreach (var sourcePath in sourcePaths)
             {
                 ParsePath(sourcePath, absolute: true, map);
+                if (!scoped.Contains(sourcePath)) continue;
                 foreach (var repeat in map.Repeats)
                     if ((sourcePath == repeat.SourcePath || sourcePath.StartsWith(repeat.SourcePath + "/", StringComparison.Ordinal)) && !enclosing.Contains(repeat))
                         throw new ArgumentException($"Mapping '{field.TargetPath}' reads '{sourcePath}' inside repeat '{repeat.SourcePath}' but is not below the repeat's target '{repeat.TargetPath}'.");
@@ -223,6 +229,12 @@ public sealed partial class XmlMappingEngine
             if (scope < 0) throw new ArgumentException($"RecordPosition source '{expression.Arguments[0].SourcePath}' is not an enclosing repeat of its target.");
             return $"string($p{scope + 1})";
         }
+        if (function == XmlMappingFunction.RecordCount)
+        {
+            var counted = expression.Arguments[0].SourcePath!;
+            if (scopes.Contains(counted)) throw new ArgumentException($"RecordCount source '{counted}' is the repeating record the target sits in; count a different path.");
+            return $"string(count({SourceExpression(counted, scopes)}))";
+        }
         var arguments = expression.Arguments.Select(Text).ToArray();
         switch (function)
         {
@@ -241,11 +253,21 @@ public sealed partial class XmlMappingEngine
         }
     }
 
+    private static IEnumerable<string> CountedPaths(XmlValueExpression expression)
+    {
+        if (expression.Function == XmlMappingFunction.RecordCount && expression.Arguments.Count == 1 && expression.Arguments[0].Kind == XmlValueExpressionKind.Source)
+            yield return expression.Arguments[0].SourcePath!;
+        foreach (var argument in expression.Arguments)
+            foreach (var path in CountedPaths(argument)) yield return path;
+    }
+
     private static void RequireRecordPositionSources(XmlValueExpression expression, IReadOnlyList<XmlRepeatMappingDefinition> repeats, string target)
     {
         if (expression.Function == XmlMappingFunction.RecordPosition
             && (expression.Arguments[0].Kind != XmlValueExpressionKind.Source || !repeats.Any(repeat => repeat.SourcePath == expression.Arguments[0].SourcePath)))
             throw new ArgumentException($"RecordPosition in '{target}' must be given the source path of a repeating record (a repeat's source path).");
+        if (expression.Function == XmlMappingFunction.RecordCount && expression.Arguments[0].Kind != XmlValueExpressionKind.Source)
+            throw new ArgumentException($"RecordCount in '{target}' must be given a source path.");
         foreach (var argument in expression.Arguments) RequireRecordPositionSources(argument, repeats, target);
     }
 

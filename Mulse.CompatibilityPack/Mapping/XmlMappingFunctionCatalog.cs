@@ -19,7 +19,8 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.StringSize or XmlMappingFunction.StringUpperCase or XmlMappingFunction.MathInt
             or XmlMappingFunction.LogicalExistence or XmlMappingFunction.LogicalNot or XmlMappingFunction.StringLowerCase
             or XmlMappingFunction.StringTrim or XmlMappingFunction.DateNow or XmlMappingFunction.MathAbs
-            or XmlMappingFunction.StringTrimLeft or XmlMappingFunction.StringTrimRight or XmlMappingFunction.RecordPosition => (1, 1),
+            or XmlMappingFunction.StringTrimLeft or XmlMappingFunction.StringTrimRight or XmlMappingFunction.RecordPosition
+            or XmlMappingFunction.RecordCount => (1, 1),
         XmlMappingFunction.StringConcat => (2, 32),
         XmlMappingFunction.LogicalAnd or XmlMappingFunction.LogicalOr or XmlMappingFunction.MathAdd
             or XmlMappingFunction.MathSubtract or XmlMappingFunction.MathMultiply => (2, 16),
@@ -44,7 +45,7 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.MathAbs => 111, XmlMappingFunction.MathAdd => 118, XmlMappingFunction.MathSubtract => 119,
         XmlMappingFunction.MathMultiply => 120, XmlMappingFunction.LogicalGte => 312, XmlMappingFunction.LogicalLt => 313,
         XmlMappingFunction.LogicalLte => 314, XmlMappingFunction.LogicalOr => 320, XmlMappingFunction.LogicalNot => 705,
-        XmlMappingFunction.RecordPosition => 474,
+        XmlMappingFunction.RecordPosition => 474, XmlMappingFunction.RecordCount => 322,
         _ => null
     };
 
@@ -91,7 +92,7 @@ public static class XmlMappingFunctionCatalog
         XmlMappingFunction.StringTrimLeft => "StringTrimLeft(text): removes leading white space.",
         XmlMappingFunction.StringTrimRight => "StringTrimRight(text): removes trailing white space.",
         XmlMappingFunction.RecordPosition => "RecordPosition(record): 1-based position of the current repeat of the source record (BizTalk Iteration functoid). The argument must be the source path of a repeating record that the target sits inside.",
-        _ => throw new ArgumentOutOfRangeException(nameof(function))
+        XmlMappingFunction.RecordCount => "RecordCount(source): number of nodes selected by the source path (BizTalk Record Count functoid); inside a repeating record the count is taken within the current record. The argument must be a source path, not the repeating record the target sits in.",        _ => throw new ArgumentOutOfRangeException(nameof(function))
     };
 
     /// <summary>Custom function and parameter names: letters, digits and underscore, not starting with a digit.</summary>

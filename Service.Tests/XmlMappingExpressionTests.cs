@@ -208,6 +208,44 @@ public sealed class XmlMappingExpressionTests
     }
 
     [Fact]
+    public void RecordCount_CountsNodesAtTheSourcePath_AndFeedsOtherFunctions()
+    {
+        const string input = "<Input><Group><Item/><Item/></Group><Group><Item/></Group><Other/></Input>";
+        Assert.Equal("3", Run(Fn(XmlMappingFunction.RecordCount, Src("/Input/Group/Item")), input));
+        Assert.Equal("2", Run(Fn(XmlMappingFunction.RecordCount, Src("/Input/Group")), input));
+        Assert.Equal("0", Run(Fn(XmlMappingFunction.RecordCount, Src("/Input/Missing")), input));
+        Assert.Equal("5", Run(Fn(XmlMappingFunction.MathAdd, Fn(XmlMappingFunction.RecordCount, Src("/Input/Group")), Const("3")), input));
+    }
+
+    [Fact]
+    public void RecordCount_InsideARepeat_CountsWithinTheCurrentRecord()
+    {
+        var map = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Repeats = [new() { SourcePath = "/Input/Group", TargetPath = "G" }],
+            Fields = [new() { TargetPath = "G/Items", Expression = Fn(XmlMappingFunction.RecordCount, Src("/Input/Group/Item")) },
+                new() { TargetPath = "Groups", Expression = Fn(XmlMappingFunction.RecordCount, Src("/Input/Group")) }]
+        };
+        var output = XDocument.Parse(new XmlMappingEngine(XmlMappingTests.Json(map)).Transform("<Input><Group><Item/><Item/></Group><Group/></Input>")).Root!;
+        Assert.Equal(["2", "0"], output.Elements("G").Select(group => group.Element("Items")!.Value));
+        Assert.Equal("2", output.Element("Groups")!.Value);
+    }
+
+    [Fact]
+    public void RecordCount_NeedsASourcePathThatIsNotTheEnclosingRepeat()
+    {
+        Assert.Contains("source path", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(Map(Fn(XmlMappingFunction.RecordCount, Const("1")))))).Message);
+        var self = new XmlMappingDefinition
+        {
+            Version = 2, TargetRoot = "Output",
+            Repeats = [new() { SourcePath = "/Input/Group", TargetPath = "G" }],
+            Fields = [new() { TargetPath = "G/Items", Expression = Fn(XmlMappingFunction.RecordCount, Src("/Input/Group")) }]
+        };
+        Assert.Contains("count a different path", Assert.Throws<ArgumentException>(() => new XmlMappingEngine(XmlMappingTests.Json(self))).Message);
+    }
+
+    [Fact]
     public void GeneratedStylesheet_DeclaresTheFunctionNamespaceOnlyWhenUsed()
     {
         var used = new XmlMappingEngine(XmlMappingTests.Json(Map(Fn(XmlMappingFunction.StringSize, Const("a"))))).Xslt;
