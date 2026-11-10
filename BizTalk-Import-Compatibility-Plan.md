@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,073 service tests
+Latest verification: 2,082 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -66,6 +66,14 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Importer:** an optional record with at least one directly written field below it (no repeating level in between, fixed schema values excluded) now converts, with a warning that it is always created and that the target schema may reject an empty record. Records reached only through record links or across a repeating level are still refused, with a clearer message.
 - **Measured effect (292 real maps):** converting maps rose from 107 to 114. Next: required targets not produced (23), functoid/field inputs below a repeating record (18), functoids linked to records (15), schema paths still missing (10), functoids without a verified equivalent (9).
 - **Verification:** 2,051 service tests passed and the solution built.
+
+### Increment: Custom XSLT maps are imported as XSLT render choices
+
+- **Evidence:** the seven "Unsupported map construct" maps are all `CustomXSLT` maps: the `.btm` points at a hand-written stylesheet (`XsltPath`, empty `ExtObjXmlPath`) and BizTalk ignores the grid. Six stylesheets carry C# `msxsl:script` blocks (generated-style helper methods called as `userCSharp:Name(...)`); one is plain XSLT 1.0. C# is the only script language.
+- **Importer:** a policy map name that resolves to a `CustomXSLT` map becomes an `xslt-render` choice holding the stylesheet in the new editable `xsltText` setting (declaration encoding normalised, 1 MiB cap, DTDs prohibited). The reader requires an `xsl:stylesheet` root, version 1.0 and an empty `ExtObjXmlPath`; otherwise the map is reported `ConversionFailed` with the reason. A plain stylesheet is `Converted` with a warning that the grid and links are ignored. A stylesheet with script blocks is `ConvertedWithStubs`, listing the C# method names.
+- **Runtime:** `xslt-render` now accepts exactly one of `xsltPath` or `xsltText`. Any stylesheet containing `msxsl:script` is refused before it runs (fail closed) with a message to rewrite the script calls as XPath or stylesheet logic.
+- **Measured effect (7 real maps):** 1 plain stylesheet loads and runs; 6 scripted stylesheets import as editable choices that fail closed until the scripts are ported.
+- **Verification:** 2,082 service tests passed and the solution built.
 
 ### Increment: Optional records without a record link are created around repeating children
 

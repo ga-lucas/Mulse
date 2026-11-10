@@ -275,6 +275,105 @@ public sealed class NativeMapChoiceDerivationTests : IDisposable
         Assert.False(Request().DeriveNativeMapChoices);
     }
 
+    private const string PlainStylesheet = """
+        <?xml version="1.0" encoding="utf-16"?>
+        <xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:s="urn:source">
+          <xsl:output method="xml" indent="no" />
+          <xsl:template match="/s:Order"><Result><Number><xsl:value-of select="s:Id" /></Number></Result></xsl:template>
+        </xsl:stylesheet>
+        """;
+
+    private const string ScriptStylesheet = """
+        <xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:msxsl="urn:schemas-microsoft-com:xslt" xmlns:userCSharp="http://schemas.microsoft.com/BizTalk/2003/userCSharp" xmlns:s="urn:source" exclude-result-prefixes="msxsl userCSharp">
+          <xsl:template match="/s:Order"><Result><Number><xsl:value-of select="userCSharp:Tidy(string(s:Id))" /></Number></Result></xsl:template>
+          <msxsl:script language="C#" implements-prefix="userCSharp"><![CDATA[public string Tidy(string a) { return a.Trim(); }]]></msxsl:script>
+        </xsl:stylesheet>
+        """;
+
+    private DerivedMapChoices DeriveCustomXslt(string? stylesheet, string customElement = "<CustomXSLT XsltPath=\".\\Custom.xsl\" ExtObjXmlPath=\"\" />")
+    {
+        var project = WriteProject();
+        File.WriteAllText(Path.Combine(_directory, "Maps", "OrderToResult.btm"), "<mapsource>" + customElement + "<Pages><Page Name=\"p\"><Links /></Page></Pages></mapsource>");
+        if (stylesheet is not null) File.WriteAllText(Path.Combine(_directory, "Maps", "Custom.xsl"), stylesheet, System.Text.Encoding.Unicode);
+        return Derive(project, Literals(Good));
+    }
+
+    private static Task<IntegrationBatch> RunXslt(RenderDispatchCase entry, string input = "<Order xmlns='urn:source'><Id> 42 </Id></Order>")
+        => new XsltRenderModule().RenderAsync(new FlowExecutionContext("custom", "run", DateTimeOffset.UtcNow),
+            new IntegrationBatch([new IntegrationPayload("in.xml", BinaryData.FromString(input), "application/xml", new Dictionary<string, string>())]),
+            new ModuleStepDefinition { Module = entry.Module, Settings = entry.Settings }, default);
+
+    [Fact]
+    public async Task CustomXsltMap_IsImportedAsAnEditableInlineXsltChoiceThatRuns()
+    {
+        var result = DeriveCustomXslt(PlainStylesheet);
+
+        var item = result.Report.Single();
+        Assert.True(item.Status == "Converted", item.Status + ": " + item.Detail);
+        Assert.Contains(item.Warnings, warning => warning.Contains("grid and links are ignored", StringComparison.Ordinal));
+        var entry = Assert.Single(RenderDispatchDefinition.Read(result.CasesJson));
+        Assert.Equal("xslt-render", entry.Module);
+        Assert.False(entry.Settings.ContainsKey("xsltPath"));
+        Assert.DoesNotContain("utf-16", entry.Settings["xsltText"], StringComparison.OrdinalIgnoreCase);
+        var output = Assert.Single((await RunXslt(entry)).Payloads).GetText();
+        Assert.Equal("42", XDocument.Parse(output).Root!.Element("Number")!.Value.Trim());
+    }
+
+    [Fact]
+    public async Task CustomXsltMapWithScriptBlocks_IsConvertedWithStubsAndFailsClosedAtRunTime()
+    {
+        var result = DeriveCustomXslt(ScriptStylesheet);
+
+        var item = result.Report.Single();
+        Assert.True(item.Status == "ConvertedWithStubs", item.Status + ": " + item.Detail);
+        Assert.Contains("Tidy", item.Detail, StringComparison.Ordinal);
+        var entry = Assert.Single(RenderDispatchDefinition.Read(result.CasesJson));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunXslt(entry));
+        Assert.Contains("msxsl:script", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("missing", "was not found")]
+    [InlineData("extobj", "ExtObjXmlPath")]
+    [InlineData("noPath", "no XsltPath")]
+    [InlineData("notXslt", "not an xsl:stylesheet")]
+    [InlineData("v2", "not XSLT 1.0")]
+    [InlineData("broken", "not well-formed")]
+    public void UnusableCustomXslt_IsReportedAsConversionFailedWithoutAChoice(string problem, string expected)
+    {
+        var stylesheet = problem switch
+        {
+            "notXslt" => "<root />",
+            "v2" => PlainStylesheet.Replace("<xsl:stylesheet version=\"1.0\"", "<xsl:stylesheet version=\"2.0\"", StringComparison.Ordinal),
+            "broken" => "<xsl:stylesheet",
+            "missing" => null,
+            _ => PlainStylesheet
+        };
+        var element = problem switch
+        {
+            "extobj" => "<CustomXSLT XsltPath=\"Custom.xsl\" ExtObjXmlPath=\"Ext.xml\" />",
+            "noPath" => "<CustomXSLT ExtObjXmlPath=\"\" />",
+            _ => "<CustomXSLT XsltPath=\"Custom.xsl\" ExtObjXmlPath=\"\" />"
+        };
+
+        var result = DeriveCustomXslt(stylesheet, element);
+
+        var item = result.Report.Single();
+        Assert.Equal("ConversionFailed", item.Status);
+        Assert.Contains(expected, item.Detail, StringComparison.Ordinal);
+        Assert.Empty(RenderDispatchDefinition.Read(result.CasesJson, allowEmpty: true));
+    }
+
+    [Fact]
+    public async Task XsltRender_RequiresExactlyOneOfPathOrText()
+    {
+        foreach (var settings in new Dictionary<string, string>[] { new(), new() { ["xsltPath"] = "a.xsl", ["xsltText"] = PlainStylesheet } })
+        {
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunXslt(new RenderDispatchCase { Value = "x", Module = "xslt-render", Settings = settings }));
+            Assert.Contains("exactly one", error.Message, StringComparison.Ordinal);
+        }
+    }
+
     private DerivedMapChoices Derive(string project, IReadOnlyList<PolicyMapNameLiteral> literals, string? explicitJson = null, string[]? projects = null)
     {
         var paths = projects ?? [project];

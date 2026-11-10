@@ -7,9 +7,11 @@ namespace Mulse.CompatibilityPack;
 
 public sealed class XsltRenderModule : IRenderModule
 {
+    public const int MaxStylesheetCharacters = 1_048_576;
     private static readonly IReadOnlyList<ModuleSettingDescriptor> SettingDescriptors =
     [
-        new("xsltPath", "XSLT path", "The path to the XSLT stylesheet used to transform the XML payload.", true),
+        new("xsltPath", "XSLT path", "The path to the XSLT stylesheet used to transform the XML payload. Leave empty when the stylesheet is entered inline below; exactly one of the two is required.", false),
+        new("xsltText", "XSLT text", "The XSLT 1.0 stylesheet itself, editable here instead of a file path (for example a BizTalk custom-XSLT map). Script blocks (msxsl:script) and document() are not run; replace them with XPath or other stylesheet logic.", false, ModuleSettingInputKind.TextArea),
         new("parametersJson", "Parameters JSON", "An optional JSON object of XSLT parameters.", false, ModuleSettingInputKind.TextArea, "{}"),
         new("outputExtension", "Output extension", "The file extension for transformed payloads.", false, ModuleSettingInputKind.Text, ".xml")
     ];
@@ -33,19 +35,38 @@ public sealed class XsltRenderModule : IRenderModule
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var xsltPath = Path.GetFullPath(ModuleSettings.GetRequired(step.Settings, "xsltPath", Descriptor.Id));
+        var xsltPathSetting = ModuleSettings.GetOptional(step.Settings, "xsltPath");
+        var xsltText = ModuleSettings.GetOptional(step.Settings, "xsltText");
+        if (string.IsNullOrWhiteSpace(xsltPathSetting) == string.IsNullOrWhiteSpace(xsltText))
+        {
+            throw new InvalidOperationException($"Module '{Descriptor.Id}' requires exactly one of 'xsltPath' or 'xsltText'.");
+        }
+
         var parameters = CompatibilityPayloadNavigator.ParseScalarObject(ModuleSettings.GetOptional(step.Settings, "parametersJson"), Descriptor.Id, "parametersJson");
         var outputExtension = ModuleSettings.GetOptional(step.Settings, "outputExtension") ?? ".xml";
 
-        if (!File.Exists(xsltPath))
-        {
-            throw new FileNotFoundException($"XSLT file '{xsltPath}' was not found.", xsltPath);
-        }
-
         var transform = new XslCompiledTransform();
-        using (var stylesheetReader = XmlReader.Create(xsltPath, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit }))
+        var readerSettings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
+        if (!string.IsNullOrWhiteSpace(xsltPathSetting))
         {
-            transform.Load(stylesheetReader);
+            var xsltPath = Path.GetFullPath(xsltPathSetting);
+            if (!File.Exists(xsltPath))
+            {
+                throw new FileNotFoundException($"XSLT file '{xsltPath}' was not found.", xsltPath);
+            }
+
+            using var stylesheetReader = XmlReader.Create(xsltPath, readerSettings);
+            LoadStylesheet(transform, stylesheetReader);
+        }
+        else
+        {
+            if (xsltText!.Length > MaxStylesheetCharacters)
+            {
+                throw new InvalidOperationException($"Inline XSLT must not exceed {MaxStylesheetCharacters} characters.");
+            }
+
+            using var stylesheetReader = XmlReader.Create(new StringReader(xsltText), readerSettings);
+            LoadStylesheet(transform, stylesheetReader);
         }
 
         var payloads = batch.Payloads.Select(payload =>
@@ -67,6 +88,21 @@ public sealed class XsltRenderModule : IRenderModule
         }).ToArray();
 
         return Task.FromResult(new IntegrationBatch(payloads));
+    }
+
+    private static readonly System.Xml.Linq.XName MsxslScript = System.Xml.Linq.XNamespace.Get("urn:schemas-microsoft-com:xslt") + "script";
+    private const string ScriptsBlocked = "The stylesheet contains msxsl:script blocks, which cannot run here. Rewrite each script function the stylesheet calls (for example userCSharp:Name(...)) as XPath or stylesheet logic, then remove the msxsl:script blocks from the XSLT.";
+
+    private static void LoadStylesheet(XslCompiledTransform transform, XmlReader reader)
+    {
+        var stylesheet = System.Xml.Linq.XDocument.Load(reader, System.Xml.Linq.LoadOptions.PreserveWhitespace);
+        if (stylesheet.Descendants(MsxslScript).Any())
+        {
+            throw new InvalidOperationException(ScriptsBlocked);
+        }
+
+        using var checkedReader = stylesheet.CreateReader();
+        transform.Load(checkedReader, XsltSettings.Default, stylesheetResolver: null);
     }
 
     private static string Transform(XslCompiledTransform transform, System.Xml.Linq.XDocument document, IReadOnlyDictionary<string, string> parameters)

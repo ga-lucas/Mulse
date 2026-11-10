@@ -59,37 +59,65 @@ internal static class BizTalkNativeMapChoiceDeriver
                 continue;
             }
             var map = matches[0];
-            NativeMapConversion conversion;
-            try
-            {
-                var document = XmlMappingSchemas.ReadXmlFile(map.MapPath);
-                var source = SchemaDocuments(document, "SrcTree", schemas, map.MapPath, out var sourceProblem);
-                var target = SchemaDocuments(document, "TrgTree", schemas, map.MapPath, out var targetProblem);
-                if (source is null || target is null)
-                {
-                    report.Add(Result("SchemaUnresolved", map.MapPath, sourceProblem ?? targetProblem!));
-                    continue;
-                }
-                conversion = BizTalkNativeMapConverter.Convert(document.ToString(SaveOptions.DisableFormatting), source, target, cancellationToken, embedSchemas: false);
-            }
+            RenderDispatchCase entry;
+            string status, detail;
+            IReadOnlyList<string> warnings;
+            BizTalkCustomXsltMap? custom;
+            try { custom = BizTalkCustomXslt.Read(XmlMappingSchemas.ReadXmlFile(map.MapPath), map.MapPath); }
             catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException or XmlException)
             {
                 report.Add(Result("ConversionFailed", map.MapPath, Truncate(exception.Message)));
                 continue;
             }
-            var entry = new RenderDispatchCase
+            if (custom is not null)
             {
-                Value = group.Key, Module = "xml-mapping-render", Settings = new() { ["mappingJson"] = conversion.MappingJson }
-            };
+                entry = new RenderDispatchCase
+                {
+                    Value = group.Key, Module = "xslt-render", Settings = new() { ["xsltText"] = custom.StylesheetText, ["outputExtension"] = ".xml" }
+                };
+                warnings = ["This map uses a hand-written (custom) stylesheet; like BizTalk, the map's grid and links are ignored and the stylesheet is used as is."];
+                status = custom.HasScripts ? "ConvertedWithStubs" : "Converted";
+                detail = custom.HasScripts
+                    ? $"Custom stylesheet imported as an editable XSLT render choice. It contains C# msxsl:script blocks that cannot run (methods: {Truncate(string.Join(", ", custom.ScriptMethods))}); this choice fails closed until each called method is rewritten as XSLT/XPath in the choice's XSLT text. {Limitation}"
+                    : $"Custom stylesheet imported as an editable XSLT render choice. {Limitation}";
+            }
+            else
+            {
+                NativeMapConversion conversion;
+                try
+                {
+                    var document = XmlMappingSchemas.ReadXmlFile(map.MapPath);
+                    var source = SchemaDocuments(document, "SrcTree", schemas, map.MapPath, out var sourceProblem);
+                    var target = SchemaDocuments(document, "TrgTree", schemas, map.MapPath, out var targetProblem);
+                    if (source is null || target is null)
+                    {
+                        report.Add(Result("SchemaUnresolved", map.MapPath, sourceProblem ?? targetProblem!));
+                        continue;
+                    }
+                    conversion = BizTalkNativeMapConverter.Convert(document.ToString(SaveOptions.DisableFormatting), source, target, cancellationToken, embedSchemas: false);
+                }
+                catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException or XmlException)
+                {
+                    report.Add(Result("ConversionFailed", map.MapPath, Truncate(exception.Message)));
+                    continue;
+                }
+                entry = new RenderDispatchCase
+                {
+                    Value = group.Key, Module = "xml-mapping-render", Settings = new() { ["mappingJson"] = conversion.MappingJson }
+                };
+                warnings = conversion.Warnings;
+                status = conversion.PendingFunctions.Count == 0 ? "Converted" : "ConvertedWithStubs";
+                detail = conversion.PendingFunctions.Count == 0
+                    ? Limitation
+                    : $"{Limitation} {conversion.PendingFunctions.Count} scripting functoid(s) are unimplemented stubs ({Truncate(string.Join(", ", conversion.PendingFunctions))}); this choice fails closed until each has a formula.";
+            }
             if (cases.Count >= MaximumCases || JsonSerializer.Serialize(cases.Append(entry), Json).Length > MaximumCasesJsonLength)
             {
                 report.Add(Result("CapExceeded", map.MapPath, "Adding this choice would exceed the 128-case or 262,144-character render-dispatch limit; supply it manually or narrow the selected policy versions."));
                 continue;
             }
             cases.Add(entry);
-            report.Add(conversion.PendingFunctions.Count == 0
-                ? Result("Converted", map.MapPath, Limitation, conversion.Warnings)
-                : Result("ConvertedWithStubs", map.MapPath, $"{Limitation} {conversion.PendingFunctions.Count} scripting functoid(s) are unimplemented stubs ({Truncate(string.Join(", ", conversion.PendingFunctions))}); this choice fails closed until each has a formula.", conversion.Warnings));
+            report.Add(Result(status, map.MapPath, detail, warnings));
         }
         return new(report, JsonSerializer.Serialize(cases, Json));
     }
