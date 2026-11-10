@@ -123,13 +123,6 @@ public sealed class NativeMapRepeatImportTests
     }
 
     [Fact]
-    public void ScalarBelowRepeatingSourceWithoutEnclosingRecordLink_IsRejected()
-    {
-        var links = Standard.Where(link => link != "Order/Lines/Line>Result/Rows/Row" && !link.Contains("Row/", StringComparison.Ordinal)).Append("Order/Lines/Line/Sku>Result/Number");
-        Assert.Contains("repeating", Assert.Throws<ArgumentException>(() => Convert(links)).Message);
-    }
-
-    [Fact]
     public void DuplicateRecordLinksAndEmptyLinkedRecords_AreRejected()
     {
         Assert.Throws<ArgumentException>(() => Convert([.. Standard, "Order/Lines/Line>Result/Rows/Row"]));

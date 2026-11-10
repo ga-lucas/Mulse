@@ -49,6 +49,7 @@ public sealed class XmlFieldMappingViewModel
     public XmlValueExpressionViewModel? Condition { get; set; }
     public string MissingValueBehavior { get; set; } = "Error";
     public string? DefaultValue { get; set; }
+    public bool FirstOccurrence { get; set; }
     public List<XmlStringOperationViewModel> Operations { get; set; } = [];
 }
 

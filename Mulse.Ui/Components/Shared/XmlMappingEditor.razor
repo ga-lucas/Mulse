@@ -84,6 +84,8 @@
                         <input class="mapping-input" aria-label="Missing XML source default" value="@field.DefaultValue" @onchange="async e => { field.DefaultValue = e.Value?.ToString() ?? string.Empty; await WriteAsync(); }" />
                     }
                     <HelpTooltip Label="Missing source behavior">Omit/default upgrades this definition to version 2. Empty present values are not missing; repeating or complex values still fail.</HelpTooltip>
+                    <label class="field-label"><input type="checkbox" aria-label="Use first occurrence of a repeating source" checked="@field.FirstOccurrence" @onchange="e => SetFirstOccurrenceAsync(field, e.Value is true)" /> Use the first occurrence when the source repeats</label>
+                    <HelpTooltip Label="First occurrence">Needs version 2. When the source path sits below a repeating record, the first match in document order is used instead of failing. Imported BizTalk direct links with no record link around their target are set this way. Complex or nil first values still fail.</HelpTooltip>
                 }
                 else
                 {
@@ -295,6 +297,13 @@
         field.MissingValueBehavior = behavior;
         field.DefaultValue = behavior == "Default" ? field.DefaultValue ?? string.Empty : null;
         if (behavior != "Error") _map!.Version = 2;
+        await WriteAsync();
+    }
+
+    private async Task SetFirstOccurrenceAsync(XmlFieldMappingViewModel field, bool value)
+    {
+        field.FirstOccurrence = value;
+        if (value) _map!.Version = 2;
         await WriteAsync();
     }
 

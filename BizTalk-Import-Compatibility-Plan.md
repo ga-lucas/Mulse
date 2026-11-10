@@ -9,7 +9,7 @@ BizTalk project -> analyzed artifacts -> canonical Mulse model
 				-> Flow Designer + Mapping Designer -> native Mulse workflow
 ```
 
-Latest verification: 2,026 service tests
+Latest verification: 2,036 service tests
 
 Report-bearing imports remain disabled and fail closed until verified translation support exists. Configuration review and report statuses are not approvals. Older imports without migration metadata require reanalysis/re-import to receive the gate.
 
@@ -25,6 +25,15 @@ Typed or multiple catches, fault-message catches and assignments to `ex.*` remai
 - **Measured Billing effect (re-measured with a stand-in config helper; indicative only):** unresolved nodes BillingServiceProcess 136 -> 126, BatchDoubleBody 54 -> 46, BatchWithTrailer 60 -> 48. The original `GlobalInterfaceAppSettings` source was not found on disk, so helper-derived values differ from a real run. Flows stay disabled; no BizTalk equivalence is claimed.
 - **Next measured gaps (Billing):** native map choices are now derived from the rule exports (see "Completed increment: map choices derived from policy exports"); the remaining work there is the maps that cannot convert (functoids, unresolved schemas, maps in projects not supplied), 9 Sends without a unique physical binding,
 - **Verification:** 1,550 service tests passed and the solution built.
+
+### Increment: Compiled-map evidence and first-occurrence direct links
+
+- **Evidence source:** compiled map XSLT was read (locally, never committed) from map assemblies copied from a BizTalk server's GAC; 169 map XSLTs were extracted. 31 of the 59 maps that failed with "sits below repeating ... no record link" had a compiled counterpart.
+- **Proven rule:** in three independent partner projects, a direct field link with no enclosing record link, whose source sits below a repeating record, compiles to a plain conditional copy of the first matching occurrence (no loop). The importer now maps such links with the new per-field `FirstOccurrence` setting and reports every affected link as a warning.
+- **Engine and UI:** `FirstOccurrence` (version 2, source path only) takes the first match in document order; missing source still follows the Error/Omit/Default policy and complex or nil first values still fail. It is editable in the XML mapping editor ("Use the first occurrence when the source repeats").
+- **Still refused (unproven):** functoid inputs below a repeating record (one compiled map wraps the functoid chain in a loop over the record), and direct links inside a record link that do not cover a repeating level. One compiled map showed a record-link pattern that its repository `.btm` does not contain, so deployed maps can differ from repository sources.
+- **Measured effect (292 real maps):** the implicit-loop blocker fell from 59 to 10 maps; those maps now stop at the next blocker (optional record without a record link), so conversions are unchanged until that is handled.
+- **Verification:** 2,036 service tests passed and the solution built.
 
 ### Increment: DLL-verified functoid IDs, cheap functoids and Value Mapping
 

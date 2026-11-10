@@ -39,6 +39,8 @@ public sealed record XmlFieldMappingDefinition
     public XmlValueExpression? Condition { get; init; }
     public MissingXmlValueBehavior MissingValueBehavior { get; init; } = MissingXmlValueBehavior.Error;
     public string? DefaultValue { get; init; }
+    /// <summary>Version 2, source-path fields only: when the source path matches several nodes (a field below a repeating record), use the first one in document order instead of failing, as BizTalk does for a direct link with no record link around its target.</summary>
+    public bool FirstOccurrence { get; init; }
     public IReadOnlyList<XmlStringOperation> Operations { get; init; } = [];
 }
 

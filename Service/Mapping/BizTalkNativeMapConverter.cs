@@ -210,10 +210,18 @@ public static class BizTalkNativeMapConverter
         foreach (var (from, to) in repeatLinks) RequireRepeatCoverage(from, to);
         var assignments = new List<(XmlSchemaField Target, XmlFieldMappingDefinition Mapping)>();
         var optionalToRequired = new List<string>();
+        var firstOccurrence = new List<string>();
         foreach (var (from, to) in links.Where(link => link.From.Scalar))
         {
-            RequireRepeatCoverage(from, to);
             var enclosing = EnclosingRepeat(to);
+            // A direct field link with no record link around its target takes the first occurrence: compiled BizTalk output for such links is a plain path with no loop.
+            var first = false;
+            if (enclosing is null && sourceRoot.Fields.Any(field => field.SelfRepeating && field.Path != from.Path && from.Path.StartsWith(field.Path + "/", StringComparison.Ordinal)))
+            {
+                firstOccurrence.Add($"{from.Path} -> {to.Path}");
+                first = true;
+            }
+            else RequireRepeatCoverage(from, to);
             var sourceScope = enclosing is { } scoped && from.Path.StartsWith(scoped.From.Path + "/", StringComparison.Ordinal) ? scoped.From.Path : sourceRoot.Path;
             if (enclosing is { } self && from.SelfRepeating && self.From == from) sourceScope = from.Path;
             var sourceRequired = RequiredWithin(sourceRoot, sourceScope, from);
@@ -221,7 +229,7 @@ public static class BizTalkNativeMapConverter
                 optionalToRequired.Add($"{from.Path} -> {to.Path}");
             assignments.Add((to, new()
             {
-                SourcePath = Prefix(from.Path, "s"), TargetPath = TargetPath(to),
+                SourcePath = Prefix(from.Path, "s"), TargetPath = TargetPath(to), FirstOccurrence = first,
                 MissingValueBehavior = sourceRequired ? MissingXmlValueBehavior.Default : MissingXmlValueBehavior.Omit,
                 DefaultValue = sourceRequired ? string.Empty : null
             }));
@@ -291,6 +299,8 @@ public static class BizTalkNativeMapConverter
         {
             "Review proposal only: scalar values, constants and record/repeat links were converted using the supplied schemas. No deployed policy association, BizTalk-equivalent output, or execution approval is established. Preview synthetic inputs and compare trusted expected outputs before using the map."
         };
+        if (firstOccurrence.Count > 0)
+            warnings.Add($"{firstOccurrence.Count} direct link(s) read a field below a repeating source record with no record link, so only the first occurrence is mapped (for example {string.Join("; ", firstOccurrence.Take(3))}). Compiled BizTalk output observed for such links uses the first occurrence without a loop; it was not compared with this map's own compiled output.");
         if (optionalToRequired.Count > 0)
             warnings.Add($"{optionalToRequired.Count} link(s) feed a required target from an optional source (for example {string.Join("; ", optionalToRequired.Take(3))}). Like BizTalk, the target element is omitted when the source is absent, so the output can then violate the target schema.");
         if (resolver.Used.Count > 0)

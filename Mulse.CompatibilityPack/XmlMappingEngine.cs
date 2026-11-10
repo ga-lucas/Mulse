@@ -143,6 +143,8 @@ public sealed partial class XmlMappingEngine
                 throw new ArgumentException($"Mapping '{field.TargetPath}' has an invalid missing-value policy. Omit/default requires version 2, a source path, and a default value only for the Default policy.");
             var sourcePaths = new List<string>();
             var effective = field;
+            if (field.FirstOccurrence && (map.Version != 2 || field.Expression is not null || field.Constant is not null || string.IsNullOrEmpty(field.SourcePath)))
+                throw new ArgumentException($"Mapping '{field.TargetPath}' uses first-occurrence selection, which requires version 2 and a source path (no expression or constant).");
             if (field.Condition is not null && (map.Version != 2 || field.Expression is null))
                 throw new ArgumentException($"Mapping '{field.TargetPath}' uses a condition, which requires version 2 and an expression value.");
             if (field.Expression is not null)
@@ -423,8 +425,12 @@ public sealed partial class XmlMappingEngine
             if (field.Constant is null && field.Expression is null)
             {
                 source = SourceExpression(field.SourcePath, inner);
+                var first = source == "." ? "." : $"({source})[1]";
                 var cardinality = field.MissingValueBehavior == MissingXmlValueBehavior.Error ? "!= 1" : "> 1";
-                scopeChecks.Add(new XElement(Xsl + "if", new XAttribute("test", $"count({source}) {cardinality} or {source}/* or {(source == "." ? "self::node()" : source)}{NilTest}"),
+                var cardinalityTest = field.FirstOccurrence
+                    ? (field.MissingValueBehavior == MissingXmlValueBehavior.Error ? $"count({source}) = 0 or {first}/*" : $"{first}/*")
+                    : $"count({source}) {cardinality} or {source}/*";
+                scopeChecks.Add(new XElement(Xsl + "if", new XAttribute("test", $"{cardinalityTest} or {(source == "." ? "self::node()" : field.FirstOccurrence ? first : source)}{NilTest}"),
                     new XElement(Xsl + "message", new XAttribute("terminate", "yes"), field.MissingValueBehavior == MissingXmlValueBehavior.Error
                         ? $"Source '{field.SourcePath}' must select exactly one scalar element or attribute that is not xsi:nil. Missing, repeating, complex, or nil values are not supported."
                         : $"Source '{field.SourcePath}' must select at most one scalar element or attribute that is not xsi:nil. Repeating, complex, or nil values are not supported.")));
@@ -468,7 +474,7 @@ public sealed partial class XmlMappingEngine
         foreach (var child in node.Children.OrderByDescending(static child => child.IsAttribute))
             element.Add(Emit(child, inner, scopeChecks, folds));
         XElement result = node.Assignment is { MissingValueBehavior: MissingXmlValueBehavior.Omit }
-            ? new XElement(Xsl + "if", new XAttribute("test", $"count({source}) = 1"), element)
+            ? new XElement(Xsl + "if", new XAttribute("test", node.Assignment.FirstOccurrence ? $"count({source}) >= 1" : $"count({source}) = 1"), element)
             : node.Assignment?.Condition is { } condition
                 ? new XElement(Xsl + "if", new XAttribute("test", $"string({Compile(condition, inner, folds, null)}) = 'true'"), element)
                 : element;
