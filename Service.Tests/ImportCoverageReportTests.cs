@@ -27,7 +27,11 @@ public sealed class ImportCoverageReportTests
         var projects = Directory.EnumerateFiles(root, "*.btproj", SearchOption.AllDirectories).ToArray();
         var catalog = BizTalkSchemaSourceCatalog.Read(projects);
         var lines = new List<(string Path, string Status, string Message)>();
-        foreach (var path in projects.SelectMany(project => Directory.EnumerateFiles(Path.GetDirectoryName(project)!, "*.btm", SearchOption.AllDirectories)).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
+        // Only maps a project declares are imported; loose .btm files left in project folders are stale copies and are not measured.
+        var declared = projects.SelectMany(project => XmlMappingSchemas.ReadXmlFile(project).Descendants().Where(element => element.Name.LocalName == "Map" && element.Parent?.Name.LocalName == "ItemGroup")
+            .Select(item => (string?)item.Attribute("Include")).Where(include => !string.IsNullOrWhiteSpace(include))
+            .Select(include => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(project)!, include!))).Where(File.Exists));
+        foreach (var path in declared.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
         {
             try
             {
