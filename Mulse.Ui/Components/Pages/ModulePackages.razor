@@ -142,7 +142,7 @@
         {
             var packagesTask = ApiClient.GetModulePackagesAsync(CancellationToken.None);
             var modulesTask = ApiClient.GetModulesAsync(CancellationToken.None);
-            await Task.WhenAll(packagesTask, modulesTask);
+            await Task.WhenAll(new Task[] { packagesTask, modulesTask });
             _packages = await packagesTask;
             _modules = await modulesTask;
         }

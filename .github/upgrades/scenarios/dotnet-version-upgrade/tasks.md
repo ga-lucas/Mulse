@@ -1,6 +1,6 @@
 # Migration Progress
 
-**Progress**: 3/10 tasks complete <progress value="30" max="100"></progress> 30%
+**Progress**: 4/10 tasks complete <progress value="40" max="100"></progress> 40%
 **Status**: In Progress - Task 03-ui
 
 ## Tasks
@@ -9,7 +9,7 @@
 - ✅ 02-apphost: Upgrade Mulse.AppHost ([Content](tasks/02-apphost/task.md), [Progress](tasks/02-apphost/progress-details.md))
 - 🔄 03-ui: Upgrade Mulse.Ui and its tests ([Content](tasks/03-ui/task.md))
   - ✅ 03.01-service-defaults: Multi-target Mulse.ServiceDefaults and update its packages ([Content](tasks/03.01-service-defaults/task.md), [Progress](tasks/03.01-service-defaults/progress-details.md))
-  - 🔲 03.02-ui: Retarget Mulse.Ui and resolve its API findings
+  - ✅ 03.02-ui: Retarget Mulse.Ui and resolve its API findings ([Content](tasks/03.02-ui/task.md), [Progress](tasks/03.02-ui/progress-details.md))
   - 🔲 03.03-tests: Retarget Service.Tests and fix .NET 11 test API issues
 - 🔲 04-service-dependencies: Prepare Service library dependencies ([Content](tasks/04-service-dependencies/task.md))
 - 🔲 05-service: Upgrade Service ([Content](tasks/05-service/task.md))
