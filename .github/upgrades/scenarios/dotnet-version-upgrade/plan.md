@@ -57,6 +57,18 @@ Temporarily multi-target `Mulse.Modules`, `Mulse.CompatibilityPack`, `Mulse.Bill
 
 **Done when**: Each listed library builds for both target frameworks, existing `net10.0` consumers remain buildable, and `Service` can resolve its `net11.0` library dependencies.
 
+### 04.01-modules: Multi-target Mulse.Modules and resolve its package/API findings
+
+Multi-target the leaf library `Mulse.Modules` for `net11.0;net10.0`, apply the assessed package patch recommendations, and resolve only reproducible API incompatibilities while preserving net10 consumers.
+
+**Done when**: `Mulse.Modules` builds for both target frameworks without warnings, the existing net10 Service consumer still builds, and relevant regressions pass.
+
+### 04.02-dependent-libraries: Multi-target libraries that depend on Mulse.Modules
+
+Multi-target `Mulse.CompatibilityPack`, `Mulse.Billing`, `Mulse.Dbms.SqlServer`, `Mulse.Excel`, `Mulse.Hl7`, and `Mulse.SamplePlugin`; apply package recommendations and resolve verified API issues. Preserve the existing net10 Service host and ensure plugin output remains compatible with its host target.
+
+**Done when**: Each library builds for net10.0 and net11.0 without warnings, the net10 Service consumer still builds, net11 consumers resolve the new library targets, and the full test suite passes.
+
 ### 05-service: Upgrade Service
 
 Retarget `Service` to `net11.0` and apply the assessment's recommended package updates. Resolve the incompatible `Microsoft.VisualStudio.Azure.Containers.Tools.Targets` package in `Service` and `Service.Tests`; the test project already targets `net11.0` from the UI upgrade task. Address the 254 API findings reported for `Service`, including behavioral changes, and rerun `Service.Tests` to verify its references now resolve to the upgraded app and libraries.
