@@ -193,7 +193,7 @@ public sealed class ModulePackageLifecycleTests : IDisposable
         {
             var loadContext = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(render.Module.GetType().Assembly)!;
             Assert.True(loadContext.IsCollectible);
-            _unloadingContexts.Add(new WeakReference(loadContext));
+            _unloadingContexts.Add(new WeakReference(loadContext, trackResurrection: true));
             Assert.Equal("Mulse.Excel", render.Entry.PackageId);
             var json = new IntegrationBatch([new("rows.json", BinaryData.FromString("[{\"Name\":\"Excel\"}]"), "application/json", new Dictionary<string, string>())]);
             var workbook = await render.Module.RenderAsync(context, json, new ModuleStepDefinition(), CancellationToken.None);
@@ -290,7 +290,8 @@ public sealed class ModulePackageLifecycleTests : IDisposable
         {
             var context = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(lease.Module.GetType().Assembly)!;
             Assert.True(context.IsCollectible);
-            _unloadingContexts.Add(new WeakReference(context));
+            // A short weak reference can clear before finalization releases the loaded DLL.
+            _unloadingContexts.Add(new WeakReference(context, trackResurrection: true));
         }
         finally { lease.DisposeAsync().GetAwaiter().GetResult(); }
     }
@@ -345,7 +346,7 @@ public sealed class ModulePackageLifecycleTests : IDisposable
         }
         await using (var lease = await catalog.LeaseFetchAsync("lifecycle-test-fetch", CancellationToken.None))
         {
-            _unloadingContexts.Add(new WeakReference(System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(lease.Module.GetType().Assembly)));
+            _unloadingContexts.Add(new WeakReference(System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(lease.Module.GetType().Assembly), trackResurrection: true));
             var active = await Assert.ThrowsAsync<InvalidOperationException>(() => catalog.UpsertManagedPackageAsync(registration, CancellationToken.None));
             Assert.Contains("active module executions", active.Message);
             await Assert.ThrowsAsync<InvalidOperationException>(() => catalog.RemoveManagedPackageAsync("fixture", CancellationToken.None));
@@ -418,10 +419,10 @@ public sealed class ModulePackageLifecycleTests : IDisposable
             GC.Collect();
             GC.WaitForPendingFinalizers();
             if (attempt > 0 && _unloadingContexts.All(context => !context.IsAlive)) break;
-            Thread.Sleep(20);
         }
         Assert.All(_unloadingContexts, context => Assert.False(context.IsAlive, "The unloaded plugin context is still rooted."));
         if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
+        Assert.False(Directory.Exists(_directory));
     }
 }
 

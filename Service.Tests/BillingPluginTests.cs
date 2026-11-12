@@ -100,7 +100,7 @@ public sealed class BillingPluginTests : IDisposable
         await catalog.UpsertManagedPackageAsync(new() { Id = "Mulse.Billing", AssemblyPath = assembly, Enabled = true }, default);
         try
         {
-            RecordPluginContext(catalog);
+            var originalShadowAssembly = RecordPluginContext(catalog);
             Assert.Equal(1, catalog.GetPackages().Single(package => package.Id == "Mulse.Billing").ModuleCount);
             using var invokers = new ServiceCollection().AddSingleton<IModuleCatalog>(catalog)
                 .AddSingleton<IAugmentModuleInvoker, Service.Modules.AugmentModuleInvoker>()
@@ -111,8 +111,9 @@ public sealed class BillingPluginTests : IDisposable
                 "transformSettings":{"timeZone":"UTC","culture":"Invariant"},"transformInputs":[{"sourcePath":"/template"}]}]}
                 """;
             Assert.Equal("[{\"filename\":\"bill_20261105.txt\"}]", await ParsedDataMapping.MapAsync(mapping, "{\"template\":\"bill_[DATE(yyyyMMdd)].txt\"}", "Json", default, invokers.GetRequiredService<IModuleInvoker>(), Context()));
+            File.SetLastWriteTimeUtc(assembly, File.GetLastWriteTimeUtc(assembly).AddSeconds(2));
             await catalog.ReloadPackageAsync("Mulse.Billing", default);
-            RecordPluginContext(catalog);
+            Assert.NotEqual(originalShadowAssembly, RecordPluginContext(catalog));
             Assert.Equal("[{\"filename\":\"reloaded_2026\"}]", await ParsedDataMapping.MapAsync(mapping, "{\"template\":\"reloaded_[DATE(yyyy)]\"}", "Json", default, invokers.GetRequiredService<IModuleInvoker>(), Context()));
             var augments = invokers.GetRequiredService<IAugmentModuleInvoker>(); var renderers = invokers.GetRequiredService<IRenderModuleInvoker>();
             var settings = EnvironmentSettings(); settings["source"] = "Metadata"; settings["template"] = "billing.TargetLocation"; settings["outputKey"] = "expanded";
@@ -179,14 +180,17 @@ public sealed class BillingPluginTests : IDisposable
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private void RecordPluginContext(IModuleCatalog catalog)
+    private string RecordPluginContext(IModuleCatalog catalog)
     {
         var lease = catalog.LeaseOrchestrationAugmentAsync("billing-field-augment", default).GetAwaiter().GetResult();
         try
         {
-            var context = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(lease.Module.GetType().Assembly)!;
+            var assembly = lease.Module.GetType().Assembly;
+            var context = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(assembly)!;
             Assert.True(context.IsCollectible);
-            _unloadingContexts.Add(new WeakReference(context));
+            // A short weak reference can clear before finalization releases the loaded DLL.
+            _unloadingContexts.Add(new WeakReference(context, trackResurrection: true));
+            return assembly.Location;
         }
         finally { lease.DisposeAsync().GetAwaiter().GetResult(); }
     }
@@ -213,9 +217,9 @@ public sealed class BillingPluginTests : IDisposable
             GC.Collect();
             GC.WaitForPendingFinalizers();
             if (attempt > 0 && _unloadingContexts.All(context => !context.IsAlive)) break;
-            Thread.Sleep(20);
         }
         Assert.All(_unloadingContexts, context => Assert.False(context.IsAlive, "The unloaded Billing plugin context is still rooted."));
         if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
+        Assert.False(Directory.Exists(_directory));
     }
 }
