@@ -1,6 +1,6 @@
 # Migration Progress
 
-**Progress**: 17/17 tasks complete <progress value="100" max="100"></progress> 100%
+**Progress**: 18/18 tasks complete <progress value="100" max="100"></progress> 100%
 **Status**: Complete
 
 ## Tasks
@@ -22,4 +22,4 @@
   - ✅ 05.03-endpoint-compatibility: Verify endpoint and middleware compatibility on .NET 11 ([Content](tasks/05.03-endpoint-compatibility/task.md), [Progress](tasks/05.03-endpoint-compatibility/progress-details.md))
   - ✅ 05.04-biztalk-mapping-flow-compatibility: Verify BizTalk, mapping, and flow compatibility on .NET 11 ([Content](tasks/05.04-biztalk-mapping-flow-compatibility/task.md), [Progress](tasks/05.04-biztalk-mapping-flow-compatibility/progress-details.md))
 - ✅ 06-library-consolidation: Retarget shared libraries to .NET 11 ([Content](tasks/06-library-consolidation/task.md), [Progress](tasks/06-library-consolidation/progress-details.md))
-**Legend**: ✅ Complete | 🔄 In Progress | 🔲 Pending | ⚠️ Blocked | ❌ Failed
+- ✅ 07-validation: Validate the full solution ([Content](tasks/07-validation/task.md), [Progress](tasks/07-validation/progress-details.md))
