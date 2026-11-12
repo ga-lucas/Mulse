@@ -106,8 +106,19 @@
 
         _initialized = true;
         _selfReference = DotNetObjectReference.Create(this);
-        _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/floating-panel.js");
-        await _module.InvokeVoidAsync("initialize", _panelElement, _headerElement, _selfReference);
+        try
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/floating-panel.js");
+            await _module.InvokeVoidAsync("initialize", _panelElement, _headerElement, _selfReference);
+        }
+        catch (JSDisconnectedException)
+        {
+            return;
+        }
+        catch (JSException exception)
+        {
+            throw new InvalidOperationException($"Unable to initialize floating panel '{Title}'.", exception);
+        }
     }
 
     [JSInvokable]

@@ -243,13 +243,25 @@ public partial class Designer : IAsyncDisposable
         }
 
         _canvasInitialized = true;
-        _selfReference = DotNetObjectReference.Create(this);
-        _canvasModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/flow-canvas.js");
-        await _canvasModule.InvokeVoidAsync("initialize", _canvasElement, _selfReference);
-        await _canvasModule.InvokeVoidAsync("initializeToolbox", _toolboxElement, _canvasElement, _selfReference);
-        await _canvasModule.InvokeVoidAsync("initializeFileDrop", _canvasElement, _canvasFileInput!.Element, _selfReference);
-        _splitterModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/dock-splitter.js");
-        await _splitterModule.InvokeVoidAsync("initialize", _leftDock, _dockSplitter, _selfReference);
+        try
+        {
+            _selfReference = DotNetObjectReference.Create(this);
+            _canvasModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/flow-canvas.js");
+            await _canvasModule.InvokeVoidAsync("initialize", _canvasElement, _selfReference);
+            await _canvasModule.InvokeVoidAsync("initializeToolbox", _toolboxElement, _canvasElement, _selfReference);
+            await _canvasModule.InvokeVoidAsync("initializeFileDrop", _canvasElement, _canvasFileInput!.Element, _selfReference);
+            _splitterModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/dock-splitter.js");
+            await _splitterModule.InvokeVoidAsync("initialize", _leftDock, _dockSplitter, _selfReference);
+        }
+        catch (JSDisconnectedException)
+        {
+            return;
+        }
+        catch (JSException exception)
+        {
+            _errorMessage = $"Unable to initialize the flow editor: {exception.Message}";
+            StateHasChanged();
+        }
     }
 
     [JSInvokable]
@@ -394,7 +406,18 @@ public partial class Designer : IAsyncDisposable
     {
         if (_canvasModule is not null)
         {
-            await _canvasModule.InvokeVoidAsync("zoomBy", _canvasElement, factor, _selfReference);
+            try
+            {
+                await _canvasModule.InvokeVoidAsync("zoomBy", _canvasElement, factor, _selfReference);
+            }
+            catch (JSDisconnectedException)
+            {
+                return;
+            }
+            catch (JSException exception)
+            {
+                _errorMessage = $"Unable to update the canvas zoom: {exception.Message}";
+            }
         }
     }
 

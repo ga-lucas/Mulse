@@ -105,8 +105,24 @@ public sealed record DurableBatchSchedule(TimeOnly Cutoff, TimeZoneInfo TimeZone
     }
 
     private static TimeOnly ReadTime(string text)
-        => TimeOnly.TryParseExact(text, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var time) ? time
-            : throw new ArgumentException("BatchTime/daily cutoffs require HH:mm (24-hour clock), without culture-dependent dates or seconds.");
+    {
+        if (text.Length == 5
+            && text[2] == ':'
+            && char.IsAsciiDigit(text[0])
+            && char.IsAsciiDigit(text[1])
+            && char.IsAsciiDigit(text[3])
+            && char.IsAsciiDigit(text[4])
+            && int.TryParse(text.AsSpan(0, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var hour)
+            && hour < 24
+            && int.TryParse(text.AsSpan(3, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var minute)
+            && minute < 60
+            && TimeOnly.TryParseExact(text, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var time))
+        {
+            return time;
+        }
+
+        throw new ArgumentException("BatchTime/daily cutoffs require HH:mm (24-hour clock), without culture-dependent dates or seconds.");
+    }
 
     private static TimeSpan? ReadInterval(string text)
     {

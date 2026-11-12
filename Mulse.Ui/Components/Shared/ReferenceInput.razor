@@ -137,9 +137,21 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/reference-input.js");
-        _controller ??= await _module.InvokeAsync<IJSObjectReference>("attach", _root);
-        await _controller.InvokeVoidAsync("updateReferences", References);
+        try
+        {
+            _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/reference-input.js");
+            _controller ??= await _module.InvokeAsync<IJSObjectReference>("attach", _root);
+            await _controller.InvokeVoidAsync("updateReferences", References);
+        }
+        catch (JSDisconnectedException)
+        {
+            return;
+        }
+        catch (JSException exception)
+        {
+            _referenceError = $"Unable to initialize reference picker: {exception.Message}";
+            StateHasChanged();
+        }
     }
 
     public async ValueTask DisposeAsync()

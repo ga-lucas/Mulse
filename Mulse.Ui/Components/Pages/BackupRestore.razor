@@ -115,8 +115,15 @@
         {
             if (_exportPassword != _confirmPassword) throw new ArgumentException("Backup passwords do not match.");
             var file = await ApiClient.BackupWorkspaceAsync(_exportPassword, CancellationToken.None);
-            await using var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/file-download.js");
-            await module.InvokeVoidAsync("downloadFile", file.FileName, file.ContentType, Convert.ToBase64String(file.Content));
+            try
+            {
+                await using var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/file-download.js");
+                await module.InvokeVoidAsync("downloadFile", file.FileName, file.ContentType, Convert.ToBase64String(file.Content));
+            }
+            catch (JSException exception)
+            {
+                throw new InvalidOperationException($"Unable to download the backup: {exception.Message}", exception);
+            }
             _exportPassword = _confirmPassword = string.Empty;
             _status = "Encrypted backup downloaded. Keep its password separately.";
         });

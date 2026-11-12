@@ -133,8 +133,15 @@ public partial class Designer
 
     private async Task TriggerBrowserDownloadAsync(DownloadedFileViewModel file)
     {
-        await using var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/file-download.js");
-        await module.InvokeVoidAsync("downloadFile", file.FileName, file.ContentType, Convert.ToBase64String(file.Content));
+        try
+        {
+            await using var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/file-download.js");
+            await module.InvokeVoidAsync("downloadFile", file.FileName, file.ContentType, Convert.ToBase64String(file.Content));
+        }
+        catch (JSException exception)
+        {
+            throw new InvalidOperationException($"Unable to download '{file.FileName}': {exception.Message}", exception);
+        }
     }
 
     private void ApplyBizTalkCandidate(BizTalkFlowCandidateViewModel candidate)

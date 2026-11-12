@@ -44,7 +44,18 @@
     {
         if (firstRender)
         {
-            await JS.InvokeVoidAsync("mulseTheme.refresh");
+            try
+            {
+                await JS.InvokeVoidAsync("mulseTheme.refresh");
+            }
+            catch (JSDisconnectedException)
+            {
+                return;
+            }
+            catch (JSException exception)
+            {
+                throw new InvalidOperationException("Unable to refresh the application theme.", exception);
+            }
         }
     }
 }
