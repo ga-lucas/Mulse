@@ -432,7 +432,7 @@ Implemented (tests: `BizTalkTransportMappingTests`, `BillingHelperModuleTests`, 
 - Pipeline-component equivalents (later renamed; see the module-move increment below): `hl7-message-type-augment` (HL7TypeCaster
   equivalent, `Mulse.Hl7`) and `set-context-property-augment` (SetProperty equivalent, Compatibility Pack). Both are
   descriptor-driven, so all settings are labeled UI fields.
-- The importer parses `SendPipelineData` from bindings into `PipelineComponentConfig` (secret-named properties dropped) and inserts
+=- The importer parses `SendPipelineData` from bindings into `PipelineComponentConfig` (secret-named properties dropped) and inserts
   pre-filled augment steps for `HL7TypeCaster`/`SetProperty`. MIME/S-MIME and BTAHL7 components produce warnings; hints use
   `BT-PIPELINE-COMPONENT-HINT`.
 - `hl7-xml-render` (`Mulse.Hl7`) renders HL7 v2 XML to ER7 (`trimTrailingDelimiters`, `segmentTerminator` CR/LF/CRLF dropdown). It is
