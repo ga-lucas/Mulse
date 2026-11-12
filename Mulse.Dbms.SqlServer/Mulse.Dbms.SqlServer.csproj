@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-	<TargetFrameworks>net11.0;net10.0</TargetFrameworks>
+	<TargetFramework>net11.0</TargetFramework>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<Nullable>enable</Nullable>
 	<!-- Hot-loadable module package: Service does not project-reference this assembly. Instead it builds
@@ -9,12 +9,11 @@
 		 collectible AssemblyLoadContext at runtime (see Service/Modules/ModuleCatalog.cs), matching the
 		 same convention used by Mulse.SamplePlugin. This is what makes it reloadable/unloadable without
 		 restarting the host. -->
-	<OutDir Condition="'$(TargetFramework)' == 'net10.0'">..\Service\plugins\Mulse.Dbms.SqlServer\</OutDir>
-	<OutDir Condition="'$(TargetFramework)' == 'net11.0'">..\Service\plugins\Mulse.Dbms.SqlServer\net11.0\</OutDir>
+	<OutDir>..\Service\plugins\Mulse.Dbms.SqlServer\net11.0\</OutDir>
 	<!-- Class library projects don't copy their NuGet package dependencies (Dapper, Microsoft.Data.SqlClient,
-	     and their own transitive deps) to the output folder by default. Force it here so this plugin's
-	     folder is fully self-contained for AssemblyDependencyResolver to resolve at load time, without
-	     relying on a NuGet package cache being present wherever Service is deployed. -->
+		 and their own transitive deps) to the output folder by default. Force it here so this plugin's
+		 folder is fully self-contained for AssemblyDependencyResolver to resolve at load time, without
+		 relying on a NuGet package cache being present wherever Service is deployed. -->
 	<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 

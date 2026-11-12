@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-	<TargetFrameworks>net11.0;net10.0</TargetFrameworks>
+	<TargetFramework>net11.0</TargetFramework>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<Nullable>enable</Nullable>
 	<!-- Hot-loadable module package: Service does not project-reference this assembly. Instead it builds
@@ -9,10 +9,9 @@
 		 collectible AssemblyLoadContext at runtime (see Service/Modules/ModuleCatalog.cs), matching the
 		 same convention used by Mulse.SamplePlugin. This is what makes it reloadable/unloadable without
 		 restarting the host. -->
-	<OutDir Condition="'$(TargetFramework)' == 'net10.0'">..\Service\plugins\Mulse.Hl7\</OutDir>
-	<OutDir Condition="'$(TargetFramework)' == 'net11.0'">..\Service\plugins\Mulse.Hl7\net11.0\</OutDir>
+	<OutDir>..\Service\plugins\Mulse.Hl7\net11.0\</OutDir>
 	<!-- See Mulse.Dbms.SqlServer.csproj: forces this plugin's own NuGet dependencies (if any are added later)
-	     to be copied locally so the plugins/ folder stays self-contained. -->
+		 to be copied locally so the plugins/ folder stays self-contained. -->
 	<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
