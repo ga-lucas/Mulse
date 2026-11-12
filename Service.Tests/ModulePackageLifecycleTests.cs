@@ -106,6 +106,71 @@ public sealed class ModulePackageLifecycleTests : IDisposable
     }
 
     [Fact]
+    public async Task Discovery_PrefersCurrentFrameworkAssemblyAndFallsBackToLegacy()
+    {
+        var packageDirectory = Path.Combine(_directory, "plugins", "fixture");
+        var legacyAssemblyPath = Path.Combine(packageDirectory, "fixture.dll");
+        var targetFrameworkAssemblyPath = Path.Combine(packageDirectory, "net11.0", "fixture.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(targetFrameworkAssemblyPath)!);
+        File.Copy(typeof(LifecycleTestInstaller).Assembly.Location, legacyAssemblyPath);
+        File.Copy(typeof(LifecycleTestInstaller).Assembly.Location, targetFrameworkAssemblyPath);
+
+        var catalog = Catalog(Store());
+        await catalog.SynchronizeAsync(CancellationToken.None);
+        Assert.Equal(targetFrameworkAssemblyPath, catalog.GetPackages().Single(package => package.Id == "fixture").AssemblyPath);
+
+        File.Delete(targetFrameworkAssemblyPath);
+        await catalog.SynchronizeAsync(CancellationToken.None);
+        Assert.Equal(legacyAssemblyPath, catalog.GetPackages().Single(package => package.Id == "fixture").AssemblyPath);
+    }
+
+    [Fact]
+    public async Task ManagedPackageUpsert_UsesCurrentFrameworkAssemblyAndKeepsPersistedPath()
+    {
+        var packageDirectory = Path.Combine(_directory, "plugins", "fixture");
+        var legacyAssemblyPath = Path.Combine(packageDirectory, "fixture.dll");
+        var targetFrameworkAssemblyPath = Path.Combine(packageDirectory, "net11.0", "fixture.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(targetFrameworkAssemblyPath)!);
+        File.Copy(typeof(LifecycleTestInstaller).Assembly.Location, targetFrameworkAssemblyPath);
+
+        var store = Store();
+        var catalog = Catalog(store);
+        var package = await catalog.UpsertManagedPackageAsync(new()
+        {
+            Id = "fixture", AssemblyPath = legacyAssemblyPath, Enabled = true
+        }, CancellationToken.None);
+        Assert.Equal(targetFrameworkAssemblyPath, package.AssemblyPath);
+        Assert.Equal(legacyAssemblyPath, store.GetState().ManagedPackages.Single().AssemblyPath);
+
+        var restartedCatalog = Catalog(store);
+        await restartedCatalog.SynchronizeAsync(CancellationToken.None);
+        Assert.Equal(targetFrameworkAssemblyPath, restartedCatalog.GetPackages().Single(candidate => candidate.Id == "fixture").AssemblyPath);
+        await restartedCatalog.UpsertManagedPackageAsync(new() { Id = "fixture", AssemblyPath = legacyAssemblyPath, Enabled = false }, CancellationToken.None);
+        await catalog.UpsertManagedPackageAsync(new() { Id = "fixture", AssemblyPath = legacyAssemblyPath, Enabled = false }, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ManagedPackageUpsert_DoesNotRewriteCustomAssemblyPaths()
+    {
+        var customDirectory = Path.Combine(_directory, "user-supplied");
+        var assemblyPath = Path.Combine(customDirectory, "fixture.dll");
+        var adjacentTargetFrameworkAssemblyPath = Path.Combine(customDirectory, "net11.0", "fixture.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(adjacentTargetFrameworkAssemblyPath)!);
+        File.Copy(typeof(LifecycleTestInstaller).Assembly.Location, assemblyPath);
+        File.Copy(typeof(LifecycleTestInstaller).Assembly.Location, adjacentTargetFrameworkAssemblyPath);
+
+        var store = Store();
+        var catalog = Catalog(store);
+        var package = await catalog.UpsertManagedPackageAsync(new()
+        {
+            Id = "fixture", AssemblyPath = assemblyPath, Enabled = true
+        }, CancellationToken.None);
+        Assert.Equal(assemblyPath, package.AssemblyPath);
+        Assert.Equal(assemblyPath, store.GetState().ManagedPackages.Single().AssemblyPath);
+        await catalog.UpsertManagedPackageAsync(new() { Id = "fixture", AssemblyPath = assemblyPath, Enabled = false }, CancellationToken.None);
+    }
+
+    [Fact]
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     public async Task ExcelPackage_IsDiscoveredUnloadedAndSuppliesWorkingParseAndRenderModules()
     {

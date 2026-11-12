@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.Versioning;
 using Microsoft.Extensions.DependencyInjection;
 using Mulse.Modules;
 
@@ -179,7 +180,8 @@ public sealed class ModuleCatalog : IModuleCatalog
                     continue;
                 }
 
-                await LoadOrReloadPackageAsync(managedPackage.Id, managedPackage.AssemblyPath, RuntimePackageSourceKind.Managed, cancellationToken).ConfigureAwait(false);
+                var assemblyPath = ResolveManagedAssemblyPath(managedPackage, runtimeState.PluginDirectories);
+                await LoadOrReloadPackageAsync(managedPackage.Id, assemblyPath, RuntimePackageSourceKind.Managed, cancellationToken).ConfigureAwait(false);
             }
 
             var managedPackageIds = runtimeState.ManagedPackages.Select(static package => package.Id)
@@ -264,7 +266,9 @@ public sealed class ModuleCatalog : IModuleCatalog
             }
             if (package.Enabled)
             {
-                await LoadOrReloadPackageAsync(package.Id, package.AssemblyPath, RuntimePackageSourceKind.Managed, cancellationToken).ConfigureAwait(false);
+                var pluginDirectories = _runtimeConfigurationStore.GetState().PluginDirectories;
+                var assemblyPath = ResolveManagedAssemblyPath(package, pluginDirectories);
+                await LoadOrReloadPackageAsync(package.Id, assemblyPath, RuntimePackageSourceKind.Managed, cancellationToken).ConfigureAwait(false);
                 await _runtimeConfigurationStore.UpsertManagedPackageAsync(package, cancellationToken).ConfigureAwait(false);
             }
             else
@@ -402,6 +406,57 @@ public sealed class ModuleCatalog : IModuleCatalog
         throw new KeyNotFoundException($"No module package with id '{packageId}' is registered.");
     }
 
+    private string ResolveManagedAssemblyPath(ManagedModulePackageDefinition package, IEnumerable<string> pluginDirectories)
+    {
+        var fullAssemblyPath = Path.GetFullPath(Path.IsPathRooted(package.AssemblyPath)
+            ? package.AssemblyPath
+            : Path.Combine(_environment.ContentRootPath, package.AssemblyPath));
+        if (!string.Equals(Path.GetFileNameWithoutExtension(fullAssemblyPath), package.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            return package.AssemblyPath;
+        }
+
+        var packageDirectory = Path.GetDirectoryName(fullAssemblyPath);
+        if (packageDirectory is null || !string.Equals(Path.GetFileName(packageDirectory), package.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            return package.AssemblyPath;
+        }
+
+        var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (var configuredDirectory in pluginDirectories.Where(static directory => !string.IsNullOrWhiteSpace(directory)))
+        {
+            var fullDirectory = Path.GetFullPath(Path.IsPathRooted(configuredDirectory)
+                ? configuredDirectory
+                : Path.Combine(_environment.ContentRootPath, configuredDirectory));
+            var expectedPackageDirectory = Path.GetFullPath(Path.Combine(fullDirectory, package.Id));
+            if (string.Equals(packageDirectory, expectedPackageDirectory, pathComparison))
+            {
+                return TryGetTargetFrameworkAssemblyPath(packageDirectory, package.Id) ?? package.AssemblyPath;
+            }
+        }
+
+        return package.AssemblyPath;
+    }
+
+    private static string? TryGetTargetFrameworkAssemblyPath(string packageDirectory, string packageId)
+    {
+        var targetFrameworkName = typeof(ModuleCatalog).Assembly.GetCustomAttribute<TargetFrameworkAttribute>()?.FrameworkName;
+        if (string.IsNullOrWhiteSpace(targetFrameworkName))
+        {
+            return null;
+        }
+
+        var targetFramework = new FrameworkName(targetFrameworkName);
+        if (!string.Equals(targetFramework.Identifier, ".NETCoreApp", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var targetFrameworkDirectory = $"net{targetFramework.Version.Major}.{targetFramework.Version.Minor}";
+        var assemblyPath = Path.Combine(packageDirectory, targetFrameworkDirectory, packageId + ".dll");
+        return File.Exists(assemblyPath) ? assemblyPath : null;
+    }
+
     private IReadOnlyList<ManagedModulePackageDefinition> DiscoverAutoPackages(IEnumerable<string> pluginDirectories)
     {
         var discoveredPackages = new Dictionary<string, ManagedModulePackageDefinition>(StringComparer.OrdinalIgnoreCase);
@@ -431,7 +486,8 @@ public sealed class ModuleCatalog : IModuleCatalog
                     continue;
                 }
 
-                var mainAssemblyPath = Path.Combine(pluginDirectory, packageId + ".dll");
+                var mainAssemblyPath = TryGetTargetFrameworkAssemblyPath(pluginDirectory, packageId)
+                    ?? Path.Combine(pluginDirectory, packageId + ".dll");
                 if (!File.Exists(mainAssemblyPath))
                 {
                     continue;

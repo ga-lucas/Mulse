@@ -1,7 +1,7 @@
 # Migration Progress
 
-**Progress**: 13/13 tasks complete <progress value="100" max="100"></progress> 100%
-**Status**: Complete
+**Progress**: 14/16 tasks complete <progress value="88" max="100"></progress> 88%
+**Status**: Not Started
 
 ## Tasks
 
@@ -18,5 +18,8 @@
   - ✅ 04.02-dependent-libraries: Multi-target the six libraries that depend on Mulse.Modules ([Content](tasks/04.02-dependent-libraries/task.md), [Progress](tasks/04.02-dependent-libraries/progress-details.md))
 - ✅ 05-service: Upgrade Service ([Content](tasks/05-service/task.md), [Progress](tasks/05-service/progress-details.md))
   - ✅ 05.01-service-container: Retarget Service and replace container tooling ([Content](tasks/05.01-service-container/task.md), [Progress](tasks/05.01-service-container/progress-details.md))
+  - ✅ 05.02-plugin-tfm-selection: Select matching plugin assemblies for the host TFM ([Content](tasks/05.02-plugin-tfm-selection/task.md), [Progress](tasks/05.02-plugin-tfm-selection/progress-details.md))
+  - 🔲 05.03-endpoint-compatibility: Verify endpoint and middleware compatibility on .NET 11 ([Content](tasks/05.03-endpoint-compatibility/task.md))
+  - 🔲 05.04-biztalk-mapping-flow-compatibility: Verify BizTalk, mapping, and flow compatibility on .NET 11 ([Content](tasks/05.04-biztalk-mapping-flow-compatibility/task.md))
 
 **Legend**: ✅ Complete | 🔄 In Progress | 🔲 Pending | ⚠️ Blocked | ❌ Failed

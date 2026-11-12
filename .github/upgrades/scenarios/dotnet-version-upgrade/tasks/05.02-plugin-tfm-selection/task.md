@@ -8,6 +8,11 @@ Make plugin discovery and persisted managed-package loading select each plugin's
 - `Service.Tests/ModulePackageLifecycleTests.cs` for regression coverage.
 - Plugin projects from task 04.02 emit .NET 11 assemblies under `plugins/<package>/net11.0/` and keep legacy .NET 10 assemblies at `plugins/<package>/`.
 
+## Research Findings
+- `DiscoverAutoPackages` currently scans immediate package directories for `<packageId>.dll` and separately scans flat DLLs. It will miss the new `plugins/<package>/net11.0/<package>.dll` output and instead treat `net11.0` as a package directory.
+- `SynchronizeAsync` directly loads persisted `ManagedModulePackageDefinition.AssemblyPath`; `RuntimeConfigurationStore` clones that value unchanged. Resolve a target-specific assembly only when the stored path matches the configured plugin-root/package/package.dll convention, and do not rewrite the persisted path or unrelated caller-supplied paths.
+- Existing `DiscoveryDuringExecution_ListsOnlyCompatiblePackagesAsUnloaded` coverage verifies both legacy package-directory and flat-DLL discovery. `Service.Tests` targets `net11.0` and references Service plus the plugin projects, so matching-TFM selection and fallback can be tested with the test assembly as a valid installer fixture.
+
 ## Steps
 1. Preserve current discovery behavior for flat DLLs and legacy package directories, but prefer a matching `net11.0` assembly where the package's TFM-specific output exists.
 2. Resolve persisted managed assembly paths using the matching TFM output when appropriate, without rewriting arbitrary user-supplied paths or breaking legacy configurations.

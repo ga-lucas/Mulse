@@ -75,6 +75,30 @@ Retarget `Service` to `net11.0` and apply its direct package recommendations. Re
 
 **Done when**: `Service` builds for `net11.0` without warnings; SDK container publishing works with a supported Windows base image and the unsupported package is removed; the Dockerfile uses .NET 11 images; `ModuleCatalog` selects matching plugin assemblies without breaking legacy paths; and the full `Service.Tests` suite passes against `Service` and `Mulse.Ui` on `net11.0`.
 
+### 05.01-service-container: Retarget Service and replace container tooling
+
+Retarget `Service` to `net11.0`, update its supported OpenAPI package, and replace the unsupported Visual Studio container-tools dependency with SDK container publishing while preserving the Windows container path and a manual Dockerfile workflow.
+
+**Done when**: Service and Service.Tests build successfully; Service is warning-free on `net11.0`; SDK container publishing produces an archive using a supported Windows .NET 11 base image; the Dockerfile targets .NET 11; and no broken Docker launch profile remains.
+
+### 05.02-plugin-tfm-selection: Select matching plugin assemblies for the host TFM
+
+Make plugin discovery and persisted managed-package loading select each plugin's `net11.0` output for the upgraded Service host while retaining fallback for existing legacy paths. Add regression coverage for matching-TFM selection and fallback behavior.
+
+**Done when**: Auto-discovery and persisted package state choose the `net11.0` assembly when present, legacy paths continue to work when it is absent, and the targeted lifecycle tests pass.
+
+### 05.03-endpoint-compatibility: Verify endpoint and middleware compatibility on .NET 11
+
+Review Service endpoint and middleware compatibility findings against actual .NET 11 behavior; preserve caller-visible API semantics and edit only verified regressions. Generated OpenAPI source under `obj` is not editable.
+
+**Done when**: Endpoint and middleware code has no verified unresolved .NET 11 regressions, generated files remain untouched, focused tests pass, and the affected projects build cleanly.
+
+### 05.04-biztalk-mapping-flow-compatibility: Verify BizTalk, mapping, and flow compatibility on .NET 11
+
+Review the remaining Service compatibility findings in BizTalk import, mapping, and flow execution, and fix only verified .NET 11 regressions while retaining exception and serialization semantics.
+
+**Done when**: No verified unresolved compatibility regressions remain in the scoped areas, related tests pass, and Service and Service.Tests build without warnings.
+
 ### 06-library-consolidation: Retarget shared libraries to .NET 11
 
 Once all application and test consumers use `net11.0`, remove `net10.0` from the temporarily multi-targeted libraries: `Mulse.ServiceDefaults`, `Mulse.Modules`, `Mulse.CompatibilityPack`, `Mulse.Billing`, `Mulse.Dbms.SqlServer`, `Mulse.Excel`, `Mulse.Hl7`, and `Mulse.SamplePlugin`. Remove only framework-specific compilation branches that are no longer needed; preserve symbols serving other behavior or security controls.
