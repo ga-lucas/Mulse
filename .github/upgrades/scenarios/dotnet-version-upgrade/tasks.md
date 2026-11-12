@@ -1,7 +1,7 @@
 # Migration Progress
 
-**Progress**: 15/16 tasks complete <progress value="94" max="100"></progress> 94%
-**Status**: Not Started
+**Progress**: 16/16 tasks complete <progress value="100" max="100"></progress> 100%
+**Status**: Complete
 
 ## Tasks
 
@@ -20,6 +20,6 @@
   - ✅ 05.01-service-container: Retarget Service and replace container tooling ([Content](tasks/05.01-service-container/task.md), [Progress](tasks/05.01-service-container/progress-details.md))
   - ✅ 05.02-plugin-tfm-selection: Select matching plugin assemblies for the host TFM ([Content](tasks/05.02-plugin-tfm-selection/task.md), [Progress](tasks/05.02-plugin-tfm-selection/progress-details.md))
   - ✅ 05.03-endpoint-compatibility: Verify endpoint and middleware compatibility on .NET 11 ([Content](tasks/05.03-endpoint-compatibility/task.md), [Progress](tasks/05.03-endpoint-compatibility/progress-details.md))
-  - 🔲 05.04-biztalk-mapping-flow-compatibility: Verify BizTalk, mapping, and flow compatibility on .NET 11 ([Content](tasks/05.04-biztalk-mapping-flow-compatibility/task.md))
+  - ✅ 05.04-biztalk-mapping-flow-compatibility: Verify BizTalk, mapping, and flow compatibility on .NET 11 ([Content](tasks/05.04-biztalk-mapping-flow-compatibility/task.md), [Progress](tasks/05.04-biztalk-mapping-flow-compatibility/progress-details.md))
 
 **Legend**: ✅ Complete | 🔄 In Progress | 🔲 Pending | ⚠️ Blocked | ❌ Failed
