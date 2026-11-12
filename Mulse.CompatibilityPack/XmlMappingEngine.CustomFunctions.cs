@@ -32,16 +32,20 @@ public sealed partial class XmlMappingEngine
                 || function.Usages.Any(usage => usage is null || usage.Length > XmlMappingFunctionCatalog.MaxUsageLength))
                 throw new ArgumentException($"Custom function '{function.Name}' has documentation that exceeds the allowed size.");
         }
-        foreach (var function in custom.Values.Where(function => function.Body is not null))
+        foreach (var function in custom.Values)
         {
+            var body = function.Body;
+            if (body is null)
+                continue;
+
             var parameters = function.Parameters.Select(parameter => parameter.Name).ToHashSet(StringComparer.Ordinal);
             var nodes = 0;
-            ValidateExpression(function.Body, function.Name, 1, ref nodes, [], custom, parameters);
+            ValidateExpression(body, function.Name, 1, ref nodes, [], custom, parameters);
             // Expanding with placeholder arguments finds cycles and runaway growth before any map uses the function.
             var placeholders = function.Parameters.ToDictionary(parameter => parameter.Name,
                 _ => new XmlValueExpression { Kind = XmlValueExpressionKind.Constant, Constant = string.Empty }, StringComparer.Ordinal);
             var expanded = 0;
-            Expand(function.Body, placeholders, custom, [function.Name], ref expanded, 1, allowStubs: true, function.Name);
+            Expand(body, placeholders, custom, [function.Name], ref expanded, 1, allowStubs: true, function.Name);
         }
         // A stub may stand for something no call site shows (for example a target record built by imported XSLT), so any stub blocks a real run.
         if (!allowStubs && custom.Values.FirstOrDefault(function => function.Body is null) is { } pending)

@@ -1,15 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-	<TargetFramework>net10.0</TargetFramework>
+	<TargetFrameworks>net11.0;net10.0</TargetFrameworks>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<Nullable>enable</Nullable>
-	<OutDir>..\Service\plugins\Mulse.Excel\</OutDir>
+	<OutDir Condition="'$(TargetFramework)' == 'net10.0'">..\Service\plugins\Mulse.Excel\</OutDir>
+	<OutDir Condition="'$(TargetFramework)' == 'net11.0'">..\Service\plugins\Mulse.Excel\net11.0\</OutDir>
 	<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
   <ItemGroup>
 	<ProjectReference Include="..\Mulse.Modules\Mulse.Modules.csproj" />
 	<PackageReference Include="NPOI" Version="2.7.5" />
-	<PackageReference Include="System.Security.Cryptography.Xml" Version="8.0.5" />
+	<PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.15" />
 	<PackageReference Include="SixLabors.ImageSharp" Version="3.2.0" />
   </ItemGroup>
 </Project>

@@ -45,7 +45,7 @@ public sealed class OdxGeneratedTranslationTests
             await File.WriteAllTextAsync(Path.Combine(directory, source.FileName), source.SourceCode);
             var buildProject = Path.Combine(directory, "Generated.csproj");
             new XDocument(new XElement("Project", new XAttribute("Sdk", "Microsoft.NET.Sdk"),
-                new XElement("PropertyGroup", new XElement("TargetFramework", "net10.0"), new XElement("ImplicitUsings", "disable")),
+                new XElement("PropertyGroup", new XElement("TargetFramework", "net11.0"), new XElement("ImplicitUsings", "disable")),
                 new XElement("ItemGroup", new XElement("Reference", new XAttribute("Include", "Mulse.Modules"),
                     new XElement("HintPath", typeof(IOrchestrationAugmentModule).Assembly.Location), new XElement("Private", "false")))))
                 .Save(buildProject);
@@ -57,7 +57,7 @@ public sealed class OdxGeneratedTranslationTests
             try { await process.WaitForExitAsync(timeout.Token); }
             catch (OperationCanceledException) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
             Assert.True(process.ExitCode == 0, await stdout + await stderr);
-            var assembly = Assembly.Load(File.ReadAllBytes(Path.Combine(directory, "bin", "Debug", "net10.0", "Generated.dll")));
+            var assembly = Assembly.Load(File.ReadAllBytes(Path.Combine(directory, "bin", "Debug", "net11.0", "Generated.dll")));
             var module = (IOrchestrationAugmentModule)Activator.CreateInstance(Assert.Single(assembly.GetTypes(), type => typeof(IOrchestrationAugmentModule).IsAssignableFrom(type)))!;
             var failure = await Assert.ThrowsAsync<NotSupportedException>(() => module.AugmentAsync(null!, IntegrationBatch.Empty, null!, default));
             Assert.Contains("no verified", failure.Message);

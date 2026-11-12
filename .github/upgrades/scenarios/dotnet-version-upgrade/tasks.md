@@ -1,6 +1,6 @@
 # Migration Progress
 
-**Progress**: 10/13 tasks complete <progress value="77" max="100"></progress> 77%
+**Progress**: 11/13 tasks complete <progress value="85" max="100"></progress> 85%
 **Status**: Not Started
 
 ## Tasks
@@ -15,7 +15,7 @@
     - ✅ 03.03.02-behavior-tests: Run the Service.Tests suite and resolve .NET 11 behavioral regressions ([Content](tasks/03.03.02-behavior-tests/task.md), [Progress](tasks/03.03.02-behavior-tests/progress-details.md))
 - ✅ 04-service-dependencies: Prepare Service library dependencies ([Content](tasks/04-service-dependencies/task.md), [Progress](tasks/04-service-dependencies/progress-details.md))
   - ✅ 04.01-modules: Multi-target Mulse.Modules and resolve its package/API findings ([Content](tasks/04.01-modules/task.md), [Progress](tasks/04.01-modules/progress-details.md))
-  - 🔲 04.02-dependent-libraries: Multi-target the six libraries that depend on Mulse.Modules ([Content](tasks/04.02-dependent-libraries/task.md))
+  - ✅ 04.02-dependent-libraries: Multi-target the six libraries that depend on Mulse.Modules ([Content](tasks/04.02-dependent-libraries/task.md), [Progress](tasks/04.02-dependent-libraries/progress-details.md))
 - 🔲 06-library-consolidation: Retarget shared libraries to .NET 11 ([Content](tasks/06-library-consolidation/task.md))
 - 🔲 07-validation: Validate the full solution ([Content](tasks/07-validation/task.md))
 

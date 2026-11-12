@@ -39,7 +39,7 @@ public sealed class BizTalkOrchestrationScaffoldTests
             File.WriteAllText(Path.Combine(directory, pipeline.FileName), pipeline.SourceCode);
             var project = Path.Combine(directory, "Stub.csproj");
             new XDocument(new XElement("Project", new XAttribute("Sdk", "Microsoft.NET.Sdk"),
-                new XElement("PropertyGroup", new XElement("TargetFramework", "net10.0"), new XElement("ImplicitUsings", "disable")),
+                new XElement("PropertyGroup", new XElement("TargetFramework", "net11.0"), new XElement("ImplicitUsings", "disable")),
                 new XElement("ItemGroup", new XElement("Reference", new XAttribute("Include", "Mulse.Modules"),
                     new XElement("HintPath", typeof(IOrchestrationAugmentModule).Assembly.Location), new XElement("Private", "false")))))
                 .Save(project);
@@ -60,7 +60,7 @@ public sealed class BizTalkOrchestrationScaffoldTests
                 throw;
             }
             Assert.True(process.ExitCode == 0, await stdout + await stderr);
-            var assembly = Assembly.Load(File.ReadAllBytes(Path.Combine(directory, "bin", "Debug", "net10.0", "Stub.dll")));
+            var assembly = Assembly.Load(File.ReadAllBytes(Path.Combine(directory, "bin", "Debug", "net11.0", "Stub.dll")));
             var modules = assembly.GetTypes().Where(type => typeof(IOrchestrationAugmentModule).IsAssignableFrom(type))
                 .Select(type => (IOrchestrationAugmentModule)Activator.CreateInstance(type)!).ToArray();
             Assert.Equal(2, modules.Length);
