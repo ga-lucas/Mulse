@@ -241,8 +241,8 @@ public sealed class NativeMessageFactTests : IDisposable
         Assert.Equal("cd", Eval(Op(NativeExpressionKind.Substring, Lit("abcd"), Lit(2))));
         Assert.Equal("", Eval(Op(NativeExpressionKind.Substring, Lit("abcd"), Lit(4))));
         Assert.Equal("bc", Eval(Op(NativeExpressionKind.SubstringLength, Lit("abcd"), Lit(1), Lit(2))));
-        Assert.True((bool)Eval(Op(NativeExpressionKind.RegexIsMatch, Lit("x@y.com"), Lit("@[a-z]+\\."))));
-        Assert.False((bool)Eval(Op(NativeExpressionKind.RegexIsMatch, Lit("abc"), Lit("^b"))));
+        Assert.True(Assert.IsType<bool>(Eval(Op(NativeExpressionKind.RegexIsMatch, Lit("x@y.com"), Lit("@[a-z]+\\.")))));
+        Assert.False(Assert.IsType<bool>(Eval(Op(NativeExpressionKind.RegexIsMatch, Lit("abc"), Lit("^b")))));
         Assert.Equal(12, Eval(Op(NativeExpressionKind.ToInt32, Lit("12"))));
         Assert.Equal(0, Eval(Op(NativeExpressionKind.ToInt32, new NativeExpression { Literal = new(NativeScalarType.Null, "") })));
         Assert.Equal(1, Eval(Op(NativeExpressionKind.ToInt32, Lit(true))));

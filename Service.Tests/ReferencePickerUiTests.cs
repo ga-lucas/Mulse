@@ -90,7 +90,14 @@ public sealed class ReferencePickerUiTests
     {
         public object?[]? Arguments { get; private set; }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-        public ValueTask<T> InvokeAsync<T>(string identifier, object?[]? args) => InvokeAsync<T>(identifier, default, args);
+
+        public ValueTask<T> InvokeAsync<T>(string identifier, object?[]? args)
+        {
+            Assert.Equal("insertReference", identifier);
+            Arguments = args;
+            return fail ? ValueTask.FromException<T>(new JSException("fixture unavailable")) : ValueTask.FromResult((T)(object)"prefix {{config:name}} suffix");
+        }
+
         public ValueTask<T> InvokeAsync<T>(string identifier, CancellationToken cancellationToken, object?[]? args)
         {
             Assert.Equal("insertReference", identifier);

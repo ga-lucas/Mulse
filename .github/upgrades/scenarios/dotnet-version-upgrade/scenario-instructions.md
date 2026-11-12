@@ -33,3 +33,4 @@
 ## Build Tool Decisions
 - **Mulse.ServiceDefaults.csproj**: `dotnet build` (SDK-style multi-target project; validates each TFM from disk).
 - **Mulse.Ui.csproj**: `dotnet build` (SDK-style .NET 11 web project; targeted CLI build validates its project reference independently of not-yet-retargeted test consumers).
+- **Service.Tests.csproj**: `dotnet build` and `dotnet test` (SDK-style xUnit project; Visual Studio build/test tools currently report false framework mismatches for the multi-targeted ServiceDefaults dependency).

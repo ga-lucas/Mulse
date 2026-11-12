@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -150,22 +151,25 @@ public sealed class XmlCustomFunctionUiTests
     [Fact]
     public async Task Editor_AppliesAnAiReply_SavesItAndKeepsStubsFailClosedUntilThen()
     {
-        var editor = new XmlCustomFunctionsEditor();
+        await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
         var map = MapWith(Stub("FormatDate", "raw"));
-        editor.Map = map;
         var changes = 0;
-        editor.Changed = EventCallback.Factory.Create(this, () => { changes++; });
+        var editor = await RenderEditorAsync(renderer, map, EventCallback.Factory.Create(this, () => { changes++; }));
 
-        Reply(editor, map.CustomFunctions[0]).GetType().GetProperty("Text")!.SetValue(Reply(editor, map.CustomFunctions[0]), "```\nDateReformat($raw, 'yyyyMMdd', 'yyyy-MM-dd')\n```");
-        await (Task)Invoke(editor, "ApplyReplyAsync", map.CustomFunctions[0])!;
-        Assert.Null(Field(editor, "_error").GetValue(editor));
-        Assert.Equal(1, changes);
-        Assert.NotNull(map.CustomFunctions[0].Body);
-        Assert.Equal("DateReformat($raw, 'yyyyMMdd', 'yyyy-MM-dd')", XmlFormula.Format(map.CustomFunctions[0].Body!));
+        await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            Reply(editor, map.CustomFunctions[0]).GetType().GetProperty("Text")!.SetValue(Reply(editor, map.CustomFunctions[0]), "```\nDateReformat($raw, 'yyyyMMdd', 'yyyy-MM-dd')\n```");
+            await (Task)Invoke(editor, "ApplyReplyAsync", map.CustomFunctions[0])!;
+            Assert.Null(Field(editor, "_error").GetValue(editor));
+            Assert.Equal(1, changes);
+            Assert.NotNull(map.CustomFunctions[0].Body);
+            Assert.Equal("DateReformat($raw, 'yyyyMMdd', 'yyyy-MM-dd')", XmlFormula.Format(map.CustomFunctions[0].Body!));
 
-        await (Task)Invoke(editor, "ClearBodyAsync", map.CustomFunctions[0])!;
-        Assert.Null(map.CustomFunctions[0].Body);
-        Assert.Equal(2, changes);
+            await (Task)Invoke(editor, "ClearBodyAsync", map.CustomFunctions[0])!;
+            Assert.Null(map.CustomFunctions[0].Body);
+            Assert.Equal(2, changes);
+        });
     }
 
     [Theory]
@@ -175,42 +179,50 @@ public sealed class XmlCustomFunctionUiTests
     [InlineData("CANNOT_EXPRESS: too complex")]
     public async Task Editor_RejectsInvalidRepliesWithoutChangingTheStub(string reply)
     {
-        var editor = new XmlCustomFunctionsEditor();
+        await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
         var map = MapWith(Stub("FormatDate", "raw"));
-        editor.Map = map;
-        Reply(editor, map.CustomFunctions[0]).GetType().GetProperty("Text")!.SetValue(Reply(editor, map.CustomFunctions[0]), reply);
-        await (Task)Invoke(editor, "ApplyReplyAsync", map.CustomFunctions[0])!;
-        Assert.Null(map.CustomFunctions[0].Body);
-        Assert.False(string.IsNullOrEmpty((string?)Field(editor, "_error").GetValue(editor)));
+        var editor = await RenderEditorAsync(renderer, map);
+        await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            Reply(editor, map.CustomFunctions[0]).GetType().GetProperty("Text")!.SetValue(Reply(editor, map.CustomFunctions[0]), reply);
+            await (Task)Invoke(editor, "ApplyReplyAsync", map.CustomFunctions[0])!;
+            Assert.Null(map.CustomFunctions[0].Body);
+            Assert.False(string.IsNullOrEmpty((string?)Field(editor, "_error").GetValue(editor)));
+        });
     }
 
     [Fact]
     public async Task Editor_AddsRenamesParametersAndBlocksRemovingACalledFunction()
     {
-        var editor = new XmlCustomFunctionsEditor();
+        await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
         var map = MapWith();
-        editor.Map = map;
-        Field(editor, "_newName").SetValue(editor, "Greet");
-        await (Task)Invoke(editor, "AddAsync")!;
-        var function = Assert.Single(map.CustomFunctions);
-        Assert.Equal("Greet", function.Name);
+        var editor = await RenderEditorAsync(renderer, map);
+        await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            Field(editor, "_newName").SetValue(editor, "Greet");
+            await (Task)Invoke(editor, "AddAsync")!;
+            var function = Assert.Single(map.CustomFunctions);
+            Assert.Equal("Greet", function.Name);
 
-        await (Task)Invoke(editor, "SetParametersAsync", function, "first, second")!;
-        Assert.Equal(["first", "second"], function.Parameters.Select(parameter => parameter.Name));
-        await (Task)Invoke(editor, "SetParametersAsync", function, "first, first")!;
-        Assert.Equal(["first", "second"], function.Parameters.Select(parameter => parameter.Name));
-        Assert.NotNull(Field(editor, "_error").GetValue(editor));
+            await (Task)Invoke(editor, "SetParametersAsync", function, "first, second")!;
+            Assert.Equal(["first", "second"], function.Parameters.Select(parameter => parameter.Name));
+            await (Task)Invoke(editor, "SetParametersAsync", function, "first, first")!;
+            Assert.Equal(["first", "second"], function.Parameters.Select(parameter => parameter.Name));
+            Assert.NotNull(Field(editor, "_error").GetValue(editor));
 
-        Field(editor, "_newName").SetValue(editor, "Greet");
-        await (Task)Invoke(editor, "AddAsync")!;
-        Assert.Single(map.CustomFunctions);
+            Field(editor, "_newName").SetValue(editor, "Greet");
+            await (Task)Invoke(editor, "AddAsync")!;
+            Assert.Single(map.CustomFunctions);
 
-        map.Fields.Add(new() { TargetPath = "T", Expression = new() { Kind = "Custom", Name = "Greet", Arguments = [new() { Kind = "Constant", Constant = "a" }, new() { Kind = "Constant", Constant = "b" }] } });
-        await (Task)Invoke(editor, "RemoveAsync", function)!;
-        Assert.Single(map.CustomFunctions);
-        map.Fields.Clear();
-        await (Task)Invoke(editor, "RemoveAsync", function)!;
-        Assert.Empty(map.CustomFunctions);
+            map.Fields.Add(new() { TargetPath = "T", Expression = new() { Kind = "Custom", Name = "Greet", Arguments = [new() { Kind = "Constant", Constant = "a" }, new() { Kind = "Constant", Constant = "b" }] } });
+            await (Task)Invoke(editor, "RemoveAsync", function)!;
+            Assert.Single(map.CustomFunctions);
+            map.Fields.Clear();
+            await (Task)Invoke(editor, "RemoveAsync", function)!;
+            Assert.Empty(map.CustomFunctions);
+        });
     }
 
     [Fact]
@@ -277,6 +289,37 @@ public sealed class XmlCustomFunctionUiTests
     private static object Reply(object editor, XmlCustomFunctionViewModel function) => Invoke(editor, "Reply", function)!;
     private static FieldInfo Field(object target, string name) => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
     private static object? Invoke(object target, string name, params object?[] args) => target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(target, args);
+
+    private static async Task<XmlCustomFunctionsEditor> RenderEditorAsync(HtmlRenderer renderer, XmlMappingViewModel map, EventCallback changed = default)
+    {
+        XmlCustomFunctionsEditor? editor = null;
+        await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            await renderer.RenderComponentAsync<XmlCustomFunctionsEditorHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(XmlCustomFunctionsEditorHost.Map)] = map,
+                [nameof(XmlCustomFunctionsEditorHost.Changed)] = changed,
+                [nameof(XmlCustomFunctionsEditorHost.Capture)] = (Action<XmlCustomFunctionsEditor>)(component => editor = component)
+            }));
+        });
+        return Assert.IsType<XmlCustomFunctionsEditor>(editor);
+    }
+
+    private sealed class XmlCustomFunctionsEditorHost : ComponentBase
+    {
+        [Parameter] public XmlMappingViewModel Map { get; set; } = new();
+        [Parameter] public EventCallback Changed { get; set; }
+        [Parameter] public Action<XmlCustomFunctionsEditor>? Capture { get; set; }
+
+        protected override void BuildRenderTree(RenderTreeBuilder builder)
+        {
+            builder.OpenComponent<XmlCustomFunctionsEditor>(0);
+            builder.AddAttribute(1, nameof(XmlCustomFunctionsEditor.Map), Map);
+            builder.AddAttribute(2, nameof(XmlCustomFunctionsEditor.Changed), Changed);
+            builder.AddComponentReferenceCapture(3, component => Capture?.Invoke((XmlCustomFunctionsEditor)component));
+            builder.CloseComponent();
+        }
+    }
 
     private sealed class NotFound : HttpMessageHandler
     {
