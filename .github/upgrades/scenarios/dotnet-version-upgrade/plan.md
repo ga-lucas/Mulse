@@ -28,7 +28,7 @@ Begin library consolidation only after all application/host projects and `Servic
 | Option | Selected | Why |
 |--------|----------|-----|
 | Upgrade Strategy | Top-Down | The four-level dependency graph and 12-project solution favor staged application upgrades. |
-| Unsupported Packages | Resolve Inline | The single incompatible package is used by two projects, a small enough scope to resolve during the upgrade. |
+| Unsupported Packages | Resolve Inline | Replace the incompatible Visual Studio container-tools package with SDK container publishing, preserving a Windows container path. |
 | Unsupported API Handling | Fix Inline | The assessment reports 1 binary- and 449 source-incompatible API findings; fixing inline avoids deferred stubs and follow-up work. |
 
 ## Tasks
@@ -71,9 +71,9 @@ Multi-target `Mulse.CompatibilityPack`, `Mulse.Billing`, `Mulse.Dbms.SqlServer`,
 
 ### 05-service: Upgrade Service
 
-Retarget `Service` to `net11.0` and apply the assessment's recommended package updates. Resolve the incompatible `Microsoft.VisualStudio.Azure.Containers.Tools.Targets` package in `Service` and `Service.Tests`; the test project already targets `net11.0` from the UI upgrade task. Address the 254 API findings reported for `Service`, including behavioral changes, and rerun `Service.Tests` to verify its references now resolve to the upgraded app and libraries. Update `Service/Modules/ModuleCatalog.cs` to prefer each plugin's `net11.0` output subdirectory for the upgraded host, while retaining fallback for persisted or legacy direct plugin assembly paths.
+Retarget `Service` to `net11.0` and apply its direct package recommendations. Replace the incompatible Visual Studio container-tools dependency with the SDK's `PublishContainer` support, preserving the existing Windows-container workflow and updating the Dockerfile for manual builds. Review the assessment's API findings against the actual .NET 11 build and behavior, fixing verified incompatibilities without editing generated files. Update `ModuleCatalog` to select the matching `net11.0` plugin assemblies while retaining fallback for persisted or legacy paths.
 
-**Done when**: `Service` builds for `net11.0`, the incompatible package is resolved in both projects, `ModuleCatalog` selects matching `net11.0` plugin outputs without breaking legacy paths, and the full `Service.Tests` suite passes against `Service` and `Mulse.Ui` on `net11.0`.
+**Done when**: `Service` builds for `net11.0` without warnings; SDK container publishing works with a supported Windows base image and the unsupported package is removed; the Dockerfile uses .NET 11 images; `ModuleCatalog` selects matching plugin assemblies without breaking legacy paths; and the full `Service.Tests` suite passes against `Service` and `Mulse.Ui` on `net11.0`.
 
 ### 06-library-consolidation: Retarget shared libraries to .NET 11
 

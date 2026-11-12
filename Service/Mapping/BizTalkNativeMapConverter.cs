@@ -50,6 +50,10 @@ public static class BizTalkNativeMapConverter
         "OptimizeValueMapping", "GenerateDefaultFixedNodes", "PreserveSequenceOrder", "IgnoreNamespacesForLinks", "method", "CopyPIs", "xmlVersion", "UseXSLTransform", "XsltEngine"
     };
 
+    /// <param name="mapXml">The BizTalk mapsource XML.</param>
+    /// <param name="sourceSchemas">The source XSD documents available to the map.</param>
+    /// <param name="targetSchemas">The target XSD documents available to the map.</param>
+    /// <param name="cancellationToken">A token used to cancel the conversion.</param>
     /// <param name="embedSchemas">Persist the XSD documents in the mapping (default). Disable for compact derived choices; the persisted map never validates against them either way, and keeps its source-root assertion.</param>
     public static NativeMapConversion Convert(string mapXml, IReadOnlyList<string> sourceSchemas, IReadOnlyList<string> targetSchemas,
         CancellationToken cancellationToken = default, bool embedSchemas = true)
@@ -891,7 +895,7 @@ public static class BizTalkNativeMapConverter
                 var value = (string?)parameter.Attribute("Value") ?? throw new ArgumentException($"Functoid {id} has an input without a value. No partial native map was produced.");
                 switch ((string?)parameter.Attribute("Type"))
                 {
-                    case "constant": return (Constant: value, From: (string?)null);
+                    case "constant": return (Constant: (string?)value, From: (string?)null);
                     case "link":
                         linkCount++;
                         return linksById.TryGetValue(value, out var link) && (string?)link.Attribute("LinkTo") == idText

@@ -1,21 +1,22 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Microsoft.Data.SqlClient (Mulse.Dbms.SqlServer) requires ICU globalization data for
          connection encryption negotiation; invariant mode is incompatible with it. -->
     <InvariantGlobalization>false</InvariantGlobalization>
     <UserSecretsId>dotnet-Service-eb4daf54-1acc-46ea-a1e3-323c25c4136b</UserSecretsId>
-    <DockerDefaultTargetOS>Windows</DockerDefaultTargetOS>
+    <ContainerRepository>mulse-service</ContainerRepository>
+    <ContainerBaseImage>mcr.microsoft.com/dotnet/aspnet:11.0-nanoserver-ltsc2025</ContainerBaseImage>
+    <ContainerRuntimeIdentifier>win-x64</ContainerRuntimeIdentifier>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
-    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.24.2-preview.1" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0" />
   </ItemGroup>
 
   <ItemGroup>

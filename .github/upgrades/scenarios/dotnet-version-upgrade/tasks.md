@@ -1,7 +1,7 @@
 # Migration Progress
 
-**Progress**: 11/13 tasks complete <progress value="85" max="100"></progress> 85%
-**Status**: Not Started
+**Progress**: 13/13 tasks complete <progress value="100" max="100"></progress> 100%
+**Status**: Complete
 
 ## Tasks
 
@@ -16,7 +16,7 @@
 - ✅ 04-service-dependencies: Prepare Service library dependencies ([Content](tasks/04-service-dependencies/task.md), [Progress](tasks/04-service-dependencies/progress-details.md))
   - ✅ 04.01-modules: Multi-target Mulse.Modules and resolve its package/API findings ([Content](tasks/04.01-modules/task.md), [Progress](tasks/04.01-modules/progress-details.md))
   - ✅ 04.02-dependent-libraries: Multi-target the six libraries that depend on Mulse.Modules ([Content](tasks/04.02-dependent-libraries/task.md), [Progress](tasks/04.02-dependent-libraries/progress-details.md))
-- 🔲 06-library-consolidation: Retarget shared libraries to .NET 11 ([Content](tasks/06-library-consolidation/task.md))
-- 🔲 07-validation: Validate the full solution ([Content](tasks/07-validation/task.md))
+- ✅ 05-service: Upgrade Service ([Content](tasks/05-service/task.md), [Progress](tasks/05-service/progress-details.md))
+  - ✅ 05.01-service-container: Retarget Service and replace container tooling ([Content](tasks/05.01-service-container/task.md), [Progress](tasks/05.01-service-container/progress-details.md))
 
 **Legend**: ✅ Complete | 🔄 In Progress | 🔲 Pending | ⚠️ Blocked | ❌ Failed
