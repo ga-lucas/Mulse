@@ -29,3 +29,6 @@
 - Keep multi-targeted libraries consumable by both net10.0 and net11.0 projects until all applications and their tests have moved to net11.0.
 - Consolidate libraries to net11.0 only after all applications are upgraded; remove only target-framework-specific compilation branches.
 - Validate each application task and its tests, then run a full solution build and test suite at the end.
+
+## Build Tool Decisions
+- **Mulse.ServiceDefaults.csproj**: `dotnet build` (SDK-style multi-target project; validates each TFM from disk).
