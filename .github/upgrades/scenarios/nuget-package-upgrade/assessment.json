@@ -1,0 +1,672 @@
+{
+  "settings": {
+    "components": {
+      "code": true,
+      "binaries": false
+    },
+    "targetId": ""
+  },
+  "analysisStartTime": "2026-11-12T19:16:10.9840845Z",
+  "analysisEndTime": "2026-11-12T19:16:16.2499109Z",
+  "privacyModeHelpUrl": "https://go.microsoft.com/fwlink/?linkid=2270980",
+  "stats": {
+    "summary": {
+      "projects": 12,
+      "issues": 1,
+      "incidents": 11,
+      "effort": 0
+    },
+    "charts": {
+      "severity": {
+        "Mandatory": 0,
+        "Optional": 0,
+        "Potential": 0,
+        "Information": 11
+      },
+      "category": {
+        "Pkg": 11
+      }
+    }
+  },
+  "projects": [
+    {
+      "path": "Mulse.AppHost\\Mulse.AppHost.csproj",
+      "startingProject": true,
+      "issues": 0,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Mulse.AppHost",
+        "projectKind": "DotNetCoreApp",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 1,
+        "numberOfCodeFiles": 1,
+        "linesTotal": 9,
+        "linesOfCode": 9,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [],
+      "features": []
+    },
+    {
+      "path": "Mulse.Billing\\Mulse.Billing.csproj",
+      "startingProject": true,
+      "issues": 0,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Mulse.Billing",
+        "projectKind": "ClassLibrary",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 2,
+        "numberOfCodeFiles": 2,
+        "linesTotal": 75,
+        "linesOfCode": 75,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [],
+      "features": []
+    },
+    {
+      "path": "Mulse.CompatibilityPack\\Mulse.CompatibilityPack.csproj",
+      "startingProject": true,
+      "issues": 0,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Mulse.CompatibilityPack",
+        "projectKind": "ClassLibrary",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 31,
+        "numberOfCodeFiles": 31,
+        "linesTotal": 3861,
+        "linesOfCode": 3861,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [],
+      "features": []
+    },
+    {
+      "path": "Mulse.Dbms.SqlServer\\Mulse.Dbms.SqlServer.csproj",
+      "startingProject": true,
+      "issues": 1,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Mulse.Dbms.SqlServer",
+        "projectKind": "ClassLibrary",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 4,
+        "numberOfCodeFiles": 4,
+        "linesTotal": 378,
+        "linesOfCode": 378,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [
+        {
+          "incidentId": "d3ca50fe-5552-43a7-86f6-a91d67f2e519",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027System.Security.Cryptography.Pkcs\u0027 10.0.15; proposed upgrade to 11.0.0.",
+          "projectPath": "Mulse.Dbms.SqlServer\\Mulse.Dbms.SqlServer.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "System.Security.Cryptography.Pkcs, 10.0.15",
+              "protected": "System.Security.Cryptography.Pkcs, 10.0.15"
+            },
+            "kind": "File",
+            "path": "Mulse.Dbms.SqlServer\\Mulse.Dbms.SqlServer.csproj",
+            "snippet": "System.Security.Cryptography.Pkcs, 10.0.15",
+            "protectedSnippet": "System.Security.Cryptography.Pkcs, 10.0.15",
+            "label": "System.Security.Cryptography.Pkcs 10.0.15",
+            "properties": {
+              "PackageId": "System.Security.Cryptography.Pkcs",
+              "PackageVersion": "10.0.15",
+              "PackageNewVersion": "11.0.0",
+              "PackageReplacements": null
+            }
+          }
+        }
+      ],
+      "features": []
+    },
+    {
+      "path": "Mulse.Excel\\Mulse.Excel.csproj",
+      "startingProject": true,
+      "issues": 1,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Mulse.Excel",
+        "projectKind": "ClassLibrary",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 4,
+        "numberOfCodeFiles": 4,
+        "linesTotal": 268,
+        "linesOfCode": 268,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [
+        {
+          "incidentId": "52471ea6-02aa-4396-90f0-642197c97080",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027System.Security.Cryptography.Xml\u0027 10.0.15; proposed upgrade to 11.0.0.",
+          "projectPath": "Mulse.Excel\\Mulse.Excel.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "System.Security.Cryptography.Xml, 10.0.15",
+              "protected": "System.Security.Cryptography.Xml, 10.0.15"
+            },
+            "kind": "File",
+            "path": "Mulse.Excel\\Mulse.Excel.csproj",
+            "snippet": "System.Security.Cryptography.Xml, 10.0.15",
+            "protectedSnippet": "System.Security.Cryptography.Xml, 10.0.15",
+            "label": "System.Security.Cryptography.Xml 10.0.15",
+            "properties": {
+              "PackageId": "System.Security.Cryptography.Xml",
+              "PackageVersion": "10.0.15",
+              "PackageNewVersion": "11.0.0",
+              "PackageReplacements": null
+            }
+          }
+        },
+        {
+          "incidentId": "a3951766-4289-430f-aa3a-7480b3e7233d",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027NPOI\u0027 2.7.5; proposed upgrade to 2.8.1.",
+          "projectPath": "Mulse.Excel\\Mulse.Excel.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "NPOI, 2.7.5",
+              "protected": "NPOI, 2.7.5"
+            },
+            "kind": "File",
+            "path": "Mulse.Excel\\Mulse.Excel.csproj",
+            "snippet": "NPOI, 2.7.5",
+            "protectedSnippet": "NPOI, 2.7.5",
+            "label": "NPOI 2.7.5",
+            "properties": {
+              "PackageId": "NPOI",
+              "PackageVersion": "2.7.5",
+              "PackageNewVersion": "2.8.1",
+              "PackageReplacements": null
+            }
+          }
+        },
+        {
+          "incidentId": "5bebbc82-1cf1-44ca-8a86-203ab4096e45",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027SixLabors.ImageSharp\u0027 3.2.0; proposed upgrade to 4.1.3.",
+          "projectPath": "Mulse.Excel\\Mulse.Excel.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "SixLabors.ImageSharp, 3.2.0",
+              "protected": "SixLabors.ImageSharp, 3.2.0"
+            },
+            "kind": "File",
+            "path": "Mulse.Excel\\Mulse.Excel.csproj",
+            "snippet": "SixLabors.ImageSharp, 3.2.0",
+            "protectedSnippet": "SixLabors.ImageSharp, 3.2.0",
+            "label": "SixLabors.ImageSharp 3.2.0",
+            "properties": {
+              "PackageId": "SixLabors.ImageSharp",
+              "PackageVersion": "3.2.0",
+              "PackageNewVersion": "4.1.3",
+              "PackageReplacements": null
+            }
+          }
+        }
+      ],
+      "features": []
+    },
+    {
+      "path": "Mulse.Hl7\\Mulse.Hl7.csproj",
+      "startingProject": true,
+      "issues": 0,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Mulse.Hl7",
+        "projectKind": "ClassLibrary",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 7,
+        "numberOfCodeFiles": 7,
+        "linesTotal": 482,
+        "linesOfCode": 482,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [],
+      "features": []
+    },
+    {
+      "path": "Mulse.Modules\\Mulse.Modules.csproj",
+      "startingProject": true,
+      "issues": 1,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Mulse.Modules",
+        "projectKind": "ClassLibrary",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 182,
+        "numberOfCodeFiles": 182,
+        "linesTotal": 11028,
+        "linesOfCode": 11028,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [
+        {
+          "incidentId": "c4bc59d7-5e4c-4851-af8e-57879fdfc8dd",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027Microsoft.Extensions.DependencyInjection\u0027 10.0.15; proposed upgrade to 11.0.0.",
+          "projectPath": "Mulse.Modules\\Mulse.Modules.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "Microsoft.Extensions.DependencyInjection, 10.0.15",
+              "protected": "Microsoft.Extensions.DependencyInjection, 10.0.15"
+            },
+            "kind": "File",
+            "path": "Mulse.Modules\\Mulse.Modules.csproj",
+            "snippet": "Microsoft.Extensions.DependencyInjection, 10.0.15",
+            "protectedSnippet": "Microsoft.Extensions.DependencyInjection, 10.0.15",
+            "label": "Microsoft.Extensions.DependencyInjection 10.0.15",
+            "properties": {
+              "PackageId": "Microsoft.Extensions.DependencyInjection",
+              "PackageVersion": "10.0.15",
+              "PackageNewVersion": "11.0.0",
+              "PackageReplacements": null
+            }
+          }
+        },
+        {
+          "incidentId": "50d2d511-0fcf-4cfb-be01-23da73282846",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027Microsoft.Extensions.Http\u0027 10.0.15; proposed upgrade to 11.0.0.",
+          "projectPath": "Mulse.Modules\\Mulse.Modules.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "Microsoft.Extensions.Http, 10.0.15",
+              "protected": "Microsoft.Extensions.Http, 10.0.15"
+            },
+            "kind": "File",
+            "path": "Mulse.Modules\\Mulse.Modules.csproj",
+            "snippet": "Microsoft.Extensions.Http, 10.0.15",
+            "protectedSnippet": "Microsoft.Extensions.Http, 10.0.15",
+            "label": "Microsoft.Extensions.Http 10.0.15",
+            "properties": {
+              "PackageId": "Microsoft.Extensions.Http",
+              "PackageVersion": "10.0.15",
+              "PackageNewVersion": "11.0.0",
+              "PackageReplacements": null
+            }
+          }
+        },
+        {
+          "incidentId": "2592cc5f-df45-42b2-a784-f90a6d1e55d7",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027System.Memory.Data\u0027 10.0.15; proposed upgrade to 11.0.0.",
+          "projectPath": "Mulse.Modules\\Mulse.Modules.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "System.Memory.Data, 10.0.15",
+              "protected": "System.Memory.Data, 10.0.15"
+            },
+            "kind": "File",
+            "path": "Mulse.Modules\\Mulse.Modules.csproj",
+            "snippet": "System.Memory.Data, 10.0.15",
+            "protectedSnippet": "System.Memory.Data, 10.0.15",
+            "label": "System.Memory.Data 10.0.15",
+            "properties": {
+              "PackageId": "System.Memory.Data",
+              "PackageVersion": "10.0.15",
+              "PackageNewVersion": "11.0.0",
+              "PackageReplacements": null
+            }
+          }
+        }
+      ],
+      "features": []
+    },
+    {
+      "path": "Mulse.SamplePlugin\\Mulse.SamplePlugin.csproj",
+      "startingProject": true,
+      "issues": 0,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Mulse.SamplePlugin",
+        "projectKind": "ClassLibrary",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 11,
+        "numberOfCodeFiles": 11,
+        "linesTotal": 464,
+        "linesOfCode": 464,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [],
+      "features": []
+    },
+    {
+      "path": "Mulse.ServiceDefaults\\Mulse.ServiceDefaults.csproj",
+      "startingProject": true,
+      "issues": 1,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Mulse.ServiceDefaults",
+        "projectKind": "ClassLibrary",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 1,
+        "numberOfCodeFiles": 1,
+        "linesTotal": 127,
+        "linesOfCode": 127,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [
+        {
+          "incidentId": "6aab7f08-2039-4928-bc79-e273d2226419",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027OpenTelemetry.Exporter.OpenTelemetryProtocol\u0027 1.20.1; proposed upgrade to 1.21.0.",
+          "projectPath": "Mulse.ServiceDefaults\\Mulse.ServiceDefaults.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "OpenTelemetry.Exporter.OpenTelemetryProtocol, 1.20.1",
+              "protected": "OpenTelemetry.Exporter.OpenTelemetryProtocol, 1.20.1"
+            },
+            "kind": "File",
+            "path": "Mulse.ServiceDefaults\\Mulse.ServiceDefaults.csproj",
+            "snippet": "OpenTelemetry.Exporter.OpenTelemetryProtocol, 1.20.1",
+            "protectedSnippet": "OpenTelemetry.Exporter.OpenTelemetryProtocol, 1.20.1",
+            "label": "OpenTelemetry.Exporter.OpenTelemetryProtocol 1.20.1",
+            "properties": {
+              "PackageId": "OpenTelemetry.Exporter.OpenTelemetryProtocol",
+              "PackageVersion": "1.20.1",
+              "PackageNewVersion": "1.21.0",
+              "PackageReplacements": null
+            }
+          }
+        },
+        {
+          "incidentId": "9da6dd5f-d531-4a6f-980b-d33ffc61c8e4",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027OpenTelemetry.Extensions.Hosting\u0027 1.20.1; proposed upgrade to 1.21.0.",
+          "projectPath": "Mulse.ServiceDefaults\\Mulse.ServiceDefaults.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "OpenTelemetry.Extensions.Hosting, 1.20.1",
+              "protected": "OpenTelemetry.Extensions.Hosting, 1.20.1"
+            },
+            "kind": "File",
+            "path": "Mulse.ServiceDefaults\\Mulse.ServiceDefaults.csproj",
+            "snippet": "OpenTelemetry.Extensions.Hosting, 1.20.1",
+            "protectedSnippet": "OpenTelemetry.Extensions.Hosting, 1.20.1",
+            "label": "OpenTelemetry.Extensions.Hosting 1.20.1",
+            "properties": {
+              "PackageId": "OpenTelemetry.Extensions.Hosting",
+              "PackageVersion": "1.20.1",
+              "PackageNewVersion": "1.21.0",
+              "PackageReplacements": null
+            }
+          }
+        },
+        {
+          "incidentId": "a325d4b2-61a4-4784-ac4a-a626bfd38a29",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027OpenTelemetry.Instrumentation.Runtime\u0027 1.20.1; proposed upgrade to 1.21.0.",
+          "projectPath": "Mulse.ServiceDefaults\\Mulse.ServiceDefaults.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "OpenTelemetry.Instrumentation.Runtime, 1.20.1",
+              "protected": "OpenTelemetry.Instrumentation.Runtime, 1.20.1"
+            },
+            "kind": "File",
+            "path": "Mulse.ServiceDefaults\\Mulse.ServiceDefaults.csproj",
+            "snippet": "OpenTelemetry.Instrumentation.Runtime, 1.20.1",
+            "protectedSnippet": "OpenTelemetry.Instrumentation.Runtime, 1.20.1",
+            "label": "OpenTelemetry.Instrumentation.Runtime 1.20.1",
+            "properties": {
+              "PackageId": "OpenTelemetry.Instrumentation.Runtime",
+              "PackageVersion": "1.20.1",
+              "PackageNewVersion": "1.21.0",
+              "PackageReplacements": null
+            }
+          }
+        }
+      ],
+      "features": []
+    },
+    {
+      "path": "Mulse.Ui\\Mulse.Ui.csproj",
+      "startingProject": true,
+      "issues": 0,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Mulse.Ui",
+        "projectKind": "AspNetCore",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 124,
+        "numberOfCodeFiles": 68,
+        "linesTotal": 13832,
+        "linesOfCode": 5179,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [],
+      "features": []
+    },
+    {
+      "path": "Service\\Service.csproj",
+      "startingProject": true,
+      "issues": 0,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Service",
+        "projectKind": "AspNetCore",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 411,
+        "numberOfCodeFiles": 179,
+        "linesTotal": 137566,
+        "linesOfCode": 16924,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [],
+      "features": []
+    },
+    {
+      "path": "Service.Tests\\Service.Tests.csproj",
+      "startingProject": true,
+      "issues": 1,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "Service.Tests",
+        "projectKind": "DotNetCoreApp",
+        "frameworks": [
+          "net11.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": true,
+        "numberOfFiles": 158,
+        "numberOfCodeFiles": 156,
+        "linesTotal": 31293,
+        "linesOfCode": 28654,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [
+        {
+          "incidentId": "bfc1999e-3827-49ce-b978-1236081b451e",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027Microsoft.NET.Test.Sdk\u0027 18.11.0; proposed upgrade to 18.12.0.",
+          "projectPath": "Service.Tests\\Service.Tests.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "Microsoft.NET.Test.Sdk, 18.11.0",
+              "protected": "Microsoft.NET.Test.Sdk, 18.11.0"
+            },
+            "kind": "File",
+            "path": "Service.Tests\\Service.Tests.csproj",
+            "snippet": "Microsoft.NET.Test.Sdk, 18.11.0",
+            "protectedSnippet": "Microsoft.NET.Test.Sdk, 18.11.0",
+            "label": "Microsoft.NET.Test.Sdk 18.11.0",
+            "properties": {
+              "PackageId": "Microsoft.NET.Test.Sdk",
+              "PackageVersion": "18.11.0",
+              "PackageNewVersion": "18.12.0",
+              "PackageReplacements": null
+            }
+          }
+        }
+      ],
+      "features": []
+    }
+  ],
+  "rules": {
+    "Pkg.0001": {
+      "id": "Pkg.0001",
+      "isFeature": false,
+      "description": "Project references a package included in this upgrade.\n\nThe project references one of the packages being upgraded. This finding records the reference (current and proposed version) so the assessment lists every affected project even when no breaking API changes were detected.",
+      "label": "Project references an upgraded package",
+      "severity": "Information",
+      "effort": 0
+    }
+  }
+}
