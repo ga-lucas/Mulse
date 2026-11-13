@@ -1,4 +1,5 @@
 @page "/history"
+@page "/history/{FlowId}"
 @inject IMulseApiClient ApiClient
 
 <PageTitle>History | Mulse</PageTitle>
@@ -212,6 +213,9 @@
 </div>
 
 @code {
+    [Parameter] public string? FlowId { get; set; }
+    private bool _hasLoaded;
+    private string? _loadedFlowId;
     private string? _flowId;
     private IReadOnlyList<HistoryExecutionViewModel> _executions = [];
     private HistoryExecutionDetailViewModel? _detail;
@@ -240,7 +244,14 @@
         && !string.IsNullOrWhiteSpace(_deliveryEvidence)
         && _detail?.Deliveries.Any(delivery => delivery.Id == _confirmDeliveryId && delivery.State == "Unknown") == true;
 
-    protected override Task OnInitializedAsync() => LoadAsync();
+    protected override Task OnParametersSetAsync()
+    {
+        if (_hasLoaded && string.Equals(_loadedFlowId, FlowId, StringComparison.Ordinal)) return Task.CompletedTask;
+        _hasLoaded = true;
+        _loadedFlowId = FlowId;
+        _flowId = FlowId;
+        return LoadAsync();
+    }
 
     private Task LoadAsync() => Task.WhenAll(LoadExecutionsAsync(), LoadMessagesAsync());
 

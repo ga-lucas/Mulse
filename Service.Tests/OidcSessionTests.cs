@@ -41,6 +41,25 @@ public sealed class OidcSessionTests
         Assert.Equal("test-id-token", savedToken.Value);
     }
 
+    [Fact]
+    public async Task TicketReceived_WithoutProperties_CreatesEmptyTokenStorage()
+    {
+        var options = new OpenIdConnectOptions();
+        OidcSession.Configure(options);
+        var ticket = new AuthenticationTicket(new ClaimsPrincipal(new ClaimsIdentity("test")), "oidc");
+        var context = new TicketReceivedContext(new DefaultHttpContext(),
+            new AuthenticationScheme("oidc", null, typeof(OpenIdConnectHandler)), options, ticket)
+        {
+            Properties = null
+        };
+
+        await options.Events.TicketReceived(context);
+
+        Assert.NotNull(context.Properties);
+        Assert.Empty(context.Properties.GetTokens());
+        Assert.Same(ticket.Principal, context.Principal);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

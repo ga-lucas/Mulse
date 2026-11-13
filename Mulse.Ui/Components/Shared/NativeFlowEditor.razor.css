@@ -1,0 +1,17 @@
+.native-visual-editor { min-width: 0; margin: 0; padding: 1rem; border: 0; }
+.native-visual-editor > legend { font-weight: 700; }
+.native-visual-editor > p { max-width: 80rem; }
+.native-execution-options { margin: .75rem 0; }
+.native-visual-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(20rem, 26rem); gap: 1rem; align-items: start; }
+.native-graph-surface { min-width: 0; max-height: 65vh; overflow: auto; padding: 1rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: radial-gradient(circle at 1px 1px, var(--canvas-dot) 1px, transparent 0) 0 0 / 24px 24px, var(--surface-page); }
+.native-boundary { width: max-content; margin: 0 auto; padding: .5rem 1rem; border: 1px solid var(--border-subtle); border-radius: 2rem; background: var(--surface-panel); color: var(--text-secondary); font-size: .8rem; }
+.native-connector { text-align: center; color: var(--text-muted); font-size: 1.5rem; }
+.native-step-properties { min-width: 0; max-height: 65vh; overflow: auto; padding: 1rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-panel); }
+.native-step-properties h3 { margin-top: 0; }
+.native-structure-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
+.native-step-properties code { overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+    .native-visual-workspace { grid-template-columns: minmax(0, 1fr); }
+    .native-graph-surface { max-height: 55vh; }
+    .native-step-properties { max-height: none; overflow: visible; }
+}

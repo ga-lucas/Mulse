@@ -280,7 +280,34 @@ public sealed class HistoryRenderingTests
         });
     }
 
-    private static async Task RenderAsync(HistoryHandler handler, Func<History, Func<string>, Task> test)
+    [Fact]
+    public async Task History_FlowLinkFiltersFirstRequestAndReloadsWhenNavigatingBetweenFlows()
+    {
+        using var handler = new HistoryHandler();
+        await RenderAsync(handler, async (page, html) =>
+        {
+            Assert.Contains("/api/history/executions?take=50&flowId=orders%20%26%20billing", handler.Requests);
+            Assert.DoesNotContain("/api/history/executions?take=50", handler.Requests);
+            Assert.Contains("value=\"orders &amp; billing\"", html());
+            await InvokeAsync(page, "SelectExecutionAsync", "run-new");
+            await InvokeAsync(page, "InspectPayloadAsync", InboxId);
+            await page.SetParametersAsync(ParameterView.FromDictionary(new Dictionary<string, object?> { [nameof(History.FlowId)] = "other#flow" }));
+            Assert.Contains("/api/history/executions?take=50&flowId=other%23flow", handler.Requests);
+            Assert.Contains("value=\"other#flow\"", html());
+            Assert.DoesNotContain("Execution detail", html());
+            Assert.DoesNotContain(Secret, html());
+            SetField(page, "_flowId", "manual-filter");
+            var requests = handler.Requests.Count;
+            await page.SetParametersAsync(ParameterView.Empty);
+            Assert.Equal(requests, handler.Requests.Count);
+            Assert.Contains("value=\"manual-filter\"", html());
+            await page.SetParametersAsync(ParameterView.FromDictionary(new Dictionary<string, object?> { [nameof(History.FlowId)] = null }));
+            Assert.Contains("/api/history/executions?take=50", handler.Requests);
+            Assert.Equal(3, handler.Requests.Count(path => path == "/api/history/messages?take=50"));
+        }, flowId: "orders & billing");
+    }
+
+    private static async Task RenderAsync(HistoryHandler handler, Func<History, Func<string>, Task> test, string? flowId = null)
     {
         using var httpClient = new HttpClient(handler, disposeHandler: false) { BaseAddress = new Uri("http://localhost") };
         await using var services = new ServiceCollection().AddLogging()
@@ -291,7 +318,8 @@ public sealed class HistoryRenderingTests
             History? page = null;
             var rendered = await renderer.RenderComponentAsync<HistoryHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
             {
-                [nameof(HistoryHost.Capture)] = (Action<History>)(component => page = component)
+                [nameof(HistoryHost.Capture)] = (Action<History>)(component => page = component),
+                [nameof(HistoryHost.FlowId)] = flowId
             }));
             Assert.NotNull(page);
             await test(page, rendered.ToHtmlString);
@@ -310,11 +338,13 @@ public sealed class HistoryRenderingTests
     {
         [Parameter]
         public Action<History>? Capture { get; set; }
+        [Parameter] public string? FlowId { get; set; }
 
         protected override void BuildRenderTree(RenderTreeBuilder builder)
         {
             builder.OpenComponent<History>(0);
-            builder.AddComponentReferenceCapture(1, component => Capture?.Invoke((History)component));
+            builder.AddAttribute(1, nameof(History.FlowId), FlowId);
+            builder.AddComponentReferenceCapture(2, component => Capture?.Invoke((History)component));
             builder.CloseComponent();
         }
     }

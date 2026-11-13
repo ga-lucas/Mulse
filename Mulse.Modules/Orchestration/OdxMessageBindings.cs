@@ -11,6 +11,8 @@ public delegate Task<IntegrationBatch> OdxPortSender(FlowExecutionContext contex
 /// <summary>Explicit native message/map/port adapters; never loads a CLR type named by source expressions.</summary>
 public static partial class OdxMessageBindings
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
     [GeneratedRegex(@"\A\s*(?<type>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*System\.Type\.GetType\(\s*(?<selector>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\)\s*;\s*transform\s*\(\s*(?<output>[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*=\s*\k<type>\s*\(\s*(?<inputs>[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\)\s*;(?<properties>[\s\S]*)\z", RegexOptions.CultureInvariant, 100)]
     private static partial Regex DynamicTransform();
     [GeneratedRegex(@"\A\s*(?:(?://[^\n]*(?:\n|\z)|/\*[\s\S]*?\*/)\s*)*[A-Za-z_][A-Za-z0-9_]*\s*=\s*new\s+System\.Xml\.XmlDocument\s*\(", RegexOptions.CultureInvariant, 100)]
@@ -47,7 +49,7 @@ public static partial class OdxMessageBindings
             throw new NotSupportedException($"ODX node {node.Id} is not a supported complete GetType/transform statement. Nothing was bound.");
         var output = match.Groups["output"].Value;
         var properties = OdxExpressionCompiler.CompileMessageProperties(match.Groups["properties"].Value, output);
-        var configured = RenderDispatchDefinition.Read(JsonSerializer.Serialize(choices, JsonSerializerOptions.Web)).ToDictionary(choice => choice.Value, StringComparer.Ordinal);
+        var configured = RenderDispatchDefinition.Read(JsonSerializer.Serialize(choices, JsonOptions)).ToDictionary(choice => choice.Value, StringComparer.Ordinal);
         var inputs = match.Groups["inputs"].Value.Split(',').Select(input => input.Trim()).ToArray();
         if (inputs.Length > 32) throw new NotSupportedException("ODX dynamic maps accept at most 32 named inputs.");
         var selector = match.Groups["selector"].Value.Split('.');
@@ -109,7 +111,7 @@ public static partial class OdxMessageBindings
         ValidateName(inputMessage); ValidateName(outputMessage); ArgumentNullException.ThrowIfNull(invoker);
         if (stages.Count is < 1 or > 32) throw new ArgumentException("An explicit pipeline requires 1-32 ordered render-stage equivalents.");
         var frozen = stages.Select((stage, index) => new RenderDispatchCase { Value = index.ToString(System.Globalization.CultureInfo.InvariantCulture), Module = stage.Module, Settings = new(stage.Settings, StringComparer.OrdinalIgnoreCase) }).ToArray();
-        var validated = RenderDispatchDefinition.Read(JsonSerializer.Serialize(frozen, JsonSerializerOptions.Web));
+        var validated = RenderDispatchDefinition.Read(JsonSerializer.Serialize(frozen, JsonOptions));
         return new(async (_, frame, token) =>
         {
             var message = RequiredMessage(frame, inputMessage);

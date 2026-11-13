@@ -30,7 +30,9 @@ public sealed class FlowWorkspaceRenderingTests
         for (var index = 1; index <= 12; index++)
         {
             Assert.Contains($"href=\"/designer/flow-{index:00}\"", html);
+            Assert.Contains($"href=\"/history/flow-{index:00}\"", html);
         }
+        Assert.Equal(12, html.Split(">History</a>").Length - 1);
         Assert.Contains("stage-augment", html);
         Assert.Contains("stage-render", html);
         Assert.Contains("stage-deliver", html);
@@ -304,6 +306,7 @@ public sealed class FlowWorkspaceRenderingTests
         Assert.DoesNotContain("floating-panel-title\">Flow overview", html);
         Assert.DoesNotContain("floating-panel-title\">Properties", html);
         Assert.Contains("Create flow", html);
+        Assert.DoesNotContain(">History</a>", html);
         Assert.Contains("80%", html);
         Assert.Contains("data-node-type=\"render\"", html);
         Assert.Contains("data-node-type=\"parse\"", html);
@@ -314,6 +317,7 @@ public sealed class FlowWorkspaceRenderingTests
     public async Task Designer_RendersNativeRemoveButtonOnEveryNode()
     {
         var html = await RenderAsync<Designer>(flowId: "remove-test");
+        Assert.Matches("href=\"/history/remove-test\"[^>]*>History</a>", html);
         Assert.Equal(5, html.Split("class=\"node-remove\"").Length - 1);
         Assert.Equal(10, html.Split("<foreignObject").Length - 1);
         Assert.Equal(2, html.Split("class=\"node-port input-port\"").Length - 1);

@@ -56,7 +56,7 @@ public sealed class OdxDurableExecutor(IFlowOrchestrationStateStore store, TimeP
         var checkpoint = await store.GetAsync(frame.Context.FlowId, correlationKey, cancellationToken).ConfigureAwait(false);
         var persisted = checkpoint is not null;
         OdxDurableState state;
-        var instanceId = checkpoint?.InstanceId ?? Guid.CreateVersion7().ToString();
+        var instanceId = checkpoint?.InstanceId ?? Execution.OrchestrationInstanceId.Create();
         var receipts = checkpoint?.SourceReceipts.ToList() ?? [];
         if (checkpoint is null)
         {

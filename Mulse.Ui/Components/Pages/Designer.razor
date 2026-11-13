@@ -14,11 +14,15 @@
             <h1>@(string.IsNullOrWhiteSpace(_flowName) ? IsExistingFlow ? FlowId : "New flow" : _flowName)</h1>
         </div>
         <div class="designer-topbar-actions" role="group" aria-label="Flow actions">
+            @if (IsExistingFlow)
+            {
+                <a class="secondary-button" href="@($"/history/{Uri.EscapeDataString(FlowId!)}")">History</a>
+            }
             <button class="secondary-button @(_showSamplePanel ? "active" : null)" aria-expanded="@(_showSamplePanel ? "true" : "false")" @onclick="() => { SetMappingWorkspace(false); ToggleSamplePanel(); }">Add sample data</button>
             <button class="secondary-button @(_showBizTalkPanel ? "active" : null)" aria-expanded="@(_showBizTalkPanel ? "true" : "false")" @onclick="() => { SetMappingWorkspace(false); ToggleBizTalkPanel(); }">Import from BizTalk</button>
             <button class="secondary-button" @onclick="RefreshCatalogAsync" disabled="@_isAnalyzingSample">Refresh modules</button>
-            <button class="secondary-button" @onclick="AutoLayout" disabled="@_showMappingDesigner">Auto layout</button>
-            <button class="secondary-button" @onclick="ClearCanvas" disabled="@_showMappingDesigner">Clear canvas</button>
+            <button class="secondary-button" @onclick="AutoLayout" disabled="@(_showMappingDesigner || _showAugmentDesigner)">Auto layout</button>
+            <button class="secondary-button" @onclick="ClearCanvas" disabled="@(_showMappingDesigner || _showAugmentDesigner)">Clear canvas</button>
         </div>
     </header>
 
@@ -37,11 +41,12 @@
         <FlowCheckpoints @key="FlowId" FlowId="@FlowId" AllowRelease="@(_enabled && _migration is null)" />
     }
     <div class="workspace-tabs" role="tablist" aria-label="Designer workspace">
-        <button @ref="_flowTab" id="flow-workspace-tab" role="tab" type="button" aria-selected="@(!_showMappingDesigner ? "true" : "false")" aria-controls="flow-workspace" tabindex="@(!_showMappingDesigner ? 0 : -1)" @onclick="() => SetMappingWorkspace(false)" @onkeydown="args => HandleWorkspaceKeyAsync(args, false)">Flow</button>
-        <button @ref="_mappingTab" id="mapping-workspace-tab" role="tab" type="button" aria-selected="@(_showMappingDesigner ? "true" : "false")" aria-controls="mapping-workspace" tabindex="@(_showMappingDesigner ? 0 : -1)" @onclick="() => SetMappingWorkspace(true)" @onkeydown="args => HandleWorkspaceKeyAsync(args, true)">Mapping</button>
+        <button @ref="_flowTab" id="flow-workspace-tab" role="tab" type="button" aria-selected="@(!_showMappingDesigner && !_showAugmentDesigner ? "true" : "false")" aria-controls="flow-workspace" tabindex="@(!_showMappingDesigner && !_showAugmentDesigner ? 0 : -1)" @onclick="() => SetMappingWorkspace(false)" @onkeydown="args => HandleWorkspaceKeyAsync(args, 0)">Flow</button>
+        <button @ref="_mappingTab" id="mapping-workspace-tab" role="tab" type="button" aria-selected="@(_showMappingDesigner ? "true" : "false")" aria-controls="mapping-workspace" tabindex="@(_showMappingDesigner ? 0 : -1)" @onclick="() => SetMappingWorkspace(true)" @onkeydown="args => HandleWorkspaceKeyAsync(args, 1)">Mapping</button>
+        <button @ref="_augmentTab" id="augment-workspace-tab" role="tab" type="button" aria-selected="@(_showAugmentDesigner ? "true" : "false")" aria-controls="augment-workspace" tabindex="@(_showAugmentDesigner ? 0 : -1)" @onclick="SetAugmentWorkspace" @onkeydown="args => HandleWorkspaceKeyAsync(args, 2)">Augment steps</button>
     </div>
     <div class="designer-surface">
-        <div id="flow-workspace" class="flow-workspace" role="tabpanel" aria-labelledby="flow-workspace-tab" hidden="@_showMappingDesigner">
+        <div id="flow-workspace" class="flow-workspace" role="tabpanel" aria-labelledby="flow-workspace-tab" hidden="@(_showMappingDesigner || _showAugmentDesigner)">
         @if (_showSamplePanel)
         {
             <FloatingPanel Title="Add a sample to the canvas" Icon="📥" X="80" Y="80" Width="420" ShowClose="true" OnClose="ToggleSamplePanel">
@@ -308,6 +313,9 @@
             <button class="toolbox-item" data-node-type="augment" data-node-label="Augment" @onclick="AddAugmentNode">
                 <span class="toolbox-icon">◇</span> Augment
             </button>
+            <button class="toolbox-item" data-node-type="control-flow" data-node-label="Control flow" @onclick="AddNativeAugment" title="Adds a native augment with visually editable sequences, branches, loops and message operations.">
+                <span class="toolbox-icon">&#8627;</span> Control flow
+            </button>
             <button class="toolbox-item" data-node-type="join" data-node-label="Join sources" @onclick="AddJoinAugmentNode" disabled="@(ParseNodes.Count < 2)" title="Adds a multi-source join and map augment, pre-wired to the first two parse nodes on the canvas.">
                 <span class="toolbox-icon">⋈</span> Join sources
             </button>
@@ -542,7 +550,13 @@
                     <rect class="node-body" x="0" y="0" width="@F(NodeWidth)" height="@F(NodeHeight)" rx="14" ry="14" />
                     <text class="node-stage" x="16" y="26">@Truncate(NodeHeading(node), 18)</text>
                     <text class="node-title" x="16" y="52">@Truncate(NodeTitle(node), 26)</text>
-                    <text class="node-subtitle" x="16" y="74">@NodeSubtitle(node)</text>
+                    <text class="node-subtitle" x="16" y="74">@(IsNativeAugment(node) ? "Control flow" : NodeSubtitle(node))</text>
+                    @if (IsNativeAugment(node))
+                    {
+                        <foreignObject x="112" y="60" width="90" height="30">
+                            <button type="button" class="node-edit-steps" aria-label="@("Edit steps in " + NodeHeading(node))" @onclick="() => OpenAugmentDesigner(node)" @onclick:stopPropagation @onkeydown:stopPropagation>Edit steps</button>
+                        </foreignObject>
+                    }
                     @if (node.Stage is NodeStage.Fetch or NodeStage.Parse)
                     {
                         <foreignObject x="-14" y="32" width="28" height="32">
@@ -960,9 +974,10 @@
                     <RenderDispatchEditor @key="node.Id" Settings="node.Settings" Modules="_modules" References="_configReferences" OdxMode="true" />
                     <OdxSendEditor @key='(node.Id, "sends")' Settings="node.Settings" Modules="_modules" References="_configReferences" />
                 }
-                else if (node.ModuleId == "native-control-flow-augment")
+                else if (IsNativeAugment(node))
                 {
-                    <NativeFlowEditor @key="node.Id" Value='@(node.Settings.GetValueOrDefault("flowJson", "{\"version\":1,\"nodes\":[]}"))' ValueChanged='value => node.Settings["flowJson"] = value' Modules="_modules" References="_configReferences" />
+                    <p class="field-hint">Sequences, branches, loops and message operations are edited as visual steps, not nested property forms.</p>
+                    <button class="run-button" @onclick="() => OpenAugmentDesigner(node)">Edit augment steps</button>
                 }
                 else if (node.ModuleId == "render-pipeline")
                 {
@@ -983,7 +998,9 @@
 
                 var descriptorKeys = catalogModule?.Settings.Select(static setting => setting.Key).ToHashSet(StringComparer.OrdinalIgnoreCase)
                     ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var extraKeys = node.Settings.Keys.Where(key => !descriptorKeys.Contains(key)).OrderBy(static key => key, StringComparer.OrdinalIgnoreCase).ToArray();
+                var extraKeys = node.Settings.Keys.Where(key => !descriptorKeys.Contains(key)
+                    && !(IsNativeAugment(node) && key.Equals("flowJson", StringComparison.OrdinalIgnoreCase)))
+                    .OrderBy(static key => key, StringComparer.OrdinalIgnoreCase).ToArray();
 
                 @if (extraKeys.Length > 0)
                 {
@@ -1199,10 +1216,45 @@
                 }
             }
         </section>
+        <section id="augment-workspace" class="augment-workspace" role="tabpanel" aria-labelledby="augment-workspace-tab" hidden="@(!_showAugmentDesigner)">
+            @if (_augmentDesignerOpened)
+            {
+                <div class="mapping-workspace-toolbar">
+                    <h2>Augment steps</h2>
+                    <button type="button" class="secondary-button" @onclick="() => SetMappingWorkspace(false)">Back to flow</button>
+                    @if (NativeAugmentNodes.Count > 0)
+                    {
+                        <label for="active-native-augment">Control-flow augment</label>
+                        <select id="active-native-augment" class="selector" value="@ActiveNativeAugmentId" @onchange="e => _selectedAugmentNodeId = e.Value?.ToString()">
+                            @foreach (var augment in NativeAugmentNodes)
+                            {
+                                <option value="@augment.Id">@NodeHeading(augment)</option>
+                            }
+                        </select>
+                    }
+                    <button type="button" class="secondary-button" @onclick="AddNativeAugment">Add control-flow augment</button>
+                </div>
+                @if (_migration is not null)
+                {
+                    <p class="status-banner error compact">@FlowMigrationReportViewModel.ExecutionBlockReason</p>
+                }
+                @if (NativeAugmentNodes.Count == 0)
+                {
+                    <p>Add a control-flow augment to build visual sequences, branches, loops and message operations. Other augment modules remain selectable nodes on the Flow canvas.</p>
+                }
+                @foreach (var augment in NativeAugmentNodes)
+                {
+                    <div @key="augment.Id" hidden="@(augment.Id != ActiveNativeAugmentId)">
+                        <NativeFlowEditor Value='@(augment.Settings.GetValueOrDefault("flowJson", "{\"version\":1,\"nodes\":[]}"))'
+                                          ValueChanged='value => augment.Settings["flowJson"] = value' Modules="_modules" References="_configReferences" ShowGraph="true" />
+                    </div>
+                }
+            }
+        </section>
     </div>
 
     <footer class="designer-save-bar">
-        <p>Flow and mapping changes are not saved automatically.</p>
+        <p>Flow, augment and mapping changes are not saved automatically.</p>
         <button class="run-button designer-save-button" @onclick="SaveAsync" disabled="@(_isSaving || _isAnalyzingSample)">@(_isSaving ? "Saving..." : IsExistingFlow ? "Save flow" : "Create flow")</button>
     </footer>
 </div>

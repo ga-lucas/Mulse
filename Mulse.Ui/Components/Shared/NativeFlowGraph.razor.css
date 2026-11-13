@@ -1,0 +1,23 @@
+.native-graph-list { list-style: none; margin: 0; padding: 0; min-width: 13rem; }
+.native-graph-step, .native-add-step { display: flex; flex-direction: column; align-items: center; }
+.native-connector { height: 1.8rem; color: var(--text-muted); font-size: 1.5rem; line-height: 1.8rem; }
+.native-step { display: flex; flex-direction: column; gap: .3rem; width: min(100%, 20rem); padding: .8rem 1rem; border: 1px solid var(--border-subtle); border-left: 4px solid var(--accent); border-radius: var(--radius-md); background: var(--surface-card); color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; box-shadow: var(--shadow-panel); }
+.native-step:hover { background: var(--accent-soft); }
+.native-step.selected { outline: 2px solid var(--accent); outline-offset: 3px; }
+.native-step:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.native-step-kind { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-secondary); }
+.native-step-detail { font-size: .8rem; color: var(--text-secondary); }
+.native-step.is-branch { border-left-style: double; border-left-width: 6px; }
+.native-step.is-loop { border-radius: 1.5rem; }
+.native-step.is-wait { border-left-style: dashed; }
+.native-step.is-blocked { border-color: var(--error-text); background: var(--error-bg); }
+.native-blocker { font-size: .8rem; color: var(--error-text); }
+.native-branches { display: flex; gap: 1rem; align-items: flex-start; width: max-content; min-width: 100%; padding: 1rem .5rem; border-bottom: 2px solid var(--border-subtle); }
+.native-branch { flex: 1; min-width: 14rem; padding: .5rem; border: 1px dashed var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-panel); }
+.native-branch h4 { margin: 0; text-align: center; font-size: .8rem; color: var(--text-secondary); }
+.native-loop-return { margin: .75rem 0 0; font-size: .75rem; text-align: center; color: var(--text-secondary); }
+.native-add-step .secondary-button { border-style: dashed; font-size: .8rem; }
+@media (max-width: 600px) {
+    .native-branches { flex-direction: column; width: 100%; box-sizing: border-box; }
+    .native-branch { width: 100%; box-sizing: border-box; }
+}

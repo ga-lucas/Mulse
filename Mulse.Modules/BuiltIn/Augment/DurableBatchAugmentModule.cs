@@ -53,7 +53,7 @@ public sealed class DurableBatchAugmentModule(IFlowOrchestrationStateStore store
         var checkpoint = new FlowOrchestrationCheckpoint
         {
             FlowId = context.FlowId, CorrelationKey = existing?.CorrelationKey ?? correlation,
-            InstanceId = existing?.InstanceId ?? Guid.CreateVersion7().ToString(), Bookmark = collector,
+            InstanceId = existing?.InstanceId ?? Execution.OrchestrationInstanceId.Create(), Bookmark = collector,
             UpdatedAt = now, Payloads = payloads, SourceReceipts = receipts,
             Batch = new()
             {

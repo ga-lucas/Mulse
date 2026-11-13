@@ -25,25 +25,27 @@ function setup() {
         removeEventListener: name => { delete events[name]; }
     };
     context.initialize(svg, { invokeMethodAsync: (...args) => { calls.push(args); } });
-    const pointer = (onButton, button = 0) => ({
+    const pointer = (onButton, button = 0, actionClass = '.node-remove') => ({
         button, pointerId: 7, clientX: 100, clientY: 100, prevented: false,
-        target: { closest: selector => selector === '.node-remove' ? (onButton ? {} : null) : selector === '.flow-node' ? group : null },
+        target: { closest: selector => selector === actionClass ? (onButton ? {} : null) : selector === '.flow-node' ? group : null },
         preventDefault() { this.prevented = true; }
     });
     return { events, calls, captured, svg, pointer };
 }
 
-test('remove button and its icon do not drag, capture the pointer or prevent native focus/click', async () => {
-    const app = setup();
-    const event = app.pointer(true);
-    app.events.pointerdown(event);
-    assert.equal(app.svg.__flowCanvas.state.drag, null);
-    assert.equal(event.prevented, false);
-    assert.deepEqual(app.captured, []);
-    app.events.pointermove(event);
-    await app.events.pointerup(event);
-    assert.deepEqual(app.calls, []);
-});
+for (const actionClass of ['.node-remove', '.node-edit-steps']) {
+    test(`${actionClass} button and its content do not drag, capture the pointer or prevent native focus/click`, async () => {
+        const app = setup();
+        const event = app.pointer(true, 0, actionClass);
+        app.events.pointerdown(event);
+        assert.equal(app.svg.__flowCanvas.state.drag, null);
+        assert.equal(event.prevented, false);
+        assert.deepEqual(app.captured, []);
+        app.events.pointermove(event);
+        await app.events.pointerup(event);
+        assert.deepEqual(app.calls, []);
+    });
+}
 
 test('node body still starts a normal drag', async () => {
     const app = setup();

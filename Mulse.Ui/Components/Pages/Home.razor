@@ -165,6 +165,7 @@
                                     </div>
                                     <div class="flow-card-actions">
                                         <a class="secondary-button" href="@($"/designer/{Uri.EscapeDataString(flow.Id)}")">Configure</a>
+                                        <a class="secondary-button" href="@($"/history/{Uri.EscapeDataString(flow.Id)}")" aria-label="@($"History for {flow.DisplayName}")">History</a>
                                         <button class="secondary-button" @onclick='() => BeginAction(flow, "category")' disabled="@IsBusy">Categorize</button>
                                         <button class="secondary-button" @onclick='() => BeginAction(flow, "duplicate")' disabled="@IsBusy">Duplicate</button>
                                         <button class="secondary-button danger-button" @onclick='() => BeginAction(flow, "delete")' disabled="@IsBusy">Delete</button>

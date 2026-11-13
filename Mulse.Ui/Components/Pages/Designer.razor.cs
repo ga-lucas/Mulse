@@ -139,6 +139,7 @@ public partial class Designer : IAsyncDisposable
 
     private void SetMappingWorkspace(bool mapping)
     {
+        _showAugmentDesigner = false;
         _showMappingDesigner = mapping;
         _mappingDesignerOpened |= mapping;
     }
@@ -149,18 +150,20 @@ public partial class Designer : IAsyncDisposable
         SetMappingWorkspace(true);
     }
 
-    private async Task HandleWorkspaceKeyAsync(KeyboardEventArgs args, bool mapping)
+    private async Task HandleWorkspaceKeyAsync(KeyboardEventArgs args, int workspace)
     {
         var next = args.Key switch
         {
-            "ArrowLeft" or "ArrowRight" => !mapping,
-            "Home" => false,
-            "End" => true,
-            _ => (bool?)null
+            "ArrowLeft" => (workspace + 2) % 3,
+            "ArrowRight" => (workspace + 1) % 3,
+            "Home" => 0,
+            "End" => 2,
+            _ => (int?)null
         };
         if (next is not { } target) return;
-        SetMappingWorkspace(target);
-        await (target ? _mappingTab : _flowTab).FocusAsync();
+        if (target == 2) SetAugmentWorkspace();
+        else SetMappingWorkspace(target == 1);
+        await (target == 2 ? _augmentTab : target == 1 ? _mappingTab : _flowTab).FocusAsync();
     }
 
     private void AddXmlMappingRender()
@@ -377,6 +380,9 @@ public partial class Designer : IAsyncDisposable
             case "augment":
                 AddAugmentNodeAt(x, y);
                 break;
+            case "control-flow":
+                AddNativeAugmentAt(x, y);
+                break;
             case "join":
                 AddJoinAugmentNodeAt(x, y);
                 break;
@@ -491,6 +497,9 @@ public partial class Designer : IAsyncDisposable
         _bizTalkWarnings = [];
         _migration = null;
         _selectedNodeId = null;
+        _selectedAugmentNodeId = null;
+        _showAugmentDesigner = false;
+        _augmentDesignerOpened = false;
         _connectionFromId = null;
         _seedSource = SeedSource.Manual;
         _flowId = string.Empty;
@@ -528,6 +537,9 @@ public partial class Designer : IAsyncDisposable
         _bizTalkWarnings = [];
         _migration = flow.Migration;
         _selectedNodeId = null;
+        _selectedAugmentNodeId = null;
+        _showAugmentDesigner = false;
+        _augmentDesignerOpened = false;
         _connectionFromId = null;
 
         _flowId = flow.Id;
@@ -744,7 +756,7 @@ public partial class Designer : IAsyncDisposable
             }
 
             var routes = Routes;
-            if (routes.Count == 0 && !_nodes.Any(node => node.Stage == NodeStage.Augment && node.ModuleId == "native-control-flow-augment"))
+            if (routes.Count == 0 && !_nodes.Any(IsNativeAugment))
             {
                 throw new InvalidOperationException("At least one delivery route or native control-flow block with internal delivery/reply behavior is required.");
             }

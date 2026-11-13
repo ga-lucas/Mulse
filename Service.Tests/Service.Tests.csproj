@@ -34,4 +34,25 @@
     <ProjectReference Include="..\Mulse.Hl7\Mulse.Hl7.csproj" />
   </ItemGroup>
 
+  <Target Name="BuildPluginCompatibilityFixtures" BeforeTargets="ResolveProjectReferences" Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_PluginCompatibilityFramework Include="net8.0;net9.0;net10.0" />
+    </ItemGroup>
+    <MSBuild Projects="..\Mulse.SamplePlugin\Mulse.SamplePlugin.csproj" Targets="Restore"
+             RemoveProperties="TargetFramework;TargetFrameworks;RuntimeIdentifier"
+             Properties="Configuration=$(Configuration);BuildingInsideVisualStudio=false;BuildProjectReferences=true" />
+    <MSBuild Projects="..\Mulse.SamplePlugin\Mulse.SamplePlugin.csproj" Targets="Build"
+             RemoveProperties="TargetFramework;TargetFrameworks;RuntimeIdentifier"
+             Properties="Configuration=$(Configuration);TargetFramework=%(_PluginCompatibilityFramework.Identity);BuildingInsideVisualStudio=false;BuildProjectReferences=true" />
+  </Target>
+
+  <Target Name="CopyPluginCompatibilityFixtures" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_PluginCompatibilityFile Include="..\Service\plugins\Mulse.SamplePlugin\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PluginCompatibilityFile)"
+          DestinationFiles="@(_PluginCompatibilityFile->'$(OutDir)plugin-fixtures\Mulse.SamplePlugin\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

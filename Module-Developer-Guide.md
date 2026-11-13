@@ -2,15 +2,44 @@
 
 ## Scope and compatibility
 
-Mulse's extension contract is `Mulse.Modules` (currently `net10.0`). A module package is compiled trusted .NET
-code, not a sandbox or a BizTalk assembly loader. You can wrap a supported legacy library in a native module
-without translating its implementation. Check the library's licensing, dependencies, target framework, bitness,
-thread safety and reliance on BizTalk/COM/GAC first. A .NET Framework BizTalk component is not automatically
-compatible with this host. Do not copy deployment secrets into source or generated projects.
+Mulse's extension contract is `Mulse.Modules`, built for `net8.0` and `net11.0`. The current Service targets
+.NET 11 and supports hot-loadable packages authored for .NET 8, 9, 10 and 11. A module package is compiled trusted
+.NET code, not a sandbox or a BizTalk assembly loader. Check libraries' licensing, dependencies, OS support,
+bitness and thread safety. .NET Framework packages are not supported. Do not copy deployment secrets into source.
 
-Use the SDK assembly built with the deployed host; there is no promised cross-version binary compatibility or
-published package/version negotiation protocol. `Mulse.SamplePlugin` is the compilable reference project.
-The host and SDK exchange ordinary public objects; plugins do not need a reference to the `Service` project.
+| Plugin target | SDK asset selected by a project reference | Current .NET 11 Service |
+|---|---|---|
+| `net8.0` | `net8.0` | Supported |
+| `net9.0` / `net10.0` | `net8.0` | Supported |
+| `net11.0` | `net11.0` | Supported |
+| Newer than `net11.0` | Requires an updated SDK/host | Rejected |
+
+Use the SDK from the **same Mulse release as the deployed host**. Target-framework compatibility is not a promise
+of compatibility across arbitrary SDK releases; there is no published package/version negotiation protocol.
+Public assembly/type identities remain shared with the host's SDK, not a private SDK copy per plugin. All plugins
+execute on the host's .NET 11 runtime; .NET 8/9/10 runtimes need not be installed separately, and an assembly load
+context does not start a separate CLR. OS-specific and native dependencies must still match the server. Dependencies
+requiring a newer runtime or incompatible shared API versions are not made compatible by targeting an older TFM.
+Use dependency versions supported by the plugin's target framework and the host's shared services.
+
+`Mulse.SamplePlugin` is the compilable reference project, targeting all four supported frameworks. Building this
+repository requires the .NET 11 SDK, including when building the SDK's `net8.0` asset. Authors referencing that
+prebuilt asset can use a compiler/SDK appropriate to their own plugin target. Plugins do not need a `Service` reference.
+
+Build just the .NET 8 sample with:
+
+```powershell
+dotnet build .\Mulse.SamplePlugin\Mulse.SamplePlugin.csproj -c Release -f net8.0
+```
+
+This produces `Service\plugins\Mulse.SamplePlugin\net8.0\`. Deploy the plugin DLL, dependency manifest and required
+private dependencies together. For your own package use `plugins\MyPackage\net8.0\MyPackage.dll` (or `net9.0`,
+`net10.0`, `net11.0`). Discovery selects the highest supported framework folder first, then falls back to
+`plugins\MyPackage\MyPackage.dll`; `plugins\MyPackage.dll` and explicitly registered custom paths still work.
+Framework folder names do not override the assembly's actual target: discovery and loading validate its metadata
+before reflecting over installers or executing package code. Unsupported discovered packages are logged and omitted;
+explicit loading returns an actionable error without persisting an enabled registration. Existing packages still
+appear unloaded until explicitly activated.
 
 ## Choose the extension seam
 
@@ -299,9 +328,10 @@ Do not retain context, payloads, model types or plugin delegates in host-global/
 
 ## A minimal raw module package
 
-Create a class library targeting `net10.0`, reference `Mulse.Modules`, enable nullable/implicit usings and copy
-private dependencies beside the plugin DLL. The sample project uses `CopyLocalLockFileAssemblies=true` and
-outputs to `Service\plugins\Mulse.SamplePlugin\`; use a separate folder for your package. A minimal module is:
+Create a class library targeting `net8.0` (or another supported target), reference the matching `Mulse.Modules`
+SDK asset, enable nullable/implicit usings and copy private dependencies beside the plugin DLL. The sample project
+uses `CopyLocalLockFileAssemblies=true` and outputs to `Service\plugins\Mulse.SamplePlugin\<TargetFramework>\`;
+use a separate folder for your package. A minimal module is:
 
 ```csharp
 using Mulse.Modules.Abstractions;
@@ -381,7 +411,7 @@ only. Nested dispatch is deliberately unsupported. Do not call delivery modules 
 ## Lifecycle and hot loading
 
 1. Build/package a trusted plugin and dependencies into its own plugin directory.
-2. Open **Configuration > Module Packages** and register/load the compatible package. Newly discovered packages
+2. Open **Modules > Module Packages** and register/load the compatible package. Newly discovered packages
    are initially unloaded. The catalog scan runs about every five seconds.
 3. In an open designer, use **Refresh modules**; existing canvas/settings are preserved. Descriptors populate
    node and mapping-transform controls. Save ordinary module IDs/settings in the flow.

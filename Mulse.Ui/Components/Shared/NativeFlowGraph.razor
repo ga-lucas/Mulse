@@ -1,0 +1,91 @@
+<ol class="native-graph-list" aria-label="@Label">
+    @foreach (var node in Nodes)
+    {
+        <li @key="node.Id" class="native-graph-step">
+            <div class="native-connector" aria-hidden="true">&#8595;</div>
+            <button type="button" id="@(HtmlIdPrefix + node.Id)"
+                    class="native-step @Style(node) @(SelectedId == node.Id ? "selected" : null)"
+                    aria-pressed="@(SelectedId == node.Id ? "true" : "false")" aria-controls="@PropertiesId"
+                    data-native-node-id="@node.Id" @onclick="() => Selected.InvokeAsync(node.Id)">
+                <span class="native-step-kind">@node.Kind</span>
+                <strong>@(string.IsNullOrWhiteSpace(node.Name) ? node.Kind : node.Name)</strong>
+                @if (node.Module.Length > 0)
+                {
+                    <span class="native-step-detail">@(Modules.FirstOrDefault(module => module.Id.Equals(node.Module, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? node.Module)</span>
+                }
+                @if (node.MessageName.Length > 0)
+                {
+                    <span class="native-step-detail">Message: @node.MessageName</span>
+                }
+                @if (node.Kind is "ForEach" or "While")
+                {
+                    <span class="native-step-detail">Limit: @node.MaxIterations iterations</span>
+                }
+                @if (node.Kind == "Blocked")
+                {
+                    <span class="native-blocker">Unresolved: @node.BlockReason</span>
+                }
+            </button>
+            @if (HasBody(node) || HasAlternative(node))
+            {
+                <div class="native-branches">
+                    @if (HasBody(node))
+                    {
+                        <section class="native-branch" aria-label="@(Heading(node) + " / " + BodyLabel(node))">
+                            <h4>@BodyLabel(node)</h4>
+                            <NativeFlowGraph Nodes="node.Children" SelectedId="@SelectedId" Selected="Selected" AddRequested="AddRequested" Modules="Modules"
+                                             Depth="@(Depth + 1)" CanAdd="CanAdd" HtmlIdPrefix="@HtmlIdPrefix" PropertiesId="@PropertiesId" Label="@BodyLabel(node)" />
+                            @if (node.Kind is "ForEach" or "While")
+                            {
+                                <p class="native-loop-return">&#8634; @(node.Kind == "ForEach" ? "Repeat for each input payload" : "Repeat while the predicate matches")</p>
+                            }
+                        </section>
+                    }
+                    @if (HasAlternative(node))
+                    {
+                        <section class="native-branch" aria-label="@(Heading(node) + " / " + AlternativeLabel(node))">
+                            <h4>@AlternativeLabel(node)</h4>
+                            <NativeFlowGraph Nodes="node.Otherwise" SelectedId="@SelectedId" Selected="Selected" AddRequested="AddRequested" Modules="Modules"
+                                             Depth="@(Depth + 1)" CanAdd="CanAdd" HtmlIdPrefix="@HtmlIdPrefix" PropertiesId="@PropertiesId" Label="@AlternativeLabel(node)" />
+                        </section>
+                    }
+                </div>
+            }
+        </li>
+    }
+    <li class="native-add-step">
+        <div class="native-connector" aria-hidden="true">&#8595;</div>
+        <button type="button" class="secondary-button" disabled="@(!CanAdd || Depth > 32 || Nodes.Count >= 1000)"
+                aria-label="@("Add step to " + Label)" @onclick="() => AddRequested.InvokeAsync(Nodes)">+ Add step</button>
+    </li>
+</ol>
+
+@code {
+    [Parameter, EditorRequired] public List<NativeFlowNodeViewModel> Nodes { get; set; } = [];
+    [Parameter] public string? SelectedId { get; set; }
+    [Parameter] public EventCallback<string> Selected { get; set; }
+    [Parameter] public EventCallback<List<NativeFlowNodeViewModel>> AddRequested { get; set; }
+    [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
+    [Parameter] public string HtmlIdPrefix { get; set; } = "";
+    [Parameter] public string PropertiesId { get; set; } = "";
+    [Parameter] public string Label { get; set; } = "Augment steps";
+    [Parameter] public int Depth { get; set; }
+    [Parameter] public bool CanAdd { get; set; } = true;
+    private static string Heading(NativeFlowNodeViewModel node) => string.IsNullOrWhiteSpace(node.Name) ? node.Kind : node.Name;
+    private static bool HasBody(NativeFlowNodeViewModel node) => node.Kind is "Sequence" or "If" or "ForEach" or "While" or "Try" or "Blocked" || node.Children.Count > 0;
+    private static bool HasAlternative(NativeFlowNodeViewModel node) => node.Kind is "If" or "Try" || node.Otherwise.Count > 0;
+    private static string BodyLabel(NativeFlowNodeViewModel node) => node.Kind switch
+    {
+        "If" => "Then", "Try" => "Try body", "Sequence" or "ForEach" or "While" or "Blocked" => "Body",
+        _ => "Incompatible children (preserved)"
+    };
+    private static string AlternativeLabel(NativeFlowNodeViewModel node) => node.Kind switch
+    {
+        "If" => "Else", "Try" => "Catch handler", _ => "Incompatible alternative (preserved)"
+    };
+    private static string Style(NativeFlowNodeViewModel node) => node.Kind switch
+    {
+        "Blocked" => "is-blocked", "If" or "Try" => "is-branch", "ForEach" or "While" => "is-loop",
+        "Augment" or "Render" or "Deliver" or "InvokeTransform" => "is-module", "Wait" or "Receive" => "is-wait", _ => ""
+    };
+}

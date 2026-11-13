@@ -1,12 +1,14 @@
 @using System.Text.Json
 @using System.Text.Json.Serialization
 
-<fieldset>
+<fieldset class="@(ShowGraph ? "native-visual-editor" : null)">
     <legend>Native control flow</legend>
     <p>Build native sequences, branches, loops and named-message operations. Enable durable execution for persisted waits, correlated receives and journaled effects. No ODX source is needed. Transactions are not emulated; ambiguous effects remain held for review, not blindly replayed.</p>
     @if (_error is not null) { <p class="status-banner error" role="alert">@_error</p> }
     @if (!_loadFailed)
     {
+        <details class="native-execution-options" open="@(!ShowGraph)">
+        <summary>Execution and message settings</summary>
         <label class="field-label"><input type="checkbox" @bind="_model.Durable" @bind:after="Persist" /> Durable execution</label>
         @if (_model.Durable)
         {
@@ -15,6 +17,7 @@
             <p class="field-hint">Each arrival needs a stable unique ID and a case-sensitive instance value. Receive channels use the incoming channel metadata. Source acknowledgements remain deferred until downstream success.</p>
         }
         <label class="field-label">Output named message (blank uses working batch) <input class="mapping-input" @bind="_model.OutputMessage" @bind:after="Persist" /></label>
+        </details>
         @if (BlockedNodes.Count > 0)
         {
             <details open>
@@ -23,12 +26,56 @@
                 <ul>
                     @foreach (var blocked in BlockedNodes)
                     {
-                        <li><a href="@("#" + Uri.EscapeDataString(NodeElementId(blocked.Node)))">@blocked.Path</a> <code>(@blocked.Node.Id)</code>: @blocked.Node.BlockReason</li>
+                        <li><a href="@("#" + Uri.EscapeDataString(NodeElementId(blocked.Node)))" @onclick="() => SelectGraphNode(blocked.Node.Id)">@blocked.Path</a> <code>(@blocked.Node.Id)</code>: @blocked.Node.BlockReason</li>
                     }
                 </ul>
             </details>
         }
-        <NativeFlowNodesEditor Nodes="_model.Nodes" Modules="Modules" References="References" Changed="Persist" MessageNames="SavedMessageNames" Variables="VariableNames" HtmlIdPrefix="@_htmlIdPrefix" />
+        @if (ShowGraph)
+        {
+            <p class="field-hint">Read top to bottom. Branches show alternatives, not parallel work. Select a step to edit only its properties. Add steps inside the required body or branch; move actions preserve that scope.</p>
+            <div class="native-visual-workspace">
+                <section class="native-graph-surface" aria-label="Native augment graph" tabindex="0">
+                    <div class="native-boundary">Input batch</div>
+                    <NativeFlowGraph Nodes="_model.Nodes" SelectedId="@_selectedNodeId" Selected="SelectGraphNode" AddRequested="AddGraphNode" Modules="Modules"
+                                     CanAdd="@(AllNodes(_model.Nodes).Count() < 2000)" HtmlIdPrefix="@_htmlIdPrefix" PropertiesId="@(_htmlIdPrefix + "properties")" />
+                    <div class="native-connector" aria-hidden="true">&#8595;</div>
+                    <div class="native-boundary">Output / next augment</div>
+                </section>
+                <aside id="@(_htmlIdPrefix + "properties")" class="native-step-properties" aria-label="Selected augment step properties">
+                    <h3>Step properties</h3>
+                    @if (SelectedLocation is { } location)
+                    {
+                        var selected = location.Siblings[location.Index];
+                        <p class="field-hint">Step @(location.Index + 1) of @location.Siblings.Count in this scope. ID: <code>@selected.Id</code></p>
+                        <div class="native-structure-actions">
+                            <button type="button" class="secondary-button" disabled="@(location.Index == 0)" @onclick="() => MoveGraphNode(-1)">Move earlier</button>
+                            <button type="button" class="secondary-button" disabled="@(location.Index == location.Siblings.Count - 1)" @onclick="() => MoveGraphNode(1)">Move later</button>
+                            <button type="button" class="secondary-button" @onclick="() => _removeNodeId = selected.Id">Remove step</button>
+                        </div>
+                        @if (_removeNodeId == selected.Id)
+                        {
+                            <div class="status-banner error" role="alert">
+                                <p>Remove this step and its @(AllNodes(selected.Children).Count() + AllNodes(selected.Otherwise).Count()) child step(s)? Other steps stay unchanged. Save flow to persist removal.</p>
+                                <button type="button" class="secondary-button" @onclick="RemoveGraphNode">Confirm remove step and children</button>
+                                <button type="button" class="secondary-button" @onclick="() => _removeNodeId = null">Cancel</button>
+                            </div>
+                        }
+                        <NativeFlowNodesEditor @key="selected.Id" Nodes="location.Siblings" Modules="Modules" References="References" Changed="Persist"
+                                               MessageNames="SavedMessageNames" Variables="VariableNames" HtmlIdPrefix="@(_htmlIdPrefix + "property-")"
+                                               PropertiesOnly="true" FocusedNodeId="@selected.Id" />
+                    }
+                    else
+                    {
+                        <p>Select a step on the graph, or use Add step to start.</p>
+                    }
+                </aside>
+            </div>
+        }
+        else
+        {
+            <NativeFlowNodesEditor Nodes="_model.Nodes" Modules="Modules" References="References" Changed="Persist" MessageNames="SavedMessageNames" Variables="VariableNames" HtmlIdPrefix="@_htmlIdPrefix" />
+        }
         <NativeFlowTestEditor Value="Value" Nodes="_model.Nodes" />
     }
     <details><summary>Advanced native definition JSON</summary>
@@ -41,6 +88,61 @@
     [Parameter] public EventCallback<string> ValueChanged { get; set; }
     [Parameter] public IReadOnlyList<ModuleViewModel> Modules { get; set; } = [];
     [Parameter] public IReadOnlyList<string> References { get; set; } = [];
+    [Parameter] public bool ShowGraph { get; set; }
+    private string? _selectedNodeId;
+    private string? _removeNodeId;
+    private NodeLocation? SelectedLocation => FindNodeLocation(_model.Nodes, _selectedNodeId);
+    private sealed record NodeLocation(List<NativeFlowNodeViewModel> Siblings, int Index);
+    private static NodeLocation? FindNodeLocation(List<NativeFlowNodeViewModel> nodes, string? id)
+    {
+        if (id is null) return null;
+        for (var index = 0; index < nodes.Count; index++)
+        {
+            if (nodes[index].Id == id) return new(nodes, index);
+            if ((FindNodeLocation(nodes[index].Children, id) ?? FindNodeLocation(nodes[index].Otherwise, id)) is { } nested) return nested;
+        }
+        return null;
+    }
+    private void SelectGraphNode(string id)
+    {
+        _selectedNodeId = id;
+        _removeNodeId = null;
+    }
+    private async Task AddGraphNode(List<NativeFlowNodeViewModel> siblings)
+    {
+        static int? FindDepth(List<NativeFlowNodeViewModel> nodes, List<NativeFlowNodeViewModel> target, int depth)
+        {
+            if (ReferenceEquals(nodes, target)) return depth;
+            foreach (var node in nodes)
+                if ((FindDepth(node.Children, target, depth + 1) ?? FindDepth(node.Otherwise, target, depth + 1)) is { } found) return found;
+            return null;
+        }
+        if (FindDepth(_model.Nodes, siblings, 0) is not { } depth || depth > 32 || siblings.Count >= 1000 || AllNodes(_model.Nodes).Count() >= 2000)
+        {
+            _error = "This scope is unavailable or has reached the native definition's depth/node limit. No step was added.";
+            return;
+        }
+        var node = new NativeFlowNodeViewModel();
+        siblings.Add(node);
+        SelectGraphNode(node.Id);
+        await Persist();
+    }
+    private async Task MoveGraphNode(int delta)
+    {
+        if (SelectedLocation is not { } location) return;
+        var target = location.Index + delta;
+        if (target < 0 || target >= location.Siblings.Count) return;
+        (location.Siblings[location.Index], location.Siblings[target]) = (location.Siblings[target], location.Siblings[location.Index]);
+        _removeNodeId = null;
+        await Persist();
+    }
+    private async Task RemoveGraphNode()
+    {
+        if (SelectedLocation is not { } location || _removeNodeId != _selectedNodeId) return;
+        location.Siblings.RemoveAt(location.Index);
+        SelectGraphNode(location.Siblings.ElementAtOrDefault(Math.Min(location.Index, location.Siblings.Count - 1))?.Id ?? _model.Nodes.FirstOrDefault()?.Id ?? "");
+        await Persist();
+    }
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, MaxDepth = 128 };
     private NativeFlowEditorModel _model = new();
     private string? _loaded, _error;
@@ -99,6 +201,8 @@
                 }
             }
             Check(model.Nodes, 0); _model = model; ValidateDraft();
+            if (SelectedLocation is null) _selectedNodeId = _model.Nodes.FirstOrDefault()?.Id;
+            _removeNodeId = null;
         }
         catch (JsonException exception) { _loadFailed = true; _error = "Unable to edit native flow: " + exception.Message + " Original JSON is preserved; repair it below."; }
     }

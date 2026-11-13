@@ -455,9 +455,13 @@ public sealed class ModuleCatalog : IModuleCatalog
             return null;
         }
 
-        var targetFrameworkDirectory = $"net{targetFramework.Version.Major}.{targetFramework.Version.Minor}";
-        var assemblyPath = Path.Combine(packageDirectory, targetFrameworkDirectory, packageId + ".dll");
-        return File.Exists(assemblyPath) ? assemblyPath : null;
+        for (var major = targetFramework.Version.Major; major >= 8; major--)
+        {
+            var targetFrameworkDirectory = $"net{major}.0";
+            var assemblyPath = Path.Combine(packageDirectory, targetFrameworkDirectory, packageId + ".dll");
+            if (File.Exists(assemblyPath)) return assemblyPath;
+        }
+        return null;
     }
 
     private IReadOnlyList<ManagedModulePackageDefinition> DiscoverAutoPackages(IEnumerable<string> pluginDirectories)
@@ -538,6 +542,7 @@ public sealed class ModuleCatalog : IModuleCatalog
         }
 
         var shadowPath = ShadowCopyAssembly(candidate.Id, candidate.AssemblyPath);
+        PluginCompatibility.EnsureSupported(shadowPath);
         var context = new PluginLoadContext(shadowPath);
         try
         {
@@ -638,15 +643,24 @@ public sealed class ModuleCatalog : IModuleCatalog
     private RegisteredPackage CreatePackageFromAssembly(string packageId, RuntimePackageSourceKind sourceKind, string sourceAssemblyPath, DateTime sourceFileLastWriteTimeUtc)
     {
         var shadowAssemblyPath = ShadowCopyAssembly(packageId, sourceAssemblyPath);
+        PluginCompatibility.EnsureSupported(shadowAssemblyPath);
         var loadContext = new PluginLoadContext(shadowAssemblyPath);
-        var assembly = loadContext.LoadFromAssemblyPath(shadowAssemblyPath);
-        return CreatePackageFromInstaller(
-            packageId,
-            sourceKind,
-            sourceAssemblyPath,
-            () => CreateInstallersFromAssembly(assembly),
-            loadContext,
-            sourceFileLastWriteTimeUtc);
+        try
+        {
+            var assembly = loadContext.LoadFromAssemblyPath(shadowAssemblyPath);
+            return CreatePackageFromInstaller(
+                packageId,
+                sourceKind,
+                sourceAssemblyPath,
+                () => CreateInstallersFromAssembly(assembly),
+                loadContext,
+                sourceFileLastWriteTimeUtc);
+        }
+        catch
+        {
+            loadContext.Unload();
+            throw;
+        }
     }
 
     private RegisteredPackage CreatePackageFromInstaller(

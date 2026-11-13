@@ -3,7 +3,7 @@
 Mulse is an extensible integration platform for building data pipelines ("flows") that fetch, parse,
 transform, and deliver data across systems. Author flows in a browser-based visual designer or through
 the API, and extend them with .NET modules. It is conceptually similar to BizTalk Server, built on
-.NET 10 with an ASP.NET Core runtime, Blazor Server administration, and hot-loadable plugin packages.
+.NET 11 with an ASP.NET Core runtime, Blazor Server administration, and hot-loadable .NET 8-11 plugin packages.
 
 Mulse also includes an importer that can analyze real BizTalk Server solutions (`.btproj`/`.odx`/`.btm`/`.btp`)
 and turn them into draft Mulse flows, auto-translating what can be translated safely and clearly flagging
@@ -94,8 +94,16 @@ Two ways to ship a module:
 - **Hot-loadable plugin**: built into `Service\plugins\<PackageName>\` (see `Mulse.SamplePlugin`,
   `Mulse.Hl7`, `Mulse.Dbms.SqlServer`, and `Mulse.Excel` for the pattern) and discovered by `ModuleCatalog`
   at startup and every five seconds. New compatible packages appear **unloaded**; activate them from
-  **Configuration > Module Packages**. Loading uses a collectible `AssemblyLoadContext` so packages can
+  **Modules > Module Packages**. Loading uses a collectible `AssemblyLoadContext` so packages can
   later be reloaded or unloaded without restarting the service, subject to dependency/active-use guards.
+
+Plugins can target **.NET 8, 9, 10 or 11** on the current .NET 11 host. `Mulse.Modules` provides `net8.0` and
+`net11.0` SDK assets; .NET 9/10 projects use the .NET 8 asset. Use the SDK from the deployed Mulse release.
+All plugin code runs on the host CLR; no separate older runtime installation is needed. .NET Framework and
+plugins targeting a runtime newer than the host are rejected. OS/native dependencies must remain compatible.
+The sample plugin builds all four targets into `plugins\Mulse.SamplePlugin\<TargetFramework>\`; discovery
+chooses the newest supported folder before the legacy flat DLL. See the developer guide for build commands
+and dependency requirements.
 
 Field transforms use `ITransformModule` and `AddTransform<T>()`; no UI code or central transform-name list
 is required. Their descriptors provide settings, defaults and choices to the mapper. The sample package now
@@ -1306,7 +1314,7 @@ not proof of BizTalk-equivalent behavior.
 
 ## Running locally
 
-Prerequisites: **.NET 10 SDK**; **Node.js** only for the browser JavaScript tests. SQL Server and SFTP/SMTP
+Prerequisites: **.NET 11 SDK**; **Node.js** only for the browser JavaScript tests. SQL Server and SFTP/SMTP
 servers are required only for flows using them. Excel does not require Microsoft Excel to be installed.
 
 From the repository root, build the solution (including plugins into `Service\plugins\`):
@@ -1460,7 +1468,9 @@ a durable HTTP/flow-link inbox and a delivery intent/outcome journal. Provider-s
 #### Execution and message history
 
 Open **Workspace > History** to inspect retained executions, stage events, inbox messages and delivery
-outcomes. Payloads are fetched/decrypted only after **Inspect payload**; metadata/detail lists do not
+outcomes. Each dashboard flow card and saved-flow designer also has a **History** button that opens
+`/history/{flowId}` with that flow's execution filter already applied. Inbox messages remain workspace-wide,
+as indicated on the history page. Payloads are fetched/decrypted only after **Inspect payload**; metadata/detail lists do not
 include message bodies. The management API remains authenticated, and history responses use `no-store`.
 Treat event details, headers and payloads as sensitive; these runtime events do not capture every module's
 `ILogger` output. Execution IDs connect retries, claimed messages, events and deliveries. An execution
@@ -1953,9 +1963,11 @@ Use the same payload plus `"confirmation": "RESTORE WORKSPACE"` at `POST /api/wo
 ### Package load and unload
 
 Copy trusted plugin DLLs into a configured plugin folder on the API server (no browser DLL upload).
-Use `plugins\MyPackage.dll` or `plugins\MyPackage\MyPackage.dll`, alongside required dependencies.
+Use `plugins\MyPackage\net8.0\MyPackage.dll` (or `net9.0`, `net10.0`, `net11.0`), alongside required dependencies.
+The newest supported framework folder wins; `plugins\MyPackage.dll` and `plugins\MyPackage\MyPackage.dll`
+remain supported fallbacks. Actual target metadata is checked, not just folder names.
 Every five seconds, discovery checks for compatible module installer types without constructing installers
-or modules. New packages appear **unloaded** in **Configuration > Module Packages**; use **Refresh packages**
+or modules. New packages appear **unloaded** in **Modules > Module Packages**; use **Refresh packages**
 to update the list, then **Load package** to activate one. Full initialization/dependency errors are shown
 when loading. Enabled registrations remain enabled across restarts; unloaded registrations stay unloaded.
 Loading executes code with the server's permissions. **Unload package** shows an inline confirmation;
@@ -1994,6 +2006,29 @@ interaction and Flow/Mapping tab switches during the editing session. Properties
 right, with the canvas occupying the space between the columns instead of being covered by them.
 On smaller screens, the left dock, canvas and Properties stack vertically. Sample/import dialogs
 remain floating. Tables keep their column headers and scroll horizontally inside their panels.
+
+Native control-flow augments have an **Edit steps** action directly on their canvas node and an
+**Edit augment steps** button in Properties. Both open the full-width **Augment steps** workspace;
+the recursive native settings tree is no longer embedded in the narrow Properties toolbox. The
+**Control flow** toolbox item adds a new native augment and opens this workspace (click or drag).
+Ordinary augments remain nodes in the main ordered Flow chain; use its existing Move earlier/later
+controls to change their execution order.
+
+Inside Augment steps, connected cards show native steps top-to-bottom, including module names,
+Then/Else branches, loop bodies and Try/Catch handlers. Branches are alternatives, not parallel work;
+the diagram shows configured structure, not live execution outcomes or guaranteed resumption.
+Select a card (mouse or keyboard) to edit **only that step's properties**. Use **Add step** in the
+appropriate branch/body, then choose its kind and module. Move earlier/later only reorders siblings
+in that scope; it does not reparent steps or change branch membership. Removing a step requires an
+inline confirmation and removes its entire subtree, not neighboring steps. Native IDs and other
+settings remain unchanged. Incompatible retained children and unresolved imported nodes stay visible
+and execution-blocking; editing does not approve an imported flow.
+
+Global durability/correlation/output settings, mock tests and advanced JSON are separate collapsible
+sections. Switch between control-flow augments using the selector. Opened editors retain selection
+and unsaved drafts across Flow/Mapping/Augment steps tab switches during this editing session;
+**Save flow** persists the native definition through the existing flow API. No new runtime format or
+execution behavior is introduced. Use **Back to flow** to return to the overall source/augment/delivery graph.
 
 The initial view and **Fit** use an 80% scale (20% smaller than the original fitted view); zoom controls
 and wheel zoom remain available. The workspace is unbounded in every direction: nodes, source groups

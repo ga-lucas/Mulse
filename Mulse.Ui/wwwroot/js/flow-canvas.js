@@ -136,7 +136,7 @@ export function initialize(svg, dotNetRef) {
     };
 
     const onPointerDown = event => {
-        if (state.drag || event.button !== 0 || event.target.closest('.node-remove') || event.target.closest('.node-port')) {
+        if (state.drag || event.button !== 0 || event.target.closest('.node-remove') || event.target.closest('.node-port') || event.target.closest('.node-edit-steps')) {
             return;
         }
 

@@ -124,14 +124,18 @@ public sealed class ModulePackageLifecycleTests : IDisposable
         Assert.Equal(legacyAssemblyPath, catalog.GetPackages().Single(package => package.Id == "fixture").AssemblyPath);
     }
 
-    [Fact]
-    public async Task ManagedPackageUpsert_UsesCurrentFrameworkAssemblyAndKeepsPersistedPath()
+    [Theory]
+    [InlineData("net8.0")]
+    [InlineData("net9.0")]
+    [InlineData("net10.0")]
+    [InlineData("net11.0")]
+    public async Task ManagedPackageUpsert_UsesCompatibleFrameworkAssemblyAndKeepsPersistedPath(string framework)
     {
         var packageDirectory = Path.Combine(_directory, "plugins", "fixture");
         var legacyAssemblyPath = Path.Combine(packageDirectory, "fixture.dll");
-        var targetFrameworkAssemblyPath = Path.Combine(packageDirectory, "net11.0", "fixture.dll");
+        var targetFrameworkAssemblyPath = Path.Combine(packageDirectory, framework, "fixture.dll");
         Directory.CreateDirectory(Path.GetDirectoryName(targetFrameworkAssemblyPath)!);
-        File.Copy(typeof(LifecycleTestInstaller).Assembly.Location, targetFrameworkAssemblyPath);
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "plugin-fixtures", "Mulse.SamplePlugin", framework, "Mulse.SamplePlugin.dll"), targetFrameworkAssemblyPath);
 
         var store = Store();
         var catalog = Catalog(store);
@@ -147,6 +151,67 @@ public sealed class ModulePackageLifecycleTests : IDisposable
         Assert.Equal(targetFrameworkAssemblyPath, restartedCatalog.GetPackages().Single(candidate => candidate.Id == "fixture").AssemblyPath);
         await restartedCatalog.UpsertManagedPackageAsync(new() { Id = "fixture", AssemblyPath = legacyAssemblyPath, Enabled = false }, CancellationToken.None);
         await catalog.UpsertManagedPackageAsync(new() { Id = "fixture", AssemblyPath = legacyAssemblyPath, Enabled = false }, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Discovery_SelectsNewestCompatibleFolderThenLegacy_IgnoringUnsupportedFolders()
+    {
+        var packageDirectory = Path.Combine(_directory, "plugins", "fixture");
+        Directory.CreateDirectory(packageDirectory);
+        var legacy = Path.Combine(packageDirectory, "fixture.dll");
+        File.Copy(typeof(LifecycleTestInstaller).Assembly.Location, legacy);
+        foreach (var framework in new[] { "net7.0", "net8.0", "net9.0", "net10.0", "net11.0", "net12.0", "net48" })
+        {
+            var directory = Path.Combine(packageDirectory, framework);
+            Directory.CreateDirectory(directory);
+            File.Copy(typeof(LifecycleTestInstaller).Assembly.Location, Path.Combine(directory, "fixture.dll"));
+        }
+        var catalog = Catalog(Store());
+        foreach (var framework in new[] { "net11.0", "net10.0", "net9.0", "net8.0" })
+        {
+            await catalog.SynchronizeAsync(default);
+            var expected = Path.Combine(packageDirectory, framework, "fixture.dll");
+            Assert.Equal(expected, catalog.GetPackages().Single(package => package.Id == "fixture").AssemblyPath);
+            File.Delete(expected);
+        }
+        await catalog.SynchronizeAsync(default);
+        Assert.Equal(legacy, catalog.GetPackages().Single(package => package.Id == "fixture").AssemblyPath);
+    }
+
+    [Theory]
+    [InlineData(".NETCoreApp,Version=v12.0", false)]
+    [InlineData(".NETCoreApp,Version=v12.0", true)]
+    [InlineData(".NETCoreApp,Version=v07.0", false)]
+    [InlineData(".NETStandard,Version=v2.0", false)]
+    [InlineData(".NETFramework,Version=4.8", false)]
+    public async Task UnsupportedAssemblyTarget_IsNotDiscoveredOrPersisted_EvenInCompatibleFolder(string target, bool compatibleFolder)
+    {
+        var directory = Path.Combine(_directory, "plugins", "fixture");
+        if (compatibleFolder) directory = Path.Combine(directory, "net11.0");
+        Directory.CreateDirectory(directory);
+        var assemblyPath = Path.Combine(directory, "fixture.dll");
+        var bytes = File.ReadAllBytes(typeof(Mulse.SamplePlugin.SamplePluginInstaller).Assembly.Location);
+        var original = System.Text.Encoding.UTF8.GetBytes(".NETCoreApp,Version=v11.0");
+        var replacement = System.Text.Encoding.UTF8.GetBytes(target);
+        Assert.Equal(original.Length, replacement.Length);
+        var offset = bytes.AsSpan().IndexOf(original);
+        Assert.True(offset >= 0, "The fixture must contain its generated target framework metadata.");
+        replacement.CopyTo(bytes, offset);
+        await File.WriteAllBytesAsync(assemblyPath, bytes);
+        var store = Store();
+        var catalog = Catalog(store);
+        await catalog.SynchronizeAsync(default);
+        Assert.DoesNotContain(catalog.GetPackages(), package => package.Id == "fixture");
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => catalog.UpsertManagedPackageAsync(new()
+        {
+            Id = "fixture", AssemblyPath = assemblyPath, Enabled = true
+        }, default));
+        var expected = target == ".NETCoreApp,Version=v12.0"
+            ? "Module requires .NET 12.0"
+            : $"Module target '{new System.Runtime.Versioning.FrameworkName(target).FullName}' is unsupported";
+        Assert.Contains(expected, error.Message);
+        Assert.Empty(Store().GetState().ManagedPackages);
+        Assert.DoesNotContain(catalog.GetAll(), module => module.PackageId == "fixture");
     }
 
     [Fact]
@@ -213,13 +278,32 @@ public sealed class ModulePackageLifecycleTests : IDisposable
     public async Task ExternalValueTransform_MapsThroughHostInvoker_Reloads_AndProtectsSavedDependencies(bool invoke)
         => await ExerciseExternalTransformAsync(invoke);
 
+    [Theory]
+    [InlineData("net8.0")]
+    [InlineData("net9.0")]
+    [InlineData("net10.0")]
+    [InlineData("net11.0")]
+    public async Task CompiledTargetPlugin_InvokesSharedContracts_Reloads_AndUnloads(string framework)
+        => await ExerciseExternalTransformAsync(true, framework);
+
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private async Task ExerciseExternalTransformAsync(bool invoke)
+    private async Task ExerciseExternalTransformAsync(bool invoke, string? framework = null)
     {
         var pluginDirectory = Path.Combine(_directory, "plugins", "Mulse.SamplePlugin");
         Directory.CreateDirectory(pluginDirectory);
         var assemblyPath = Path.Combine(pluginDirectory, "Mulse.SamplePlugin.dll");
-        File.Copy(typeof(Mulse.SamplePlugin.RegexReplaceTransformModule).Assembly.Location, assemblyPath);
+        if (framework is null)
+            File.Copy(typeof(Mulse.SamplePlugin.RegexReplaceTransformModule).Assembly.Location, assemblyPath);
+        else
+        {
+            var sourceDirectory = Path.Combine(AppContext.BaseDirectory, "plugin-fixtures", "Mulse.SamplePlugin", framework);
+            foreach (var file in Directory.EnumerateFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+            {
+                var destination = Path.Combine(pluginDirectory, Path.GetRelativePath(sourceDirectory, file));
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                File.Copy(file, destination);
+            }
+        }
         var store = Store();
         var catalog = Catalog(store);
         await catalog.SynchronizeAsync(default);
@@ -236,6 +320,21 @@ public sealed class ModulePackageLifecycleTests : IDisposable
         var context = new FlowExecutionContext("plugin-map", "test", DateTimeOffset.UtcNow);
         try
         {
+            if (framework is not null)
+            {
+                await using var fetch = await catalog.LeaseFetchAsync("sample-plugin-typed-fetch", default);
+                var assembly = fetch.Module.GetType().Assembly;
+                var attribute = System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Runtime.Versioning.TargetFrameworkAttribute>(assembly)!;
+                Assert.Equal($".NETCoreApp,Version=v{framework[3..]}", attribute.FrameworkName);
+                Assert.Same(typeof(TypedFetchModule<>).Assembly, fetch.Module.GetType().BaseType!.Assembly);
+                var loadContext = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(assembly)!;
+                Assert.DoesNotContain(loadContext.Assemblies, item => item.GetName().Name == "Mulse.Modules");
+                var batch = await fetch.Module.FetchAsync(context, IntegrationBatch.Empty, new(), default);
+                Assert.Equal(3, batch.Payloads.Count);
+                using var first = System.Text.Json.JsonDocument.Parse(batch.Payloads[0].Content.ToString());
+                Assert.Equal("sku-001", first.RootElement.GetProperty("id").GetString());
+                Assert.Equal(9.99m, first.RootElement.GetProperty("price").GetDecimal());
+            }
             if (invoke) Assert.Equal("[{\"code\":\"123\"}]", await Mulse.Modules.Mapping.ParsedDataMapping.MapAsync(mapping, "{\"id\":\"A-123\"}", "Json", default, invoker, context));
             RecordTransformContext(catalog);
             await store.UpsertFlowAsync(new() { Id = "plugin-map", Enabled = false,

@@ -10,9 +10,10 @@ public static class OidcSession
         options.SaveTokens = true;
         options.Events.OnTicketReceived = context =>
         {
+            var properties = context.Properties ??= new AuthenticationProperties();
             // Logout needs the ID token; downstream API access uses a separate service identity.
-            var idToken = context.Properties.GetTokenValue("id_token");
-            context.Properties.StoreTokens(string.IsNullOrEmpty(idToken)
+            var idToken = properties.GetTokenValue("id_token");
+            properties.StoreTokens(string.IsNullOrEmpty(idToken)
                 ? []
                 : [new AuthenticationToken { Name = "id_token", Value = idToken }]);
             return Task.CompletedTask;

@@ -1,4 +1,4 @@
-@foreach (var node in Nodes)
+@foreach (var node in Nodes.Where(node => !PropertiesOnly || node.Id == FocusedNodeId))
 {
     var index = Nodes.IndexOf(node);
     <fieldset @key="node.Id" id="@(HtmlIdPrefix + node.Id)">
@@ -225,24 +225,30 @@
             <label class="field-label">Maximum iterations <input type="number" min="1" max="10000" @bind="node.MaxIterations" @bind:after="Notify" /></label>
             <p class="field-hint">ForEach processes original payloads in order and combines all outputs. While tests the updated output before each iteration and fails at its limit.</p>
         }
-        @if (node.Kind is "Sequence" or "If" or "ForEach" or "While" or "Try" or "Blocked" || node.Children.Count > 0)
+        @if (!PropertiesOnly && (node.Kind is "Sequence" or "If" or "ForEach" or "While" or "Try" or "Blocked" || node.Children.Count > 0))
         {
             <fieldset><legend>@(node.Kind == "If" ? "Then" : node.Kind == "Try" ? "Try body" : "Body")</legend>
                 <NativeFlowNodesEditor Nodes="node.Children" Modules="Modules" References="References" Changed="Changed" Depth="@(Depth + 1)" MessageNames="MessageNames" Variables="Variables" HtmlIdPrefix="@HtmlIdPrefix" />
             </fieldset>
         }
-        @if (node.Kind is "If" or "Try" || node.Otherwise.Count > 0)
+        @if (!PropertiesOnly && (node.Kind is "If" or "Try" || node.Otherwise.Count > 0))
         {
             <fieldset><legend>@(node.Kind == "Try" ? "Catch handler" : "Else")</legend>
                 <NativeFlowNodesEditor Nodes="node.Otherwise" Modules="Modules" References="References" Changed="Changed" Depth="@(Depth + 1)" MessageNames="MessageNames" Variables="Variables" HtmlIdPrefix="@HtmlIdPrefix" />
             </fieldset>
         }
-        <button type="button" class="secondary-button" disabled="@(index == 0)" @onclick="() => Move(node, -1)">Move node earlier</button>
-        <button type="button" class="secondary-button" disabled="@(index == Nodes.Count - 1)" @onclick="() => Move(node, 1)">Move node later</button>
-        <button type="button" class="secondary-button" @onclick="() => Remove(node)">Remove node and children</button>
+        @if (!PropertiesOnly)
+        {
+            <button type="button" class="secondary-button" disabled="@(index == 0)" @onclick="() => Move(node, -1)">Move node earlier</button>
+            <button type="button" class="secondary-button" disabled="@(index == Nodes.Count - 1)" @onclick="() => Move(node, 1)">Move node later</button>
+            <button type="button" class="secondary-button" @onclick="() => Remove(node)">Remove node and children</button>
+        }
     </fieldset>
 }
-<button type="button" class="secondary-button" disabled="@(Depth > 32 || Nodes.Count >= 1000)" @onclick="Add">Add native node</button>
+@if (!PropertiesOnly)
+{
+    <button type="button" class="secondary-button" disabled="@(Depth > 32 || Nodes.Count >= 1000)" @onclick="Add">Add native node</button>
+}
 
 @code {
     [Parameter, EditorRequired] public List<NativeFlowNodeViewModel> Nodes { get; set; } = [];
@@ -253,6 +259,8 @@
     [Parameter] public IReadOnlyList<string> MessageNames { get; set; } = [];
     [Parameter] public IReadOnlyList<string> Variables { get; set; } = [];
     [Parameter] public string HtmlIdPrefix { get; set; } = "";
+    [Parameter] public bool PropertiesOnly { get; set; }
+    [Parameter] public string? FocusedNodeId { get; set; }
     private static readonly string[] Kinds = ["Sequence", "If", "ForEach", "While", "Augment", "Render", "Wait", "Receive", "SaveMessage", "UseMessage", "Reply", "Deliver", "DeclareVariable", "SetVariable", "CreateXmlMessage", "SetMessageValue", "CreateXmlRoot", "AppendXmlMessage", "ApplyXmlRules", "Terminate", "Try", "InvokeTransform", "Blocked"];
     private static string ModuleKind(string kind) => kind == "Render" ? "Render" : kind == "Deliver" ? "Deliver" : kind == "InvokeTransform" ? "Transform" : "OrchestrationAugment";
     private static readonly string[] Sources = ["Metadata", "Payload", "PayloadName", "ContentType", "Literal"];

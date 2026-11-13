@@ -87,7 +87,7 @@ public sealed class StatefulOrchestrationAugmentModule(
         var checkpoint = await orchestrationStateStore.GetAsync(context.FlowId, correlationKey, cancellationToken).ConfigureAwait(false);
         if (checkpoint is null)
         {
-            var created = CreateCheckpoint(context, context.FlowId, correlationKey, bookmark, batch, capturedState, instanceId: Guid.CreateVersion7().ToString());
+            var created = CreateCheckpoint(context, context.FlowId, correlationKey, bookmark, batch, capturedState, instanceId: Execution.OrchestrationInstanceId.Create());
             await orchestrationStateStore.UpsertAsync(created, cancellationToken).ConfigureAwait(false);
             context.SetOrchestrationInstance(created.InstanceId, created.CorrelationKey, created.Bookmark, isResumed: false);
             context.ReplaceOrchestrationState(created.StateValues);
@@ -132,7 +132,7 @@ public sealed class StatefulOrchestrationAugmentModule(
         CancellationToken cancellationToken)
     {
         var existing = await orchestrationStateStore.GetAsync(context.FlowId, correlationKey, cancellationToken).ConfigureAwait(false);
-        var instanceId = existing?.InstanceId ?? context.OrchestrationInstanceId ?? Guid.CreateVersion7().ToString();
+        var instanceId = existing?.InstanceId ?? context.OrchestrationInstanceId ?? Execution.OrchestrationInstanceId.Create();
         foreach (var receipt in existing?.SourceReceipts ?? []) context.RegisterSourceReceipt(receipt);
         var checkpoint = CreateCheckpoint(context, context.FlowId, correlationKey, bookmark, batch, capturedState, instanceId);
         await orchestrationStateStore.UpsertAsync(checkpoint, cancellationToken).ConfigureAwait(false);
