@@ -15,4 +15,5 @@ public sealed record ModuleResponse(
     IReadOnlyList<string> SupportedFormats,
     IReadOnlyList<string> Protocols,
     IReadOnlyList<string> Capabilities,
-    bool SupportsPushTrigger = false);
+    bool SupportsPushTrigger = false,
+    bool SupportsConfirmation = false);

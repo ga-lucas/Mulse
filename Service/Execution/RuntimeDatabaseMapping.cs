@@ -34,12 +34,12 @@ internal static class RuntimeDatabaseMapping
             FlowKey = WorkspaceDocument.Identity(retry.FlowId), ExecutionKey = WorkspaceDocument.Identity(retry.ExecutionId),
             NextAttemptUtcTicks = retry.NextAttemptAt.UtcTicks, NotificationsExhausted = retry.SourceCompletion?.NotificationsExhausted == true
         }));
-        return new(Serialize(state.PluginDirectories), documents);
+        return new(Serialize(state.PluginDirectories), documents, state.MaintenanceRequested);
     }
 
     public static RuntimeMulseState FromDatabase(WorkspaceDatabaseState persisted)
     {
-        var state = new RuntimeMulseState { PluginDirectories = Read<List<string>>(persisted.PluginDirectoriesJson) };
+        var state = new RuntimeMulseState { PluginDirectories = Read<List<string>>(persisted.PluginDirectoriesJson), MaintenanceRequested = persisted.MaintenanceRequested };
         foreach (var document in persisted.Documents)
         {
             switch (document.Kind)

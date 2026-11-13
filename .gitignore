@@ -374,4 +374,5 @@ FodyWeavers.xsd
 /Service/Data/*.db-wal
 /Service/Data/*.db-shm
 /Service/Data/*.db-journal
+/Service/Data/*.owner.lock
 /mulse-design.db*

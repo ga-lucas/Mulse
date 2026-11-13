@@ -22,6 +22,6 @@ public sealed record WorkspaceDocument(WorkspaceDocumentKind Kind, string Key, s
             parts.Select(part => part.ToUpperInvariant()).ToArray()))));
 }
 
-public sealed record WorkspaceDatabaseState(string PluginDirectoriesJson, IReadOnlyList<WorkspaceDocument> Documents);
+public sealed record WorkspaceDatabaseState(string PluginDirectoriesJson, IReadOnlyList<WorkspaceDocument> Documents, bool MaintenanceRequested = false);
 
 public sealed record WorkspaceDatabaseSnapshot(WorkspaceDatabaseState State, bool Encrypted, string? KeyId);

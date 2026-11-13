@@ -1,0 +1,434 @@
+@page "/history"
+@inject IMulseApiClient ApiClient
+
+<PageTitle>History | Mulse</PageTitle>
+
+<div class="page-shell">
+    <header class="page-hero">
+        <div>
+            <p class="eyebrow">Operations</p>
+            <h1>Execution history</h1>
+            <p class="lede">Inspect the newest retained runs, their events, messages and deliveries.</p>
+        </div>
+    </header>
+
+    <Panel Title="Before inspecting history">
+        <p>History metadata, event details and message payloads can contain sensitive data. Payloads are decrypted only when you choose <strong>Inspect payload</strong>; protect your screen and avoid sharing them.</p>
+        <p>Unknown delivery outcomes are not automatically replayable. Investigate the external system before taking any action.</p>
+        <p>History is unsupported in legacy Json storage mode.</p>
+    </Panel>
+
+    <StatusBanner Error="@_errorMessage" Success="@_successMessage" />
+
+    <Panel Title="Recent executions" Description="Showing up to 50 newest executions. Filter by an exact flow ID or leave it empty for all flows.">
+        <form class="action-row" @onsubmit="LoadAsync" @onsubmit:preventDefault>
+            <label class="field-label" for="history-flow-id">Flow ID</label>
+            <input id="history-flow-id" class="mapping-input" @bind="_flowId" disabled="@IsBusy" />
+            <button class="secondary-button" type="submit" disabled="@IsBusy">Load history</button>
+        </form>
+        @if (_isLoadingList)
+        {
+            <p class="loading-state" role="status">Loading history...</p>
+        }
+        else if (_executions.Count == 0)
+        {
+            <p>No executions to display.</p>
+        }
+        else
+        {
+            <table class="module-table">
+                <thead><tr><th>Execution ID</th><th>Flow ID</th><th>State</th><th>Started (UTC)</th><th>Updated (UTC)</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var execution in _executions)
+                    {
+                        <tr>
+                            <td>@execution.Id</td><td>@execution.FlowId</td><td>@execution.State</td>
+                            <td>@FormatUtc(execution.StartedUtcTicks)</td><td>@FormatUtc(execution.UpdatedUtcTicks)</td>
+                            <td><button class="secondary-button" disabled="@IsBusy" @onclick="() => SelectExecutionAsync(execution.Id)" aria-label="@($"Inspect execution {execution.Id}")">Details</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </Panel>
+
+    <StatusBanner Error="@_messageError" />
+
+    <Panel Title="Inbox / messages" Description="Up to 50 messages, prioritizing Pending, Claimed and Held work. Includes messages without an execution; flow filter only applies to executions.">
+        @if (_isLoadingMessages)
+        {
+            <p class="loading-state" role="status">Loading messages...</p>
+        }
+        else if (_messages.Count == 0)
+        {
+            <p>No messages to display.</p>
+        }
+        else
+        {
+            <table class="module-table">
+                <thead><tr><th>ID</th><th>Channel</th><th>State</th><th>Execution ID</th><th>Created (UTC)</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var message in _messages)
+                    {
+                        <tr>
+                            <td>@message.Id</td><td>@message.Channel</td><td>@message.State</td><td>@(message.ExecutionId ?? "Not assigned")</td><td>@FormatUtc(message.CreatedUtcTicks)</td>
+                            <td><button class="secondary-button" disabled="@IsBusy" @onclick="() => InspectPayloadAsync(message.Id)" aria-label="@($"Inspect payload for inbox message {message.Id}")">Inspect payload</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </Panel>
+
+    @if (_isLoadingPayload)
+    {
+        <p class="loading-state" role="status">Loading payload...</p>
+    }
+    else if (_payloadMessageId is not null)
+    {
+        <Panel Title="Inspected message payload">
+            <h3>Payload for @_payloadMessageId</h3>
+            <button class="secondary-button" @onclick="HidePayload">Hide payload</button>
+            <pre>@_payload</pre>
+        </Panel>
+    }
+
+    @if (_isLoadingDetail)
+    {
+        <p class="loading-state" role="status">Loading execution details...</p>
+    }
+    else if (_detail is not null)
+    {
+        <Panel Title="Execution detail" Description="Events, messages and deliveries are each limited to 1,000 records. Bounded details may omit additional records.">
+            <dl class="overview-grid" aria-label="Execution summary">
+                <div class="overview-stat"><dt>Execution ID</dt><dd>@_detail.Execution.Id</dd></div>
+                <div class="overview-stat"><dt>Flow ID</dt><dd>@_detail.Execution.FlowId</dd></div>
+                <div class="overview-stat"><dt>State</dt><dd>@_detail.Execution.State</dd></div>
+                <div class="overview-stat"><dt>Started (UTC)</dt><dd>@FormatUtc(_detail.Execution.StartedUtcTicks)</dd></div>
+                <div class="overview-stat"><dt>Updated (UTC)</dt><dd>@FormatUtc(_detail.Execution.UpdatedUtcTicks)</dd></div>
+            </dl>
+
+            @if (_detail.Execution.State == "Held")
+            {
+                <button class="secondary-button" disabled="@IsBusy" @onclick="BeginExecutionClosure">Close held execution without replay</button>
+                @if (_showExecutionClosure)
+                {
+                    <form @onsubmit="CloseExecutionAsync" @onsubmit:preventDefault>
+                        <h3>Close held execution after independent review</h3>
+                        <p role="alert">This explicitly abandons the held input, never resends or rolls back effects, and may lose unprocessed work. Independent review is required. The backend rejects closure if any retry or checkpoint still references the flow; resolve existing recovery first.</p>
+                        <label class="field-label" for="close-evidence">Evidence of independent review</label>
+                        <textarea id="close-evidence" class="mapping-input" required disabled="@IsBusy" @bind="_closeEvidence" @bind:event="oninput"></textarea>
+                        <label class="field-label" for="close-confirmation">Type CLOSE WITHOUT REPLAY exactly</label>
+                        <input id="close-confirmation" class="mapping-input" required autocomplete="off" disabled="@IsBusy" @bind="_closeConfirmation" @bind:event="oninput" />
+                        <div class="action-row">
+                            <button class="run-button" type="submit" disabled="@(IsBusy || !CanCloseExecution)">Confirm close without replay</button>
+                            <button class="secondary-button" type="button" disabled="@IsBusy" @onclick="CancelExecutionClosure">Cancel</button>
+                        </div>
+                    </form>
+                }
+            }
+
+            <h3>Events</h3>
+            @if (_detail.Events.Count == 0)
+            {
+                <p>No events recorded.</p>
+            }
+            else
+            {
+                <table class="module-table">
+                    <thead><tr><th>ID</th><th>Stage</th><th>State</th><th>Created (UTC)</th><th>Detail</th></tr></thead>
+                    <tbody>
+                        @foreach (var item in _detail.Events)
+                        {
+                            <tr><td>@item.Id</td><td>@item.Stage</td><td>@item.State</td><td>@FormatUtc(item.CreatedUtcTicks)</td><td>@item.Detail</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            <h3>Messages</h3>
+            @if (_detail.Messages.Count == 0)
+            {
+                <p>No messages recorded.</p>
+            }
+            else
+            {
+                <table class="module-table">
+                    <thead><tr><th>ID</th><th>Channel</th><th>State</th><th>Execution ID</th><th>Created (UTC)</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var message in _detail.Messages)
+                        {
+                            <tr>
+                                <td>@message.Id</td><td>@message.Channel</td><td>@message.State</td><td>@message.ExecutionId</td><td>@FormatUtc(message.CreatedUtcTicks)</td>
+                                <td><button class="secondary-button" disabled="@IsBusy" @onclick="() => InspectPayloadAsync(message.Id)" aria-label="@($"Inspect payload for message {message.Id}")">Inspect payload</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                }
+
+                <h3>Deliveries</h3>
+            @if (_detail.Deliveries.Count == 0)
+            {
+                <p>No deliveries recorded.</p>
+            }
+            else
+            {
+                <table class="module-table">
+                    <thead><tr><th>ID</th><th>Stage</th><th>State</th><th>Updated (UTC)</th><th>Admin reconciliation</th></tr></thead>
+                    <tbody>
+                        @foreach (var delivery in _detail.Deliveries)
+                        {
+                            <tr>
+                                <td>@delivery.Id</td><td>@delivery.Stage</td><td>@delivery.State</td><td>@FormatUtc(delivery.UpdatedUtcTicks)</td>
+                                <td>
+                                    @if (delivery.State == "Unknown")
+                                    {
+                                        <button class="secondary-button" disabled="@IsBusy" @onclick="() => BeginDeliveryConfirmation(delivery.Id)">Confirm independently verified delivery</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            @if (_confirmDeliveryId is not null)
+            {
+                <form @onsubmit="ConfirmDeliveryAsync" @onsubmit:preventDefault>
+                    <h3>Admin reconciliation for delivery @_confirmDeliveryId</h3>
+                    <p role="alert">This does NOT resend the effect. It only records externally verified success and releases the original continuation for retry-driver resumption; this may complete later deliveries and source acknowledgements. Independently verify delivery before confirming. Request-response deliveries cannot use this confirmation because response data would be missing.</p>
+                    <label class="field-label" for="delivery-evidence">Evidence of independently verified success</label>
+                    <textarea id="delivery-evidence" class="mapping-input" required disabled="@IsBusy" @bind="_deliveryEvidence" @bind:event="oninput"></textarea>
+                    <label class="field-label" for="delivery-confirmation">Type CONFIRM DELIVERED exactly</label>
+                    <input id="delivery-confirmation" class="mapping-input" required autocomplete="off" disabled="@IsBusy" @bind="_deliveryConfirmation" @bind:event="oninput" />
+                    <div class="action-row">
+                        <button class="run-button" type="submit" disabled="@(IsBusy || !CanConfirmDelivery)">Confirm verified success</button>
+                        <button class="secondary-button" type="button" disabled="@IsBusy" @onclick="CancelDeliveryConfirmation">Cancel</button>
+                    </div>
+                </form>
+            }
+        </Panel>
+    }
+</div>
+
+@code {
+    private string? _flowId;
+    private IReadOnlyList<HistoryExecutionViewModel> _executions = [];
+    private HistoryExecutionDetailViewModel? _detail;
+    private Guid? _payloadMessageId;
+    private string? _payload;
+    private string? _errorMessage;
+    private bool _isLoadingList;
+    private bool _isLoadingDetail;
+    private bool _isLoadingPayload;
+    private bool _isLoadingMessages;
+    private string? _messageError;
+    private IReadOnlyList<HistoryMessageViewModel> _messages = [];
+    private string? _successMessage;
+    private Guid? _confirmDeliveryId;
+    private string _deliveryEvidence = string.Empty;
+    private string _deliveryConfirmation = string.Empty;
+    private bool _isConfirmingDelivery;
+    private bool _showExecutionClosure;
+    private string _closeEvidence = string.Empty;
+    private string _closeConfirmation = string.Empty;
+    private bool _isClosingExecution;
+    private bool CanCloseExecution => _showExecutionClosure && _detail?.Execution.State == "Held"
+        && _closeConfirmation == "CLOSE WITHOUT REPLAY" && !string.IsNullOrWhiteSpace(_closeEvidence);
+    private bool IsBusy => _isLoadingList || _isLoadingDetail || _isLoadingPayload || _isLoadingMessages || _isConfirmingDelivery || _isClosingExecution;
+    private bool CanConfirmDelivery => _deliveryConfirmation == "CONFIRM DELIVERED"
+        && !string.IsNullOrWhiteSpace(_deliveryEvidence)
+        && _detail?.Deliveries.Any(delivery => delivery.Id == _confirmDeliveryId && delivery.State == "Unknown") == true;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private Task LoadAsync() => Task.WhenAll(LoadExecutionsAsync(), LoadMessagesAsync());
+
+    private async Task LoadMessagesAsync()
+    {
+        _isLoadingMessages = true;
+        _messageError = null;
+        _messages = [];
+        try
+        {
+            var messages = await ApiClient.GetHistoryMessagesAsync(CancellationToken.None);
+            _messages = messages.OrderByDescending(message => message.CreatedUtcTicks).ToArray();
+        }
+        catch (Exception exception)
+        {
+            _messageError = $"Unable to load inbox history: {exception.Message}";
+        }
+        finally
+        {
+            _isLoadingMessages = false;
+        }
+    }
+
+    private async Task LoadExecutionsAsync()
+    {
+        _isLoadingList = true;
+        _errorMessage = null;
+        _successMessage = null;
+        CancelDeliveryConfirmation();
+        CancelExecutionClosure();
+        _executions = [];
+        _detail = null;
+        HidePayload();
+        try
+        {
+            var executions = await ApiClient.GetHistoryExecutionsAsync(_flowId, CancellationToken.None);
+            _executions = executions.OrderByDescending(execution => execution.StartedUtcTicks).Take(50).ToArray();
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to load execution history: {exception.Message}";
+        }
+        finally
+        {
+            _isLoadingList = false;
+        }
+    }
+
+    private async Task SelectExecutionAsync(string executionId)
+    {
+        _isLoadingDetail = true;
+        _errorMessage = null;
+        _successMessage = null;
+        CancelDeliveryConfirmation();
+        CancelExecutionClosure();
+        _detail = null;
+        HidePayload();
+        try
+        {
+            _detail = await ApiClient.GetHistoryExecutionAsync(executionId, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to load execution details: {exception.Message}";
+        }
+        finally
+        {
+            _isLoadingDetail = false;
+        }
+    }
+
+    private async Task InspectPayloadAsync(Guid messageId)
+    {
+        _isLoadingPayload = true;
+        _errorMessage = null;
+        HidePayload();
+        try
+        {
+            var payload = await ApiClient.GetHistoryMessagePayloadAsync(messageId, CancellationToken.None);
+            _payload = payload.Json;
+            _payloadMessageId = messageId;
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to inspect message payload: {exception.Message}";
+        }
+        finally
+        {
+            _isLoadingPayload = false;
+        }
+    }
+
+    private void BeginDeliveryConfirmation(Guid deliveryId)
+    {
+        if (IsBusy || _detail?.Deliveries.Any(delivery => delivery.Id == deliveryId && delivery.State == "Unknown") != true)
+            return;
+
+        CancelDeliveryConfirmation();
+        CancelExecutionClosure();
+        _errorMessage = null;
+        _successMessage = null;
+        _confirmDeliveryId = deliveryId;
+    }
+
+    private void CancelDeliveryConfirmation()
+    {
+        _confirmDeliveryId = null;
+        _deliveryEvidence = string.Empty;
+        _deliveryConfirmation = string.Empty;
+    }
+
+    private async Task ConfirmDeliveryAsync()
+    {
+        if (IsBusy || !CanConfirmDelivery)
+            return;
+
+        var executionId = _detail!.Execution.Id;
+        var deliveryId = _confirmDeliveryId!.Value;
+        _isConfirmingDelivery = true;
+        _errorMessage = null;
+        _successMessage = null;
+        try
+        {
+            await ApiClient.ConfirmHistoryDeliveryAsync(executionId, deliveryId, _deliveryConfirmation, _deliveryEvidence, CancellationToken.None);
+            await SelectExecutionAsync(executionId);
+            _successMessage = "Delivery confirmed as independently verified. The effect was not resent; the original continuation is available for retry-driver resumption.";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to confirm delivery: {exception.Message}";
+        }
+        finally
+        {
+            _isConfirmingDelivery = false;
+        }
+    }
+
+    private void BeginExecutionClosure()
+    {
+        if (IsBusy || _detail?.Execution.State != "Held")
+            return;
+
+        CancelDeliveryConfirmation();
+        CancelExecutionClosure();
+        _errorMessage = null;
+        _successMessage = null;
+        _showExecutionClosure = true;
+    }
+
+    private void CancelExecutionClosure()
+    {
+        _showExecutionClosure = false;
+        _closeEvidence = string.Empty;
+        _closeConfirmation = string.Empty;
+    }
+
+    private async Task CloseExecutionAsync()
+    {
+        if (IsBusy || !CanCloseExecution)
+            return;
+
+        var executionId = _detail!.Execution.Id;
+        _isClosingExecution = true;
+        _errorMessage = null;
+        _successMessage = null;
+        try
+        {
+            await ApiClient.CloseHistoryExecutionAsync(executionId, _closeConfirmation, _closeEvidence, CancellationToken.None);
+            await SelectExecutionAsync(executionId);
+            _successMessage = "Held execution closed without replay. The held input was abandoned; effects were not resent or rolled back.";
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to close held execution: {exception.Message}";
+        }
+        finally
+        {
+            _isClosingExecution = false;
+        }
+    }
+
+    private void HidePayload()
+    {
+        _payloadMessageId = null;
+        _payload = null;
+    }
+
+    private static string FormatUtc(long ticks) => ticks >= DateTime.MinValue.Ticks && ticks <= DateTime.MaxValue.Ticks
+        ? new DateTime(ticks, DateTimeKind.Utc).ToString("u")
+        : "Invalid timestamp";
+}

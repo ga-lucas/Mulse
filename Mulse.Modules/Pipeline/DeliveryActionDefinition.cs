@@ -7,6 +7,9 @@ namespace Mulse.Modules.Pipeline;
 /// </summary>
 public sealed class DeliveryActionDefinition
 {
+    /// <summary>Require destination-backed confirmation and stable-ID deduplication for this action.</summary>
+    public bool RequireConfirmation { get; init; }
+
     /// <summary>The deliver step that dispatches the route's rendered payload.</summary>
     public ModuleStepDefinition Deliver { get; init; } = new();
 

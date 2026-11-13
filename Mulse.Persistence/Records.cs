@@ -4,6 +4,7 @@ public sealed class WorkspaceRecord
 {
     public int Id { get; set; } = 1;
     public Guid Version { get; set; }
+    public bool MaintenanceRequested { get; set; }
     public bool Encrypted { get; set; }
     public string? KeyId { get; set; }
     public byte[] PluginDirectories { get; set; } = [];

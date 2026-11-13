@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Mulse.Modules.BuiltIn.Parse;
 
-public sealed class JsonParseModule : IParseModule
+public sealed class JsonParseModule : IParseModule, IReplaySafeModule
 {
     private static readonly ModuleRecommendationProfile Recommendation = new(
         [ModuleDataFormat.Json],

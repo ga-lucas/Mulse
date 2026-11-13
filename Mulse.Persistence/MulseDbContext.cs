@@ -11,9 +11,46 @@ public abstract class MulseDbContext(DbContextOptions options) : DbContext(optio
     public DbSet<ModulePackageRecord> ModulePackages => Set<ModulePackageRecord>();
     public DbSet<CheckpointRecord> Checkpoints => Set<CheckpointRecord>();
     public DbSet<RetryRecord> Retries => Set<RetryRecord>();
+    public DbSet<ExecutionRecord> Executions => Set<ExecutionRecord>();
+    public DbSet<ExecutionEventRecord> ExecutionEvents => Set<ExecutionEventRecord>();
+    public DbSet<MessageRecord> Messages => Set<MessageRecord>();
+    public DbSet<DeliveryRecord> Deliveries => Set<DeliveryRecord>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
+        var execution = model.Entity<ExecutionRecord>();
+        execution.ToTable("Executions");
+        execution.HasKey(row => row.Key);
+        execution.Property(row => row.Key).HasMaxLength(64).IsUnicode(false);
+        execution.Property(row => row.FlowKey).HasMaxLength(64).IsUnicode(false);
+        execution.Property(row => row.State).HasMaxLength(32).IsUnicode(false);
+        execution.HasIndex(row => new { row.FlowKey, row.StartedUtcTicks });
+        execution.HasIndex(row => row.StartedUtcTicks);
+        var entry = model.Entity<ExecutionEventRecord>();
+        entry.ToTable("ExecutionEvents");
+        entry.HasKey(row => row.Id);
+        entry.Property(row => row.Id).ValueGeneratedNever();
+        entry.Property(row => row.ExecutionKey).HasMaxLength(64).IsUnicode(false);
+        entry.Property(row => row.State).HasMaxLength(32).IsUnicode(false);
+        entry.HasIndex(row => new { row.ExecutionKey, row.CreatedUtcTicks });
+        entry.HasOne<ExecutionRecord>().WithMany().HasForeignKey(row => row.ExecutionKey).OnDelete(DeleteBehavior.Cascade);
+        var message = model.Entity<MessageRecord>();
+        message.ToTable("Messages");
+        message.HasKey(row => row.Id);
+        message.Property(row => row.Id).ValueGeneratedNever();
+        message.Property(row => row.ChannelKey).HasMaxLength(64).IsUnicode(false);
+        message.Property(row => row.ExecutionKey).HasMaxLength(64).IsUnicode(false);
+        message.Property(row => row.State).HasMaxLength(32).IsUnicode(false);
+        message.HasIndex(row => new { row.ChannelKey, row.State, row.CreatedUtcTicks });
+        message.HasIndex(row => row.ExecutionKey);
+        var delivery = model.Entity<DeliveryRecord>();
+        delivery.ToTable("Deliveries");
+        delivery.HasKey(row => row.Key);
+        delivery.Property(row => row.Key).HasMaxLength(64).IsUnicode(false);
+        delivery.Property(row => row.ExecutionKey).HasMaxLength(64).IsUnicode(false);
+        delivery.Property(row => row.State).HasMaxLength(32).IsUnicode(false);
+        delivery.HasIndex(row => row.ExecutionKey);
+        delivery.HasOne<ExecutionRecord>().WithMany().HasForeignKey(row => row.ExecutionKey).OnDelete(DeleteBehavior.Cascade);
         var workspace = model.Entity<WorkspaceRecord>();
         workspace.ToTable("Workspaces");
         workspace.HasKey(row => row.Id);

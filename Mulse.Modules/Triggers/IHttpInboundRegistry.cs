@@ -22,6 +22,13 @@ public interface IHttpInboundRoute
     /// <summary>Queues the request for the next flow execution without waiting for a reply (BizTalk one-way receive location equivalent).</summary>
     void Enqueue(HttpInboundRequest request);
 
+    Task EnqueueAsync(HttpInboundRequest request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Enqueue(request);
+        return Task.CompletedTask;
+    }
+
     /// <summary>
     /// Queues the request like <see cref="Enqueue"/>, but also waits up to <paramref name="timeout"/> for a
     /// deliver module to complete the reply for <see cref="HttpInboundRequest.CorrelationId"/> via

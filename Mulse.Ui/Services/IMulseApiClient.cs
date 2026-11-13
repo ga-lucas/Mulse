@@ -14,6 +14,24 @@ public interface IMulseApiClient
 
     Task<IReadOnlyList<FlowCheckpointViewModel>> GetFlowCheckpointsAsync(string flowId, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<HistoryExecutionViewModel>> GetHistoryExecutionsAsync(string? flowId, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support execution history.");
+
+    Task<HistoryExecutionDetailViewModel> GetHistoryExecutionAsync(string executionId, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support execution history.");
+
+    Task<IReadOnlyList<HistoryMessageViewModel>> GetHistoryMessagesAsync(CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support inbox history.");
+
+    Task<HistoryMessagePayloadViewModel> GetHistoryMessagePayloadAsync(Guid messageId, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support message payload inspection.");
+
+    Task ConfirmHistoryDeliveryAsync(string executionId, Guid deliveryId, string confirmation, string evidence, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support delivery confirmation.");
+
+    Task CloseHistoryExecutionAsync(string executionId, string confirmation, string evidence, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support held execution closure.");
+
     Task<FlowViewModel> CreateFlowAsync(CreateFlowRequestViewModel request, CancellationToken cancellationToken);
 
     Task<FlowViewModel> UpdateFlowAsync(UpdateFlowRequestViewModel request, CancellationToken cancellationToken);
@@ -69,6 +87,18 @@ public interface IMulseApiClient
     Task<RuntimeEncryptionViewModel> GetEncryptionAsync(CancellationToken cancellationToken);
 
     Task<RuntimeEncryptionViewModel> SetEncryptionAsync(bool enabled, CancellationToken cancellationToken);
+
+    Task<RuntimeStorageViewModel> GetStorageAsync(CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support storage diagnostics.");
+
+    Task<ProcessingStatusViewModel> GetProcessingAsync(CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support processing controls.");
+
+    Task<ProcessingBacklogViewModel> GetProcessingBacklogAsync(CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support processing backlog diagnostics.");
+
+    Task<ProcessingStatusViewModel> SetMaintenanceAsync(bool requested, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support processing controls.");
 
     Task<IReadOnlyList<ConfigReferenceUsageViewModel>> GetConfigValueUsagesAsync(CancellationToken cancellationToken);
 

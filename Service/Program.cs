@@ -72,6 +72,9 @@ app.MapDesignerEndpoints();
 app.MapBizTalkMigrationEndpoints();
 app.MapConfigValueEndpoints();
 app.MapEncryptionEndpoints();
+app.MapStorageEndpoints();
+app.MapHistoryEndpoints();
+app.MapProcessingEndpoints();
 app.MapHttpInboundEndpoints();
 
 app.Run();

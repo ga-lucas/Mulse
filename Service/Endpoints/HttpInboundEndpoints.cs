@@ -22,6 +22,8 @@ public static class HttpInboundEndpoints
                 IHttpInboundRegistry registry,
                 CancellationToken cancellationToken) =>
             {
+                var coordinator = request.HttpContext.RequestServices.GetService<ProcessingCoordinator>();
+                using var admission = coordinator?.Enter(execution: false);
                 if (!registry.TryGetRoute(route, out var handler))
                 {
                     return TypedResults.NotFound($"No flow is currently listening on inbound route '{route}'.");
@@ -39,7 +41,12 @@ public static class HttpInboundEndpoints
                     static query => query.Value.ToString(),
                     StringComparer.OrdinalIgnoreCase);
 
-                var correlationId = Guid.CreateVersion7().ToString();
+                var idempotencyKey = request.Headers["Idempotency-Key"].ToString();
+                if (idempotencyKey.Length > 256)
+                    throw new ArgumentException("Idempotency-Key must be at most 256 characters.");
+                var correlationId = string.IsNullOrWhiteSpace(idempotencyKey) ? Guid.CreateVersion7().ToString()
+                    : new Guid(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+                        System.Text.Json.JsonSerializer.Serialize(new[] { route.ToUpperInvariant(), idempotencyKey }))).AsSpan(0, 16)).ToString();
                 var inboundRequest = new HttpInboundRequest(
                     correlationId,
                     request.Method,
@@ -67,13 +74,13 @@ public static class HttpInboundEndpoints
                     return new HttpInboundReplyResult(reply);
                 }
 
-                handler.Enqueue(inboundRequest);
+                await handler.EnqueueAsync(inboundRequest, cancellationToken).ConfigureAwait(false);
                 return TypedResults.Accepted((string?)null);
             })
             .WithName("PostHttpInbound")
             .WithSummary("Push an inbound request to a listening flow")
             .WithDescription(
-                "Accepts a request for a route registered by an active http-inbound-fetch push trigger and queues it for the next flow execution. " +
+                "Accepts a request for a route registered by an active http-inbound-fetch push trigger and queues it for the next flow execution. Database storage commits acceptance before returning 202; Json mode remains process-local. Idempotency-Key supports identical-request acceptance retries while the database message record is retained. " +
                 "Add ?awaitResponseSeconds=N (up to 120) to hold the connection open and receive a synchronous reply once a paired " +
                 "http-inbound-reply-deliver step completes, for migrating BizTalk two-way (request-response) receive locations.")
             .WithTags("Inbound")

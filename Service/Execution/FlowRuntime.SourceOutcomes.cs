@@ -6,7 +6,41 @@ public sealed partial class FlowRuntime
 {
     private const string SourceOutcomeStage = "source-outcome";
 
-    private async Task<FlowExecutionResult> RunWithSourceOutcomesAsync(
+    private Task<FlowExecutionResult> RunWithSourceOutcomesAsync(
+        PipelineDefinition pipeline, FlowExecutionContext context,
+        Func<Task<FlowExecutionResult>> run, CancellationToken cancellationToken)
+        => TrackExecutionAsync(pipeline, context, () => RunWithSourceOutcomesCoreAsync(pipeline, context, run, cancellationToken), cancellationToken);
+
+    private async Task<FlowExecutionResult> TrackExecutionAsync(PipelineDefinition pipeline, FlowExecutionContext context,
+        Func<Task<FlowExecutionResult>> run, CancellationToken cancellationToken)
+    {
+        await ValidateConfirmationAsync(pipeline, cancellationToken).ConfigureAwait(false);
+        if (journal is null) return await run().ConfigureAwait(false);
+        await journal.BeginAsync(pipeline, context, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var result = await run().ConfigureAwait(false);
+            var state = result.Outcome == FlowExecutionOutcome.Retrying ? "Retrying"
+                : result.Outcome == FlowExecutionOutcome.Suspended ? "Suspended" : "Completed";
+            await journal.FinishAsync(context, state, result.Detail, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        catch (FlowRetryScheduledSignal signal)
+        {
+            await journal.FinishAsync(context, "Retrying", signal.Result.Detail, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            using var recovery = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await journal.FinishAsync(context, exception is OperationCanceledException or FlowDurabilityException
+                            or Mulse.Modules.Orchestration.OdxAmbiguousEffectException or Mulse.Modules.Orchestration.OdxPersistenceException
+                            or Mulse.Modules.ControlFlow.NativeAmbiguousEffectException or Mulse.Modules.ControlFlow.NativePersistenceException ? "Held" : "Failed", exception.Message, recovery.Token).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task<FlowExecutionResult> RunWithSourceOutcomesCoreAsync(
         PipelineDefinition pipeline, FlowExecutionContext context,
         Func<Task<FlowExecutionResult>> run, CancellationToken cancellationToken)
     {
@@ -15,7 +49,7 @@ public sealed partial class FlowRuntime
         {
             result = await run().ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is not (FlowRetryScheduledSignal or OperationCanceledException
+        catch (Exception exception) when (exception is not (FlowRetryScheduledSignal or OperationCanceledException or FlowDurabilityException
             or Mulse.Modules.Orchestration.OdxAmbiguousEffectException or Mulse.Modules.Orchestration.OdxPersistenceException
             or Mulse.Modules.Orchestration.OdxUnmatchedMessageException
             or Mulse.Modules.ControlFlow.NativeAmbiguousEffectException or Mulse.Modules.ControlFlow.NativePersistenceException or Mulse.Modules.ControlFlow.NativeUnmatchedMessageException))

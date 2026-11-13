@@ -4,9 +4,10 @@ namespace Mulse.Modules.BuiltIn.Fetch;
 /// Push-triggered fetch module that receives the batch delivered by a paired <see cref="Deliver.FlowLinkDeliverModule"/>
 /// - in the same flow or a different one - configured with the same "channel" setting. Lets one flow's Deliver
 /// step directly hand its rendered result off to another flow's Fetch step, entirely in-process, without an
-/// external transport such as HTTP, a file drop, or a queue in between.
+/// external transport such as HTTP or a file drop. A registered IDurableInbox persists queued batches;
+/// without it the legacy process-local channel is used.
 /// </summary>
-public sealed class FlowLinkFetchModule : IPushTriggeredFetchModule
+public sealed class FlowLinkFetchModule(IDurableInbox? inbox = null) : IPushTriggeredFetchModule, IFetchOutcomeModule
 {
     private static readonly IReadOnlyList<ModuleSettingDescriptor> SettingDescriptors =
     [
@@ -27,21 +28,24 @@ public sealed class FlowLinkFetchModule : IPushTriggeredFetchModule
         Recommendation);
 
     /// <summary><paramref name="input"/> is unused: this is a root source fed by a paired flow-link-deliver step.</summary>
-    public Task<IntegrationBatch> FetchAsync(
+    public async Task<IntegrationBatch> FetchAsync(
         FlowExecutionContext context,
         IntegrationBatch input,
         ModuleStepDefinition step,
         CancellationToken cancellationToken)
     {
         var channelName = ResolveChannel(step);
-        if (!FlowLinkChannel.TryGet(channelName, out var channel))
+        if (inbox is not null)
         {
-            return Task.FromResult(IntegrationBatch.Empty);
+            var batch = await inbox.ClaimAsync("flow-link:" + channelName, context, cancellationToken).ConfigureAwait(false);
+            return batch.Count == 0 ? batch : batch with { SourceReceipt = new Dictionary<string, string> { ["channel"] = "flow-link:" + channelName } };
         }
-
-        var payloads = channel.DequeueReady();
-        return Task.FromResult(new IntegrationBatch(payloads));
+        if (!FlowLinkChannel.TryGet(channelName, out var channel)) return IntegrationBatch.Empty;
+        return new IntegrationBatch(channel.DequeueReady());
     }
+
+    public Task OnProcessingCompletedAsync(FlowExecutionContext context, FetchProcessingReceipt receipt, FetchProcessingOutcome outcome, CancellationToken cancellationToken)
+        => inbox is null ? Task.CompletedTask : inbox.CompleteAsync(context, receipt.Data["channel"], outcome.Succeeded, cancellationToken);
 
     public Task<IAsyncDisposable> RegisterTriggerAsync(
         PushFlowTriggerContext context,

@@ -12,4 +12,5 @@ public sealed record ModuleViewModel(
     string PackageId = "",
     string PackageSourceKind = "",
     string AssemblyPath = "",
-    bool SupportsPushTrigger = false);
+    bool SupportsPushTrigger = false,
+    bool SupportsConfirmation = false);

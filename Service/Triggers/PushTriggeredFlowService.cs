@@ -8,7 +8,8 @@ namespace Service.Triggers;
 public sealed class PushTriggeredFlowService(
     IFlowRuntime flowRuntime,
     IModuleCatalog moduleCatalog,
-    ILogger<PushTriggeredFlowService> logger) : BackgroundService
+    ILogger<PushTriggeredFlowService> logger,
+    ProcessingCoordinator? processing = null) : BackgroundService
 {
     private static readonly JsonSerializerOptions SignatureJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly Channel<PushFlowTriggerSignal> _signalChannel = Channel.CreateUnbounded<PushFlowTriggerSignal>(new UnboundedChannelOptions
@@ -50,8 +51,11 @@ public sealed class PushTriggeredFlowService(
         {
             await foreach (var signal in _signalChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
+                var requeue = false;
                 try
                 {
+                    while (processing?.IsAccepting == false)
+                        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
                     logger.LogInformation(
                         "Push trigger received for flow {FlowId} from module {ModuleId}. Reason: {Reason}",
                         signal.FlowId,
@@ -60,6 +64,12 @@ public sealed class PushTriggeredFlowService(
 
                     await flowRuntime.ExecuteAsync(signal.FlowId, cancellationToken).ConfigureAwait(false);
                 }
+                catch (AdmissionRejectedException exception)
+                {
+                    requeue = true;
+                    logger.LogDebug(exception, "Push admission deferred for flow {FlowId}; retaining its signal.", signal.FlowId);
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                }
                 catch (Exception exception)
                 {
                     logger.LogError(exception, "Push-triggered execution failed for flow {FlowId}.", signal.FlowId);
@@ -67,6 +77,7 @@ public sealed class PushTriggeredFlowService(
                 finally
                 {
                     _queuedFlowIds.TryRemove(signal.FlowId, out _);
+                    if (requeue && !cancellationToken.IsCancellationRequested) SignalFlow(signal);
                 }
             }
         }

@@ -67,6 +67,9 @@ public sealed partial class FlowRuntime
                 FlowModuleDependencies.EnsureAvailable(pipeline, moduleCatalog.GetAll());
             }
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
+            if (journal is not null && retryState.SourceCompletion is null)
+                await journal.ValidateStageResumeAsync(retryState,
+                    await IsReplaySafeStageAsync(pipeline, retryState.StageId, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
             var context = new FlowExecutionContext(pipeline.Id, retryState.ExecutionId, retryState.ExecutionStartedAt)
             {
                 PendingSourceReceipts = await orchestrationStateStore.GetPendingSourceReceiptsAsync(pipeline.Id, cancellationToken).ConfigureAwait(false)
@@ -133,9 +136,9 @@ public sealed partial class FlowRuntime
                             Responses = completion.Responses, CompletedReceiptIds = completion.CompletedReceiptIds.ToList(),
                             CheckpointFlowId = completion.CheckpointFlowId, CheckpointCorrelationKey = completion.CheckpointCorrelationKey
                         };
-                    return await CompleteSourcesAsync(pipeline, context, completion,
+                    return await TrackExecutionAsync(pipeline, context, () => CompleteSourcesAsync(pipeline, context, completion,
                         restartSourceNotifications ? 0 : retryState.SourceReceiptIndex,
-                        restartSourceNotifications ? 0 : retryState.AttemptsMade, cancellationToken).ConfigureAwait(false);
+                        restartSourceNotifications ? 0 : retryState.AttemptsMade, cancellationToken), cancellationToken).ConfigureAwait(false);
                 }
                 return await RunWithSourceOutcomesAsync(pipeline, context, ResumeStagesAsync, cancellationToken).ConfigureAwait(false);
             }

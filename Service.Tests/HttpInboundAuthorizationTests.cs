@@ -35,11 +35,18 @@ public sealed class HttpInboundAuthorizationTests
                 .Build();
         });
         builder.Services.AddSingleton<IHttpInboundRegistry, EmptyInboundRegistry>();
+        builder.Services.AddSingleton(new RuntimeStorageSettings("Sqlite", true, "C:\\data\\mulse.db", true, "primary", "MULSE_STATE_ENCRYPTION_KEY"));
+        using var workspace = new WorkspacePersistenceTests.DatabaseFixture("Sqlite");
+        builder.Services.AddSingleton<IRuntimeConfigurationStore>(workspace.Store());
+        builder.Services.AddSingleton<ProcessingCoordinator>();
 
         await using var app = builder.Build();
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapGet("/api/management", () => Results.Ok());
+        app.MapStorageEndpoints();
+        app.MapHistoryEndpoints();
+        app.MapProcessingEndpoints();
         app.MapHttpInboundEndpoints();
         await app.StartAsync();
         try
@@ -60,7 +67,38 @@ public sealed class HttpInboundAuthorizationTests
             using var allowedResponse = await http.SendAsync(allowedRequest);
 
             using var inboundResponse = await http.PostAsync("/api/inbound/existing-source", new StringContent("payload"));
+            using var anonymousStorage = await http.GetAsync("/api/workspace/storage");
+            using var allowedStorageRequest = CreateManagementRequest("mulse-api-access", "mulse-service");
+            allowedStorageRequest.RequestUri = new Uri("/api/workspace/storage", UriKind.Relative);
+            using var allowedStorage = await http.SendAsync(allowedStorageRequest);
+            using var forbiddenStorageRequest = CreateManagementRequest("other-role", "mulse-service");
+            forbiddenStorageRequest.RequestUri = new Uri("/api/workspace/storage", UriKind.Relative);
+            using var forbiddenStorage = await http.SendAsync(forbiddenStorageRequest);
 
+            using var anonymousHistory = await http.GetAsync("/api/history/executions");
+            using var anonymousPayload = await http.GetAsync("/api/history/messages/" + Guid.NewGuid());
+            using var forbiddenHistoryRequest = CreateManagementRequest("other-role", "mulse-service");
+            forbiddenHistoryRequest.RequestUri = new Uri("/api/history/messages", UriKind.Relative);
+            using var forbiddenHistory = await http.SendAsync(forbiddenHistoryRequest);
+            using var anonymousProcessing = await http.GetAsync("/api/workspace/processing");
+            using var anonymousBacklog = await http.GetAsync("/api/workspace/processing/backlog");
+            using var anonymousPause = await http.PutAsync("/api/workspace/processing/maintenance", new StringContent("{\"requested\":true}", System.Text.Encoding.UTF8, "application/json"));
+            using var forbiddenPauseRequest = CreateManagementRequest("other-role", "mulse-service");
+            forbiddenPauseRequest.Method = HttpMethod.Put;
+            forbiddenPauseRequest.RequestUri = new Uri("/api/workspace/processing/maintenance", UriKind.Relative);
+            forbiddenPauseRequest.Content = new StringContent("{\"requested\":true}", System.Text.Encoding.UTF8, "application/json");
+            using var forbiddenPause = await http.SendAsync(forbiddenPauseRequest);
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymousProcessing.StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymousBacklog.StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymousPause.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, forbiddenPause.StatusCode);
+            Assert.False(app.Services.GetRequiredService<IRuntimeConfigurationStore>().GetState().MaintenanceRequested);
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymousHistory.StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymousPayload.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, forbiddenHistory.StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymousStorage.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, forbiddenStorage.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, allowedStorage.StatusCode);
             Assert.Equal(HttpStatusCode.Unauthorized, anonymousManagementResponse.StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, missingRoleResponse.StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, wrongClientResponse.StatusCode);

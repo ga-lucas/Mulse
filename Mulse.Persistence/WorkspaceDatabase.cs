@@ -2,8 +2,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Mulse.Persistence;
 
-public sealed class WorkspaceDatabase(IDbContextFactory<MulseDbContext> factory, DatabasePayloadCodec codec, bool applyMigrations)
+public sealed partial class WorkspaceDatabase(IDbContextFactory<MulseDbContext> factory, DatabasePayloadCodec codec, bool applyMigrations, IWorkspaceOwnershipGuard? ownership = null)
 {
+    private readonly SemaphoreSlim _transactionGate = new(1, 1);
     private Guid? _version;
     private Dictionary<(WorkspaceDocumentKind, string), WorkspaceDocument> _documents = [];
     private bool _encrypted;
@@ -13,6 +14,7 @@ public sealed class WorkspaceDatabase(IDbContextFactory<MulseDbContext> factory,
 
     public void EnsureAvailable()
     {
+        ownership?.EnsureAvailable();
         if (_requiresReload)
             throw new InvalidOperationException("Database state is stale or a commit was not acknowledged. Stop the Service and restart to reload committed state before continuing; do not blindly replay external effects.");
     }
@@ -26,7 +28,8 @@ public sealed class WorkspaceDatabase(IDbContextFactory<MulseDbContext> factory,
         var workspace = db.Workspaces.AsNoTracking().SingleOrDefault();
         if (workspace is null)
         {
-            if (db.Flows.Any() || db.FlowRevisions.Any() || db.ConfigurationValues.Any() || db.ModulePackages.Any() || db.Checkpoints.Any() || db.Retries.Any())
+            if (db.Flows.Any() || db.FlowRevisions.Any() || db.ConfigurationValues.Any() || db.ModulePackages.Any() || db.Checkpoints.Any() || db.Retries.Any()
+                            || db.Executions.Any() || db.Messages.Any() || db.ExecutionEvents.Any() || db.Deliveries.Any())
                 throw new InvalidOperationException("Database contains records without workspace metadata. Restore a consistent database; no seed data was written.");
             _loaded = true;
             return null;
@@ -51,7 +54,7 @@ public sealed class WorkspaceDatabase(IDbContextFactory<MulseDbContext> factory,
         {
             FlowKey = row.FlowKey, ExecutionKey = row.ExecutionKey, NextAttemptUtcTicks = row.NextAttemptUtcTicks, NotificationsExhausted = row.NotificationsExhausted
         });
-        var state = new WorkspaceDatabaseState(Decode(workspace.PluginDirectories, "workspace:directories"), documents);
+        var state = new WorkspaceDatabaseState(Decode(workspace.PluginDirectories, "workspace:directories"), documents, workspace.MaintenanceRequested);
         _version = workspace.Version;
         _encrypted = workspace.Encrypted;
         _keyId = workspace.KeyId;
@@ -64,6 +67,13 @@ public sealed class WorkspaceDatabase(IDbContextFactory<MulseDbContext> factory,
     }
 
     public async Task SaveAsync(WorkspaceDatabaseState state, bool encrypted, string? importSource, CancellationToken cancellationToken)
+    {
+        await _transactionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { await SaveCoreAsync(state, encrypted, importSource, cancellationToken).ConfigureAwait(false); }
+        finally { _transactionGate.Release(); }
+    }
+
+    private async Task SaveCoreAsync(WorkspaceDatabaseState state, bool encrypted, string? importSource, CancellationToken cancellationToken)
     {
         EnsureAvailable();
         if (!_loaded) throw new InvalidOperationException("Load the database before committing a workspace.");
@@ -84,6 +94,7 @@ public sealed class WorkspaceDatabase(IDbContextFactory<MulseDbContext> factory,
             db.Workspaces.Add(workspace);
         }
         workspace.Version = Guid.NewGuid();
+        workspace.MaintenanceRequested = state.MaintenanceRequested;
         workspace.Encrypted = encrypted;
         workspace.KeyId = encrypted ? codec.KeyId : null;
         workspace.PluginDirectories = codec.Protect(state.PluginDirectoriesJson, "workspace:directories", encrypted);
@@ -102,6 +113,7 @@ public sealed class WorkspaceDatabase(IDbContextFactory<MulseDbContext> factory,
         {
             foreach (var revision in await db.FlowRevisions.ToListAsync(cancellationToken).ConfigureAwait(false))
                 revision.Definition = codec.Protect(codec.Unprotect(revision.Definition, RevisionIdentity(revision.Id), _encrypted, _keyId), RevisionIdentity(revision.Id), encrypted);
+            await ReencryptOperationsAsync(db, encrypted, cancellationToken).ConfigureAwait(false);
         }
         foreach (var old in _documents.Values.Where(row => !incoming.ContainsKey((row.Kind, row.Key))))
             await DeleteAsync(db, old, cancellationToken).ConfigureAwait(false);

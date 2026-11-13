@@ -38,7 +38,8 @@ public sealed record BizTalkDraftDeliveryRouteViewModel(
 
 public sealed record BizTalkDraftDeliveryActionViewModel(
     BizTalkDraftStepViewModel Deliver,
-    BizTalkDraftStepViewModel? Compensation = null);
+    BizTalkDraftStepViewModel? Compensation = null,
+    bool RequireConfirmation = false);
 
 public sealed record BizTalkSettingRequirementViewModel(
     string Kind,

@@ -48,7 +48,8 @@ public sealed record BizTalkDraftDeliveryRouteResponse(
 /// <summary>Represents one generated deliver action of a draft delivery route, with its optional compensation step.</summary>
 public sealed record BizTalkDraftDeliveryActionResponse(
     BizTalkDraftStepResponse Deliver,
-    BizTalkDraftStepResponse? Compensation = null);
+    BizTalkDraftStepResponse? Compensation = null,
+    bool RequireConfirmation = false);
 
 /// <summary>Represents a configuration or secret requirement identified during migration.</summary>
 public sealed record BizTalkSettingRequirementResponse(

@@ -25,7 +25,8 @@ public static class ModuleEndpoints
                         MapFormats(module.Descriptor.Recommendation),
                         MapProtocols(module.Descriptor.Recommendation),
                         MapCapabilities(module.Descriptor.Recommendation),
-                        module.SupportsPushTrigger))
+                        module.SupportsPushTrigger,
+                        module.SupportsConfirmation))
                     .ToArray();
 
                 return TypedResults.Ok(response);

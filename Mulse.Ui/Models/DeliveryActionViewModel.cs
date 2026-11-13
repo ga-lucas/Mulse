@@ -2,4 +2,5 @@ namespace Mulse.Ui.Models;
 
 public sealed record DeliveryActionViewModel(
     FlowStepViewModel Deliver,
-    FlowStepViewModel? Compensation = null);
+    FlowStepViewModel? Compensation = null,
+    bool RequireConfirmation = false);

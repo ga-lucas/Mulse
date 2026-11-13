@@ -11,6 +11,7 @@ public sealed partial class FlowRuntime
         {
             pipeline = GetConfiguredFlow(flowId);
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
+            await ValidateConfirmationAsync(pipeline, cancellationToken).ConfigureAwait(false);
             if ((await flowRetryStateStore.GetAllAsync(cancellationToken).ConfigureAwait(false))
                 .Any(retry => retry.FlowId.Equals(pipeline.Id, StringComparison.OrdinalIgnoreCase))) return null;
             var checkpoints = await orchestrationStateStore.GetAllAsync(pipeline.Id, cancellationToken).ConfigureAwait(false);
@@ -36,6 +37,7 @@ public sealed partial class FlowRuntime
         {
             pipeline = GetConfiguredFlow(flowId);
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
+            await ValidateConfirmationAsync(pipeline, cancellationToken).ConfigureAwait(false);
             if ((await flowRetryStateStore.GetAllAsync(cancellationToken).ConfigureAwait(false)).Any(retry => retry.FlowId.Equals(pipeline.Id, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException("This flow has pending retry/source work. Resolve it before releasing another batch.");
             var checkpoints = await orchestrationStateStore.GetAllAsync(pipeline.Id, cancellationToken).ConfigureAwait(false);

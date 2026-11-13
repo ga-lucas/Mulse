@@ -13,6 +13,7 @@ internal sealed class ApiExceptionHandler(ILogger<ApiExceptionHandler> logger) :
     {
         var (statusCode, title) = exception switch
         {
+            AdmissionRejectedException => (StatusCodes.Status503ServiceUnavailable, "Processing unavailable"),
             KeyNotFoundException => (StatusCodes.Status404NotFound, "Not Found"),
             ArgumentException => (StatusCodes.Status400BadRequest, "Bad Request"),
             InvalidOperationException or DbUpdateConcurrencyException => (StatusCodes.Status409Conflict, "Conflict"),
@@ -34,6 +35,7 @@ internal sealed class ApiExceptionHandler(ILogger<ApiExceptionHandler> logger) :
         logger.LogWarning(exception, "Handled API exception with status code {StatusCode}.", statusCode);
 
         httpContext.Response.StatusCode = statusCode;
+        if (statusCode == StatusCodes.Status503ServiceUnavailable) httpContext.Response.Headers.RetryAfter = "5";
         await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
         {
             Status = statusCode,

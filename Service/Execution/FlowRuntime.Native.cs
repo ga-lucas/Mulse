@@ -29,6 +29,7 @@ public sealed partial class FlowRuntime
         {
             pipeline = GetConfiguredFlow(flowId);
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
+            await ValidateConfirmationAsync(pipeline, cancellationToken).ConfigureAwait(false);
             var checkpoint = (await orchestrationStateStore.GetAllAsync(pipeline.Id, cancellationToken).ConfigureAwait(false))
                 .SingleOrDefault(item => item.InstanceId.Equals(instanceId, StringComparison.Ordinal))
                 ?? throw new KeyNotFoundException("The inspected native instance no longer exists.");

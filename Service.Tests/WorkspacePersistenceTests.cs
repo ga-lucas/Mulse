@@ -67,7 +67,7 @@ public sealed class WorkspacePersistenceTests
         Assert.Equal("Original", originalDefinition.RootElement.GetProperty("name").GetString());
         Assert.Equal(retry.NextAttemptAt.UtcTicks, Assert.Single(db.Retries).NextAttemptUtcTicks);
         Assert.Equal(1, db.Workspaces.Count());
-        Assert.Single(db.Database.GetAppliedMigrations());
+        Assert.Equal(4, db.Database.GetAppliedMigrations().Count());
         Assert.False(db.Database.HasPendingModelChanges());
         await store.DeleteRetryStateAsync("ORDERS", "EXECUTION", "FETCH:FETCH", default);
         await store.DeleteOrchestrationCheckpointAsync("orders", "tenant", default);
@@ -349,13 +349,163 @@ public sealed class WorkspacePersistenceTests
     {
         using var fixture = new DatabaseFixture(provider, modelOnly: true);
         using var db = fixture.Factory.CreateDbContext();
-        Assert.Single(db.Database.GetMigrations());
+        Assert.Equal(4, db.Database.GetMigrations().Count());
         Assert.False(db.Database.HasPendingModelChanges());
         var sql = db.GetService<IMigrator>().GenerateScript();
         Assert.Contains("FlowRevisions", sql);
         Assert.Contains("Retries", sql);
         Assert.Contains("Workspaces", sql);
-        Assert.Equal(7, db.Model.GetEntityTypes().Count());
+        Assert.Equal(11, db.Model.GetEntityTypes().Count());
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public async Task Inbox_AcknowledgedMessagesSurviveRestartAndClaimsAreNeverBlindlyRequeued(string provider)
+    {
+        using var fixture = new DatabaseFixture(provider);
+        var first = fixture.Journal(encrypted: true);
+        var id = Guid.NewGuid();
+        var batch = new IntegrationBatch([new("accepted", BinaryData.FromString("durable-message-sentinel"), "text/plain", new Dictionary<string, string> { ["correlationId"] = "request-one" })]);
+        await first.Journal.EnqueueAsync("http:orders", "orders", id, batch, default);
+        using (var db = fixture.Factory.CreateDbContext())
+        {
+            var saved = Assert.Single(db.Messages);
+            Assert.Equal("Pending", saved.State);
+            Assert.DoesNotContain(Convert.ToBase64String(Encoding.UTF8.GetBytes("durable-message-sentinel")), Encoding.UTF8.GetString(saved.Payload));
+        }
+        var restarted = fixture.Journal();
+        var context = new FlowExecutionContext("orders", "run-one", DateTimeOffset.UtcNow);
+        await restarted.Journal.BeginAsync(Flow(), context, default);
+        var claimed = await restarted.Journal.ClaimAsync("HTTP:ORDERS", context, default);
+        Assert.Equal("durable-message-sentinel", Assert.Single(claimed.Payloads).GetText());
+        Assert.Equal("request-one", claimed.Payloads[0].Metadata["correlationId"]);
+        Assert.Empty((await restarted.Journal.ClaimAsync("http:orders", context, default)).Payloads);
+        var recovered = fixture.Journal();
+        await recovered.Journal.RecoverAsync(default);
+        Assert.True(await recovered.Journal.IsBlockedAsync("ORDERS", default));
+        Assert.Empty((await recovered.Journal.ClaimAsync("http:orders", new("orders", "another", DateTimeOffset.UtcNow), default)).Payloads);
+        using (var db = fixture.Factory.CreateDbContext())
+        {
+            Assert.Equal("Held", Assert.Single(db.Messages).State);
+            Assert.Equal("Held", Assert.Single(db.Executions).State);
+        }
+        await recovered.Store.SetEncryptionAsync(false, default);
+        var plaintext = await recovered.Journal.ReadMessageAsync(id, default);
+        Assert.Equal("durable-message-sentinel", Assert.Single(JsonSerializer.Deserialize<List<FlowOrchestrationPayloadSnapshot>>(plaintext, JsonSerializerOptions.Web)!).Restore().GetText());
+        await recovered.Store.SetEncryptionAsync(true, default);
+        Assert.Equal(plaintext, await fixture.Journal().Journal.ReadMessageAsync(id, default));
+        await fixture.Journal().Journal.EnqueueAsync("http:orders", "orders", id, batch, default);
+        await Assert.ThrowsAsync<FlowDurabilityException>(() => fixture.Journal().Journal.EnqueueAsync("http:other", "orders", id, batch, default));
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public async Task Journal_DeliveredButUnacknowledgedCommit_IsHeldWithoutReinvokingDestination(string provider)
+    {
+        using var fixture = new DatabaseFixture(provider);
+        var setup = fixture.Journal();
+        var invocations = 0;
+        var pipeline = new PipelineDefinition { Id = "orders", Enabled = true, Fetches = Flow().Fetches,
+            Retry = new() { MaxAttempts = 3, Delay = TimeSpan.Zero } };
+        pipeline.Parses.Add(new() { Id = "p", FetchNodeIds = ["fetch"], Parse = new() { Module = "parse" } });
+        pipeline.Deliveries.Add(new() { Render = new() { Module = "render" }, Delivers = [new() { Deliver = new() { Module = "deliver" } }] });
+        var catalog = new FakeExecutableModuleCatalog()
+            .AddFetch(new DelegateFetchModule("source", (_, _, _, _) => Task.FromResult(new IntegrationBatch([new("body", BinaryData.FromString("one"), "text/plain", new Dictionary<string, string>())]))))
+            .AddParse(DelegateModuleFactory.PassthroughParse("parse"))
+            .AddRender(DelegateModuleFactory.PassthroughRender("render"))
+            .AddDeliver(new DelegateDeliverModule("deliver", (_, _, _, _) => { invocations++; throw new IOException("Reply lost after destination accepted the request."); }));
+        FlowRuntime Runtime((RuntimeConfigurationStore Store, FlowJournal Journal) pair) => new(new FakeFlowDefinitionService(pipeline), catalog,
+            new FlowOrchestrationStateStore(pair.Store), new FlowRetryStateStore(pair.Store), new ConfigValueResolver(pair.Store),
+            TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<FlowRuntime>.Instance, pair.Journal);
+        var error = await Assert.ThrowsAsync<FlowDurabilityException>(() => Runtime(setup).ExecuteAsync("orders", default));
+        Assert.Contains("outcome is uncertain", error.Message);
+        Assert.Equal(1, invocations);
+        using (var db = fixture.Factory.CreateDbContext())
+        {
+            Assert.Equal("Unknown", Assert.Single(db.Deliveries).State);
+            Assert.Equal("Held", Assert.Single(db.Executions).State);
+            Assert.Single(db.Retries);
+        }
+        var recovered = fixture.Journal();
+        await recovered.Journal.RecoverAsync(default);
+        await Assert.ThrowsAsync<FlowDurabilityException>(() => Runtime(recovered).ExecuteAsync("orders", default));
+        Assert.Equal(1, invocations);
+        Assert.Single(await recovered.Journal.ListAsync("orders", 50, default));
+        var retry = Assert.Single(recovered.Store.GetState().PendingRetries);
+        using var inspected = fixture.Factory.CreateDbContext();
+        var delivery = Assert.Single(inspected.Deliveries);
+        await Assert.ThrowsAsync<ArgumentException>(() => recovered.Journal.ConfirmDeliveredAsync(retry.ExecutionId, delivery.Id, "guess", default));
+        await recovered.Journal.ConfirmDeliveredAsync(retry.ExecutionId, delivery.Id, "Destination audit independently confirms receipt 123.", default);
+        await Assert.ThrowsAsync<FlowDurabilityException>(() => recovered.Journal.ConfirmDeliveredAsync(retry.ExecutionId, delivery.Id, "Destination confirms again.", default));
+        Assert.False(await recovered.Journal.IsDeliveryHeldAsync(retry.ExecutionId, default));
+        Assert.Equal(FlowExecutionOutcome.Completed, (await Runtime(recovered).ResumeRetryAsync(retry, default))!.Outcome);
+        Assert.Equal(1, invocations);
+        Assert.Empty(recovered.Store.GetState().PendingRetries);
+        Assert.Equal("Completed", Assert.Single(await recovered.Journal.ListAsync("orders", 50, default)).State);
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public async Task Journal_CommittedDeliveryIsSkippedAndResponsesRestoredWithoutReplaying(string provider)
+    {
+        using var fixture = new DatabaseFixture(provider);
+        var setup = fixture.Journal(encrypted: true);
+        var context = new FlowExecutionContext("orders", "committed", DateTimeOffset.UtcNow);
+        var batch = new IntegrationBatch([new("message", BinaryData.FromString("body"), "text/plain", new Dictionary<string, string>())]);
+        await setup.Journal.BeginAsync(Flow(), context, default);
+        Assert.True(await setup.Journal.PrepareDeliveryAsync(context, "delivery:0:deliver:0", new() { Module = "external" }, batch, default));
+        await setup.Journal.DeliveryStateAsync(context, "delivery:0:deliver:0", "InFlight", default);
+        context.CaptureResponse(new IntegrationBatch([new("reply", BinaryData.FromString("response-sentinel"), "text/plain", new Dictionary<string, string>())]));
+        await setup.Journal.DeliveryStateAsync(context, "delivery:0:deliver:0", "Succeeded", default);
+        var restarted = fixture.Journal();
+        var resumed = new FlowExecutionContext("orders", "committed", context.StartedAt);
+        Assert.False(await restarted.Journal.PrepareDeliveryAsync(resumed, "delivery:0:deliver:0", new() { Module = "external" }, batch, default));
+        Assert.Equal("response-sentinel", Assert.Single(resumed.CapturedResponses).GetText());
+        using var db = fixture.Factory.CreateDbContext();
+        Assert.DoesNotContain(Convert.ToBase64String(Encoding.UTF8.GetBytes("response-sentinel")), Encoding.UTF8.GetString(Assert.Single(db.Deliveries).Payload));
+        await restarted.Store.SetEncryptionAsync(false, default);
+        using var unencrypted = fixture.Factory.CreateDbContext();
+        Assert.Contains(Convert.ToBase64String(Encoding.UTF8.GetBytes("response-sentinel")), Encoding.UTF8.GetString((await unencrypted.Deliveries.AsNoTracking().SingleAsync()).Payload));
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public async Task Journal_StageHistoryRetentionProtectsPendingWorkAndEncryptionRewritesAllRecords(string provider)
+    {
+        using var fixture = new DatabaseFixture(provider);
+        var clock = new JournalClock();
+        var options = new FlowHistoryOptions { CaptureStagePayloads = true, RetentionDays = 1 };
+        var pair = fixture.Journal(history: options, clock: clock);
+        var context = new FlowExecutionContext("orders", "terminal", clock.Now);
+        await pair.Journal.BeginAsync(Flow(), context, default);
+        await pair.Journal.StageAsync(context, "parse:p", "Succeeded", new IntegrationBatch([new("body", BinaryData.FromString("history-sentinel"), "text/plain", new Dictionary<string, string>())]), "event-detail-sentinel", default);
+        await pair.Journal.FinishAsync(context, "Completed", null, default);
+        var pendingId = Guid.NewGuid();
+        await pair.Journal.EnqueueAsync("http:pending", "pending", pendingId, IntegrationBatch.Empty, default);
+        await pair.Store.SetEncryptionAsync(true, default);
+        using (var db = fixture.Factory.CreateDbContext())
+        {
+            Assert.All(db.ExecutionEvents, row => Assert.DoesNotContain("event-detail-sentinel", Encoding.UTF8.GetString(row.Detail)));
+            Assert.All(db.Messages, row => Assert.DoesNotContain(Convert.ToBase64String(Encoding.UTF8.GetBytes("history-sentinel")), Encoding.UTF8.GetString(row.Payload)));
+        }
+        var detail = JsonSerializer.Serialize(await pair.Journal.DetailAsync("terminal", default));
+        Assert.Contains("event-detail-sentinel", detail);
+        Assert.DoesNotContain("history-sentinel", detail);
+        clock.Now = clock.Now.AddDays(2);
+        Assert.Equal(1, await pair.Journal.PurgeAsync(default));
+        using (var db = fixture.Factory.CreateDbContext())
+        {
+            Assert.Empty(db.Executions);
+            Assert.Empty(db.ExecutionEvents);
+            Assert.Equal(pendingId, Assert.Single(db.Messages).Id);
+        }
+        Assert.NotEmpty(await pair.Journal.PendingChannelsAsync(default));
+    }
+
+    private sealed class JournalClock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = new(2026, 11, 13, 12, 0, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 
     private static IEnumerable<byte[]> AllPayloads(MulseDbContext db)
@@ -366,7 +516,7 @@ public sealed class WorkspacePersistenceTests
             .Concat(db.Retries.Select(row => row.Payload))
             .Concat(db.Workspaces.Select(row => row.PluginDirectories));
 
-    private sealed class DatabaseFixture : IDisposable
+    internal sealed class DatabaseFixture : IDisposable
     {
         public string DirectoryPath { get; } = Path.Combine(Path.GetTempPath(), "mulse-ef-tests-" + Guid.NewGuid().ToString("N"));
         public string StatePath => Path.Combine(DirectoryPath, "legacy.json");
@@ -408,6 +558,14 @@ public sealed class WorkspacePersistenceTests
                 new WorkspaceDatabase(Factory, new DatabasePayloadCodec(keyId, KeyVariable), applyMigrations: true));
         }
 
+        public (RuntimeConfigurationStore Store, FlowJournal Journal) Journal(bool encrypted = false, FlowHistoryOptions? history = null, TimeProvider? clock = null)
+        {
+            _opened = true;
+            var database = new WorkspaceDatabase(Factory, new DatabasePayloadCodec("primary", KeyVariable), applyMigrations: true);
+            var store = new RuntimeConfigurationStore(Microsoft.Extensions.Options.Options.Create(Options(encrypted)), new FakeHostEnvironment(), database: database);
+            return (store, new FlowJournal(database, store, Microsoft.Extensions.Options.Options.Create(history ?? new()), clock ?? TimeProvider.System));
+        }
+
         public RuntimeConfigurationStore Legacy() => new(Microsoft.Extensions.Options.Options.Create(Options(false)), new FakeHostEnvironment());
         private MulseOptions Options(bool encrypted) => new()
         {
@@ -432,7 +590,7 @@ public sealed class WorkspacePersistenceTests
         public MulseDbContext CreateDbContext() => create();
     }
 
-    private sealed class CommitFailureInterceptor : DbTransactionInterceptor
+    internal sealed class CommitFailureInterceptor : DbTransactionInterceptor
     {
         public bool Fail { get; set; }
         public override Task TransactionCommittedAsync(System.Data.Common.DbTransaction transaction, TransactionEndEventData eventData, CancellationToken cancellationToken = default)
@@ -442,7 +600,7 @@ public sealed class WorkspacePersistenceTests
         }
     }
 
-    private sealed class FailureInterceptor : SaveChangesInterceptor
+    internal sealed class FailureInterceptor : SaveChangesInterceptor
     {
         public Action? OnRetryWrite { get; set; }
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)

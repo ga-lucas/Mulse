@@ -110,6 +110,7 @@ public sealed partial class ConfigValueResolver(IRuntimeConfigurationStore runti
             Render = ResolveStep(route.Render, configValues, missingReferences),
             Delivers = route.Delivers.Select(action => new DeliveryActionDefinition
             {
+                RequireConfirmation = action.RequireConfirmation,
                 Deliver = ResolveStep(action.Deliver, configValues, missingReferences),
                 Compensation = action.Compensation is null ? null : ResolveStep(action.Compensation, configValues, missingReferences)
             }).ToList(),

@@ -24,11 +24,55 @@ The host and SDK exchange ordinary public objects; plugins do not need a referen
 | `IRenderModule` / `AddRender<T>()` | The delivery route's working batch | Output documents/files; zero/one/many outputs. |
 | `IDeliverModule` / `AddDeliver<T>()` | Rendered batch, context/settings/cancellation | External side effects; no batch replacement. |
 | `IRequestResponseDeliverModule` (register as deliver) | Rendered batch and execution context | Response batch, captured by the runtime. |
+| `IConfirmedDeliveryModule` (register as deliver) | Stable delivery ID, pinned input and settings | Destination-backed confirmation and atomically deduplicated delivery, with recoverable response data. |
 | `ITransformModule` / `AddTransform<T>()` | Ordered `JsonNode?` values and context/settings/cancellation | One `JsonNode?` value; null means absent output, not an error fallback. |
 
 See the exact signatures in `Mulse.Modules\Abstractions`. Fetch/parse graph edges, augment order, delivery
 routes and retry/compensation boundaries belong to the saved `PipelineDefinition`, not to registration order.
 Do not use a deliver extension to hide parsing errors or an augment to perform untracked delivery effects.
+
+## Confirmed delivery
+
+A delivery action may opt into `RequireConfirmation` (default `false`). It requires database storage and an
+available `IConfirmedDeliveryModule`; the host rejects unsupported configurations before fetching input. The host
+persists the resolved action, immutable input, continuation and stable GUID before the first call. The destination
+must atomically deduplicate that GUID with its own effect, including across restarts, concurrency and acknowledgement
+loss. Merely sending an idempotency header is not sufficient. `IsConfirmationAvailable` must reflect whether the
+required durable destination is configured. Generic HTTP delivery makes no such claim.
+
+`DeliverOnceAsync` reports `Confirmed` only after the destination has committed. `ConfirmAsync` returns `Confirmed`
+when the effect exists, `NotDelivered` only when it is safe to invoke `DeliverOnceAsync` with that same ID, and
+`Unknown` whenever that fact cannot be established. Exceptions and unknown outcomes remain held and are checked
+periodically; they are never blindly replayed. A request-response destination must return the original captured
+responses on both successful delivery and later confirmation, including an explicit empty batch when appropriate.
+A previously completed delivery restores its persisted responses without invoking the destination. The built-in
+flow-link module supports this contract only with the local durable inbox. Confirmed enqueue transactionally sets
+`MessageRecord.RetainForConfirmation`; only these receipts are retained permanently, even after recipient history
+expires, so a delayed sender cannot recreate the same hand-off. Ordinary unchecked flow-link and HTTP messages do
+not set this flag and retain normal terminal-history expiry behavior. The confirmed receipt retains the full message
+body and metadata, channel, state, timestamps, and claimed ownership IDs, not just a compact deduplication token.
+Plan for permanent storage growth and privacy/data-retention obligations; ordinary history purging does not remove
+these confirmed bodies. Existing encryption settings apply to the retained payloads.
+There is no cross-workspace flow-link routing. Any future remote destination must enforce the same durable
+stable-ID contract; a temporary idempotency cache is insufficient.
+This covers Mulse's delivery to that destination, not arbitrary downstream side effects or a distributed transaction.
+Unconfirmed deliveries retain the existing conservative unknown-outcome hold.
+
+## Pure-stage recovery boundaries
+
+`IReplaySafeModule` is an explicit trusted-code contract for pure parse, render, or augment modules. Repeating an
+invocation with pinned settings and input must be safe: no external effects, context mutations, responses, source
+receipts, checkpoint writes, or hidden nested unsafe module calls. Initially only `json-parse` and `json-render`
+opt in. Fetches and deliveries never acquire replay permission from this marker, and native/ODX protocols remain
+separate. Ordinary unmarked modules are not assumed pure.
+
+With database storage, the runtime saves a pre-invocation continuation for an opted-in stage, including resolved
+pipeline, input batches, prior responses, source receipts and checkpoint completion identity. The execution journal
+also durably records the current stage attempt before invoking any stage. Recovery rechecks the module contract;
+an interrupted unmarked stage, changed stage cursor, or missing capability blocks replay. Explicitly reported
+ordinary failures retain configured retry behavior. A safe continuation cannot authorize replay of a later started
+unsafe stage. Success removes that continuation before moving onward. These are bounded stage recovery points,
+not universal replay: a crash in an uncheckpointed transition may still require operator inspection.
 
 ## Source-independent native control flow
 

@@ -1040,6 +1040,8 @@
 
                     @if (node.Stage == NodeStage.Deliver)
                     {
+                        <label class="field-label"><input type="checkbox" @bind="node.RequireConfirmation" /> Require delivery confirmation</label>
+                        <p class="field-hint">Requires a durable database and a confirmation-capable destination that atomically deduplicates this delivery ID. This does not guarantee downstream effects. @(FindCatalogModule(node.ModuleId)?.SupportsConfirmation == true ? "Module supports confirmation." : "Module does not currently advertise confirmation support.")</p>
                         <details @key='(node.Id, "compensation")'>
                             <summary>Delivery compensation</summary>
                             <p class="field-hint">Optional undo action for deliveries in a named atomic scope. This is best-effort compensation, not a distributed transaction. The compensation module must be safe to repeat.</p>

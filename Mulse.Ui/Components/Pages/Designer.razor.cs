@@ -581,6 +581,7 @@ public partial class Designer : IAsyncDisposable
             {
                 var deliver = CreateNode(NodeStage.Deliver, action.Deliver.Module, action.Deliver.Settings, order: routeIndex, routeId: routeId, name: action.Deliver.Name);
                 deliver.Retry = ToRetryRequest(action.Deliver.Retry);
+                deliver.RequireConfirmation = action.RequireConfirmation;
                 deliver.Compensation = action.Compensation is { } compensation
                     ? new FlowStepRequestViewModel(compensation.Module, new Dictionary<string, string>(compensation.Settings, StringComparer.OrdinalIgnoreCase), ToRetryRequest(compensation.Retry), compensation.Name)
                     : null;
@@ -810,7 +811,7 @@ public partial class Designer : IAsyncDisposable
                 .Select(static route => new DeliveryRouteRequestViewModel(
                     ToStepRequest(route.Render!),
                     route.Delivers
-                        .Select(static deliver => new DeliveryActionRequestViewModel(ToStepRequest(deliver), ToCompensationRequest(deliver)))
+                        .Select(static deliver => new DeliveryActionRequestViewModel(ToStepRequest(deliver), ToCompensationRequest(deliver), deliver.RequireConfirmation))
                         .ToArray(),
                     NormalizeAtomicScope(route.Render!.AtomicScope)))
                 .ToArray();
@@ -1133,6 +1134,8 @@ public partial class Designer : IAsyncDisposable
         /// Configured in delivery Properties and preserved on load/save.
         /// </summary>
         public FlowStepRequestViewModel? Compensation { get; set; }
+
+        public bool RequireConfirmation { get; set; }
 
         public double X { get; set; }
 

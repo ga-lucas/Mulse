@@ -20,6 +20,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
     private bool _usesEnvelope;
     private RuntimeMulseState _state;
     private readonly WorkspaceDatabase? _database;
+    private readonly IWorkspaceOwnershipGuard? _ownership;
     private readonly ILogger<RuntimeConfigurationStore>? _logger;
 
     private const string EnvelopeFormat = "mulse-runtime-state-v1";
@@ -31,8 +32,10 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
     }
 
     public RuntimeConfigurationStore(IOptions<MulseOptions> options, IHostEnvironment environment, IRuntimeStatePayloadProtector? protector = null,
-        WorkspaceDatabase? database = null, ILogger<RuntimeConfigurationStore>? logger = null)
+        WorkspaceDatabase? database = null, ILogger<RuntimeConfigurationStore>? logger = null, IWorkspaceOwnershipGuard? ownership = null)
     {
+        _ownership = ownership;
+        ownership?.EnsureAvailable();
         _database = database;
         _logger = logger;
         var configuredPath = options.Value.RuntimeStatePath;
@@ -65,8 +68,21 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
 
     public RuntimeMulseState GetState()
     {
+        _ownership?.EnsureAvailable();
         _database?.EnsureAvailable();
         return Clone(_state);
+    }
+
+    public async Task SetMaintenanceAsync(bool requested, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = Clone(_state);
+            updated.MaintenanceRequested = requested;
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
     }
 
     public RuntimeEncryptionStatus GetEncryptionStatus()
@@ -166,6 +182,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
 
     private async Task WriteStateAsync(RuntimeMulseState state, IRuntimeStatePayloadProtector protector, bool envelope, CancellationToken cancellationToken)
     {
+        _ownership?.EnsureAvailable();
         if (_database is not null)
         {
             await _database.SaveAsync(RuntimeDatabaseMapping.ToDatabase(state), protector is AesGcmRuntimeStatePayloadProtector,

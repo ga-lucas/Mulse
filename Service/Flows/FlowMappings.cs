@@ -163,7 +163,7 @@ internal static class FlowMappings
         => new(MapStep(route.Render), route.Delivers.Select(MapDeliveryAction).ToArray(), route.AtomicScope);
 
     private static DeliveryActionResponse MapDeliveryAction(DeliveryActionDefinition action)
-        => new(MapStep(action.Deliver), action.Compensation is null ? null : MapStep(action.Compensation));
+        => new(MapStep(action.Deliver), action.Compensation is null ? null : MapStep(action.Compensation), action.RequireConfirmation);
 
     private static DeliveryRouteDefinition MapDelivery(DeliveryRouteRequest route)
     {
@@ -180,7 +180,8 @@ internal static class FlowMappings
         return new DeliveryActionDefinition
         {
             Deliver = MapStep(action.Deliver),
-            Compensation = action.Compensation is null ? null : MapStep(action.Compensation)
+            Compensation = action.Compensation is null ? null : MapStep(action.Compensation),
+            RequireConfirmation = action.RequireConfirmation
         };
     }
 
@@ -199,7 +200,8 @@ internal static class FlowMappings
         return new DeliveryActionDefinition
         {
             Deliver = MapStep(action.Deliver),
-            Compensation = action.Compensation is null ? null : MapStep(action.Compensation)
+            Compensation = action.Compensation is null ? null : MapStep(action.Compensation),
+            RequireConfirmation = action.RequireConfirmation
         };
     }
 

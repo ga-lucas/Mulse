@@ -687,7 +687,8 @@ public sealed class ModuleCatalog : IModuleCatalog
                     sourceKind,
                     sourceAssemblyPath,
                     module.Descriptor,
-                    module is IPushTriggeredFetchModule);
+                    module is IPushTriggeredFetchModule,
+                    module is IConfirmedDeliveryModule { IsConfirmationAvailable: true });
 
                 package.Modules.Add(entry.Descriptor.Id, new RegisteredModule(entry, registration.ImplementationType, package));
             }

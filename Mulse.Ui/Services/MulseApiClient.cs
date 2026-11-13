@@ -27,6 +27,60 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
         return await ReadRequiredAsync<FlowCheckpointViewModel[]>(response, cancellationToken, "checkpoint response").ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<HistoryExecutionViewModel>> GetHistoryExecutionsAsync(string? flowId, CancellationToken cancellationToken)
+    {
+        var url = "/api/history/executions?take=50";
+        if (!string.IsNullOrWhiteSpace(flowId))
+        {
+            url += $"&flowId={Uri.EscapeDataString(flowId.Trim())}";
+        }
+
+        using var response = await httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<HistoryExecutionViewModel[]>(response, cancellationToken, "execution history").ConfigureAwait(false);
+    }
+
+    public async Task<HistoryExecutionDetailViewModel> GetHistoryExecutionAsync(string executionId, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync($"/api/history/executions/{Uri.EscapeDataString(executionId)}", cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<HistoryExecutionDetailViewModel>(response, cancellationToken, "execution history detail").ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<HistoryMessageViewModel>> GetHistoryMessagesAsync(CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync("/api/history/messages?take=50", cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<HistoryMessageViewModel[]>(response, cancellationToken, "inbox history").ConfigureAwait(false);
+    }
+
+    public async Task<HistoryMessagePayloadViewModel> GetHistoryMessagePayloadAsync(Guid messageId, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync($"/api/history/messages/{messageId:D}", cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<HistoryMessagePayloadViewModel>(response, cancellationToken, "message payload").ConfigureAwait(false);
+    }
+
+    public async Task ConfirmHistoryDeliveryAsync(string executionId, Guid deliveryId, string confirmation, string evidence, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync(
+            $"/api/history/executions/{Uri.EscapeDataString(executionId)}/deliveries/{deliveryId:D}/confirm-delivered",
+            new { confirmation, evidence }, cancellationToken).ConfigureAwait(false);
+        var result = await ReadRequiredAsync<Dictionary<string, bool>>(response, cancellationToken, "delivery confirmation").ConfigureAwait(false);
+        if (!result.TryGetValue("confirmed", out var confirmed) || !confirmed)
+        {
+            throw new InvalidOperationException("The API did not confirm the delivery.");
+        }
+    }
+
+    public async Task CloseHistoryExecutionAsync(string executionId, string confirmation, string evidence, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PostAsJsonAsync(
+            $"/api/history/executions/{Uri.EscapeDataString(executionId)}/close",
+            new { confirmation, evidence }, cancellationToken).ConfigureAwait(false);
+        var result = await ReadRequiredAsync<Dictionary<string, bool>>(response, cancellationToken, "held execution closure").ConfigureAwait(false);
+        if (!result.TryGetValue("closed", out var closed) || !closed)
+        {
+            throw new InvalidOperationException("The API did not close the execution.");
+        }
+    }
+
     public async Task<FlowViewModel> CreateFlowAsync(CreateFlowRequestViewModel request, CancellationToken cancellationToken)
     {
         using var response = await httpClient.PostAsJsonAsync("/api/flows", request, cancellationToken).ConfigureAwait(false);
@@ -186,6 +240,30 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
     {
         using var response = await httpClient.PutAsJsonAsync("/api/workspace/encryption", new { Enabled = enabled }, cancellationToken).ConfigureAwait(false);
         return await ReadRequiredAsync<RuntimeEncryptionViewModel>(response, cancellationToken, "encryption status").ConfigureAwait(false);
+    }
+
+    public async Task<RuntimeStorageViewModel> GetStorageAsync(CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync("/api/workspace/storage", cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<RuntimeStorageViewModel>(response, cancellationToken, "storage settings").ConfigureAwait(false);
+    }
+
+    public async Task<ProcessingStatusViewModel> GetProcessingAsync(CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync("/api/workspace/processing", cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<ProcessingStatusViewModel>(response, cancellationToken, "processing status").ConfigureAwait(false);
+    }
+
+    public async Task<ProcessingBacklogViewModel> GetProcessingBacklogAsync(CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync("/api/workspace/processing/backlog", cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<ProcessingBacklogViewModel>(response, cancellationToken, "processing backlog").ConfigureAwait(false);
+    }
+
+    public async Task<ProcessingStatusViewModel> SetMaintenanceAsync(bool requested, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.PutAsJsonAsync("/api/workspace/processing/maintenance", new { Requested = requested }, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<ProcessingStatusViewModel>(response, cancellationToken, "processing status").ConfigureAwait(false);
     }
 
     public Task<IReadOnlyList<ConfigReferenceUsageViewModel>> GetConfigValueUsagesAsync(CancellationToken cancellationToken)

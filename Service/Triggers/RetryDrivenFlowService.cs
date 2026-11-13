@@ -14,7 +14,9 @@ public sealed class RetryDrivenFlowService(
     IFlowRuntime flowRuntime,
     IFlowRetryStateStore flowRetryStateStore,
     TimeProvider timeProvider,
-    ILogger<RetryDrivenFlowService> logger) : BackgroundService
+    ILogger<RetryDrivenFlowService> logger,
+    FlowJournal? journal = null,
+    ProcessingCoordinator? processing = null) : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
 
@@ -24,7 +26,7 @@ public sealed class RetryDrivenFlowService(
         {
             try
             {
-                await ResumeDueRetriesAsync(stoppingToken).ConfigureAwait(false);
+                if (processing?.IsAccepting != false) await ResumeDueRetriesAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -43,13 +45,14 @@ public sealed class RetryDrivenFlowService(
 
         foreach (var retryState in dueRetries)
         {
-            if (stoppingToken.IsCancellationRequested)
+            if (stoppingToken.IsCancellationRequested || processing?.IsAccepting == false)
             {
                 return;
             }
 
             try
             {
+                if (journal is not null && await journal.IsDeliveryHeldAsync(retryState.ExecutionId, stoppingToken).ConfigureAwait(false)) continue;
                 var result = await flowRuntime.ResumeRetryAsync(retryState, stoppingToken).ConfigureAwait(false);
                 if (result is null)
                 {
@@ -60,6 +63,7 @@ public sealed class RetryDrivenFlowService(
                     "Resumed flow {FlowId} execution {ExecutionId} stage {StageId}: outcome {Outcome}.",
                     retryState.FlowId, retryState.ExecutionId, retryState.StageId, result.Outcome);
             }
+            catch (AdmissionRejectedException) when (processing?.IsAccepting == false) { return; }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 logger.LogError(

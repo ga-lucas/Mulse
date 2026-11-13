@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Mulse.Modules.BuiltIn.Render;
 
-public sealed class JsonRenderModule : IRenderModule
+public sealed class JsonRenderModule : IRenderModule, IReplaySafeModule
 {
     private static readonly IReadOnlyList<ModuleSettingDescriptor> SettingDescriptors =
     [

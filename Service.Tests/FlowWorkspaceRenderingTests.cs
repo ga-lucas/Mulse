@@ -121,7 +121,7 @@ public sealed class FlowWorkspaceRenderingTests
     }
 
     [Fact]
-    public async Task Menu_GroupsConfigurationPagesWithoutDesignerLink()
+    public async Task Menu_SeparatesModulesFromConfigurationWithoutDesignerLink()
     {
         var html = await RenderAsync<Mulse.Ui.Components.Layout.MainLayout>();
         Assert.DoesNotContain("href=\"/designer\"", html);
@@ -129,10 +129,89 @@ public sealed class FlowWorkspaceRenderingTests
         var start = html.IndexOf("<nav class=\"workspace-nav\" aria-labelledby=\"configuration-nav-label\"", StringComparison.Ordinal);
         Assert.True(start >= 0);
         var group = html[start..html.IndexOf("</nav>", start, StringComparison.Ordinal)];
-        Assert.Contains("href=\"/modules\"", group);
-        Assert.Contains("href=\"/module-packages\"", group);
+        Assert.DoesNotContain("href=\"/modules\"", group);
+        Assert.DoesNotContain("href=\"/module-packages\"", group);
         Assert.Contains("href=\"/config-values\"", group);
         Assert.Contains("href=\"/backup-restore\"", group);
+        Assert.Contains("href=\"/storage\"", group);
+        var moduleStart = html.IndexOf("<nav class=\"workspace-nav\" aria-labelledby=\"modules-nav-label\"", StringComparison.Ordinal);
+        Assert.True(moduleStart >= 0);
+        var modules = html[moduleStart..html.IndexOf("</nav>", moduleStart, StringComparison.Ordinal)];
+        Assert.Contains("href=\"/modules\"", modules);
+        Assert.Contains("href=\"/module-packages\"", modules);
+        Assert.DoesNotContain("href=\"/config-values\"", modules);
+        Assert.DoesNotContain("href=\"/backup-restore\"", modules);
+        Assert.DoesNotContain("href=\"/storage\"", modules);
+    }
+
+    [Theory]
+    [InlineData("Sqlite", "SQLite")]
+    [InlineData("SqlServer", "SQL Server")]
+    [InlineData("PostgreSql", "PostgreSQL")]
+    [InlineData("Json", "JSON file (legacy)")]
+    public async Task Storage_ShowsEffectiveBackendAndSafeConfigurationGuidance(string provider, string displayName)
+    {
+        var html = await RenderAsync<Storage>(storageProvider: provider);
+        Assert.Contains($"<dt>Engine</dt><dd>{displayName}</dd>", html);
+        Assert.Contains("<dt>Payload encryption</dt><dd>Off</dd>", html);
+        Assert.Contains("ConnectionStrings__Mulse", html);
+        Assert.Contains("MULSE_STATE_ENCRYPTION_KEY", html);
+        Assert.Contains("Service\\appsettings.json", html);
+        Assert.Contains("no live engine switch", html);
+        Assert.Contains("excludes pending execution state and revision history", html);
+        Assert.Contains("Changes require a Service restart", html);
+        Assert.Contains("Pause and drain flows", html);
+        Assert.Contains("<dt>Active executions</dt><dd>2</dd>", html);
+        Assert.Contains("<dt>Active inbound admissions</dt><dd>1</dd>", html);
+        Assert.Contains("Paused is not database-offline", html);
+        Assert.Contains("Processing__ShutdownDrainSeconds", html);
+        Assert.Contains("Persistence__History__MaxPendingMessages", html);
+        if (provider != "Json")
+        {
+            Assert.Contains("Recovery attention required", html);
+            Assert.Contains("Inbox capacity is at least 90% used", html);
+            Assert.Contains("<dt>Unfinished inbox / capacity</dt><dd>9000 / 10000</dd>", html);
+        }
+        else Assert.DoesNotContain("aria-label=\"Durable work backlog\"", html);
+        Assert.DoesNotContain("<select", html);
+        if (provider is "Sqlite" or "Json") Assert.Contains("C:\\workspace\\data", html);
+        else Assert.DoesNotContain("Data file on the Service machine", html);
+        Assert.Contains(provider == "Sqlite" ? "<dt>Apply migrations at startup</dt><dd>Yes</dd>"
+            : provider == "Json" ? "<dt>Apply migrations at startup</dt><dd>Not applicable</dd>"
+            : "<dt>Apply migrations at startup</dt><dd>No</dd>", html);
+    }
+
+    [Fact]
+    public async Task Storage_ShowsApiFailureRatherThanDefaultEngine()
+    {
+        var html = await RenderAsync<Storage>(storageFailure: true);
+        Assert.Contains("Unable to load storage settings", html);
+        Assert.Contains("Storage diagnostics unavailable", html);
+        Assert.DoesNotContain("aria-label=\"Storage summary\"", html);
+    }
+
+    [Theory]
+    [InlineData(8999, false)]
+    [InlineData(9000, true)]
+    [InlineData(10000, true)]
+    public async Task Storage_CapacityWarningStartsAtExactlyNinetyPercent(int unfinished, bool warning)
+    {
+        var html = await RenderAsync<Storage>(unfinished: unfinished);
+        Assert.Equal(warning, html.Contains("Inbox capacity is at least 90% used", StringComparison.Ordinal));
+        Assert.Contains($"<dt>Unfinished inbox / capacity</dt><dd>{unfinished} / 10000</dd>", html);
+    }
+
+    [Theory]
+    [InlineData("Paused", "Resume processing", false)]
+    [InlineData("Draining", "Resume processing", false)]
+    [InlineData("Faulted", "Pause and drain flows", true)]
+    [InlineData("Stopping", "Pause and drain flows", true)]
+    public async Task Storage_ReflectsMaintenanceAndDisablesUnsafeTransitions(string state, string action, bool disabled)
+    {
+        var html = await RenderAsync<Storage>(processingState: state);
+        Assert.Contains($"<dt>State</dt><dd>{state}</dd>", html);
+        Assert.Matches(disabled ? $"<button[^>]*disabled[^>]*>\\s*{action}" : $"<button class=\"primary-button\">\\s*{action}", html);
+        if (state == "Faulted") Assert.Contains("Restart required", html);
     }
 
     [Fact]
@@ -461,9 +540,10 @@ public sealed class FlowWorkspaceRenderingTests
         }
     }
 
-    private static async Task<string> RenderAsync<TComponent>(bool missingModules = false, bool packages = false, string? flowId = null, bool migration = false) where TComponent : IComponent
+    private static async Task<string> RenderAsync<TComponent>(bool missingModules = false, bool packages = false, string? flowId = null, bool migration = false,
+        string storageProvider = "Sqlite", bool storageFailure = false, string processingState = "Running", int unfinished = 9000) where TComponent : IComponent
     {
-        using var httpClient = new HttpClient(new WorkspaceHandler(missingModules, packages, migration)) { BaseAddress = new Uri("http://localhost") };
+        using var httpClient = new HttpClient(new WorkspaceHandler(missingModules, packages, migration, storageProvider, storageFailure, processingState, unfinished)) { BaseAddress = new Uri("http://localhost") };
         await using var services = new ServiceCollection().AddLogging()
             .AddSingleton<NavigationManager>(new TestNavigationManager())
             .AddSingleton<Microsoft.JSInterop.IJSRuntime>(new StaticRenderJsRuntime())
@@ -492,7 +572,8 @@ public sealed class FlowWorkspaceRenderingTests
             => throw new NotSupportedException("Static rendering must not invoke JavaScript.");
     }
 
-    private sealed class WorkspaceHandler(bool missingModules, bool packages, bool migration = false) : HttpMessageHandler
+    private sealed class WorkspaceHandler(bool missingModules, bool packages, bool migration = false,
+        string storageProvider = "Sqlite", bool storageFailure = false, string processingState = "Running", int unfinished = 9000) : HttpMessageHandler
     {
         private FlowMigrationReportViewModel? Report => migration ? new("BizTalk", @"C:\migration\Orders.btproj", "Orders", [], [], []) : null;
 
@@ -506,6 +587,11 @@ public sealed class FlowWorkspaceRenderingTests
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (storageFailure && request.RequestUri!.AbsolutePath == "/api/workspace/storage")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = JsonContent.Create(new Microsoft.AspNetCore.Mvc.ProblemDetails { Detail = "Storage diagnostics unavailable" })
+                });
             object payload = request.RequestUri!.AbsolutePath switch
             {
                 "/api/flows/lookup-test" => LookupFlow(false),
@@ -533,6 +619,14 @@ public sealed class FlowWorkspaceRenderingTests
                 "/api/config-values/references" => new[] { "db-host" },
                 "/api/config-values" => new[] { new ConfigValueViewModel("db-host", "example.internal") },
                 "/api/workspace/encryption" => new RuntimeEncryptionViewModel(false, false, "MULSE_STATE_ENCRYPTION_KEY", "Set the environment variable and restart the Service."),
+                "/api/workspace/processing" => new ProcessingStatusViewModel(processingState, processingState is "Paused" or "Draining", 2, 1,
+                    processingState == "Stopping", processingState == "Faulted" ? "Restart required" : null),
+                "/api/workspace/processing/backlog" => storageProvider == "Json"
+                    ? new ProcessingBacklogViewModel(false, null, null, null, null, null, null, null, null)
+                    : new ProcessingBacklogViewModel(true, unfinished, unfinished - 10, 9, 1, 1, 2, 1, 10000),
+                "/api/workspace/storage" => new RuntimeStorageViewModel(storageProvider, storageProvider != "Json",
+                    storageProvider is "Sqlite" or "Json" ? "C:\\workspace\\data" : null,
+                    storageProvider == "Sqlite", storageProvider == "Json" ? null : "primary", "MULSE_STATE_ENCRYPTION_KEY"),
                 _ => throw new InvalidOperationException($"Unexpected API call: {request.RequestUri}")
             };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(payload, payload.GetType()) });

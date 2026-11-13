@@ -10,7 +10,7 @@ namespace Mulse.CompatibilityPack;
 /// hosted over WCF-BasicHttp/WSHttp/Custom or a plain HTTP listener: instead of falling back to a
 /// repository-style placeholder, the import can point at a real inbound endpoint.
 /// </summary>
-public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogger<HttpInboundFetchModule> logger) : IPushTriggeredFetchModule
+public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogger<HttpInboundFetchModule> logger, IDurableInbox? inbox = null) : IPushTriggeredFetchModule, IFetchOutcomeModule
 {
     private static readonly ConcurrentDictionary<string, RouteRegistration> Registrations = new(StringComparer.OrdinalIgnoreCase);
 
@@ -33,21 +33,24 @@ public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogge
         Recommendation);
 
     /// <summary><paramref name="input"/> is unused: this is a root source fed by pushed inbound HTTP requests.</summary>
-    public Task<IntegrationBatch> FetchAsync(
+    public async Task<IntegrationBatch> FetchAsync(
         FlowExecutionContext context,
         IntegrationBatch input,
         ModuleStepDefinition step,
         CancellationToken cancellationToken)
     {
         var route = ResolveRoute(step);
-        if (!Registrations.TryGetValue(route, out var registration))
+        if (inbox is not null)
         {
-            return Task.FromResult(IntegrationBatch.Empty);
+            var batch = await inbox.ClaimAsync("http:" + route, context, cancellationToken).ConfigureAwait(false);
+            return batch.Count == 0 ? batch : batch with { SourceReceipt = new Dictionary<string, string> { ["channel"] = "http:" + route } };
         }
-
-        var payloads = registration.DequeueReady(context);
-        return Task.FromResult(new IntegrationBatch(payloads));
+        if (!Registrations.TryGetValue(route, out var registration)) return IntegrationBatch.Empty;
+        return new IntegrationBatch(registration.DequeueReady(context));
     }
+
+    public Task OnProcessingCompletedAsync(FlowExecutionContext context, FetchProcessingReceipt receipt, FetchProcessingOutcome outcome, CancellationToken cancellationToken)
+        => inbox is null ? Task.CompletedTask : inbox.CompleteAsync(context, receipt.Data["channel"], outcome.Succeeded, cancellationToken);
 
     public Task<IAsyncDisposable> RegisterTriggerAsync(
         PushFlowTriggerContext context,
@@ -56,7 +59,7 @@ public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogge
     {
         cancellationToken.ThrowIfCancellationRequested();
         var route = ResolveRoute(step);
-        var registration = Registrations.GetOrAdd(route, key => RouteRegistration.Create(key, registry, logger));
+        var registration = Registrations.GetOrAdd(route, key => RouteRegistration.Create(key, registry, logger, inbox));
         var subscription = registration.Subscribe(context);
         return Task.FromResult<IAsyncDisposable>(subscription);
     }
@@ -72,16 +75,19 @@ public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogge
         private readonly string _routeKey;
         private readonly ILogger _logger;
         private IDisposable? _hostRegistration;
+        private readonly IDurableInbox? _inbox;
+        private string? _flowId;
 
-        private RouteRegistration(string routeKey, ILogger logger)
+        private RouteRegistration(string routeKey, ILogger logger, IDurableInbox? inbox)
         {
             _routeKey = routeKey;
             _logger = logger;
+            _inbox = inbox;
         }
 
-        public static RouteRegistration Create(string routeKey, IHttpInboundRegistry registry, ILogger logger)
+        public static RouteRegistration Create(string routeKey, IHttpInboundRegistry registry, ILogger logger, IDurableInbox? inbox)
         {
-            var registration = new RouteRegistration(routeKey, logger);
+            var registration = new RouteRegistration(routeKey, logger, inbox);
             registration._hostRegistration = registry.RegisterRoute(routeKey, registration);
             logger.LogInformation("Registered HTTP inbound route '{Route}' for push-triggered fetch.", routeKey);
             return registration;
@@ -89,7 +95,27 @@ public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogge
 
         public void Enqueue(HttpInboundRequest request)
         {
+            if (_inbox is not null) throw new InvalidOperationException("Durable inbound routes require awaited EnqueueAsync before acknowledging acceptance.");
             _pending.Enqueue(request);
+            Signal(request);
+        }
+
+        public async Task EnqueueAsync(HttpInboundRequest request, CancellationToken cancellationToken)
+        {
+            if (_inbox is null) { Enqueue(request); return; }
+            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["route"] = _routeKey, ["httpMethod"] = request.Method, ["correlationId"] = request.CorrelationId
+            };
+            foreach (var header in request.Headers) metadata["httpHeader." + header.Key] = header.Value;
+            foreach (var query in request.QueryParameters) metadata["httpQuery." + query.Key] = query.Value;
+            await _inbox.EnqueueAsync("http:" + _routeKey, _flowId, Guid.TryParse(request.CorrelationId, out var messageId) ? messageId : Guid.NewGuid(), new IntegrationBatch(
+                [new IntegrationPayload(request.CorrelationId, request.Body, request.ContentType, metadata)]), cancellationToken).ConfigureAwait(false);
+            Signal(request);
+        }
+
+        private void Signal(HttpInboundRequest request)
+        {
             foreach (var subscription in _subscriptions.Values)
             {
                 subscription.Signal($"HTTP {request.Method} request received on route '{_routeKey}'.");
@@ -106,7 +132,7 @@ public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogge
 
             try
             {
-                Enqueue(request);
+                await EnqueueAsync(request, cancellationToken).ConfigureAwait(false);
 
                 try
                 {
@@ -169,6 +195,9 @@ public sealed class HttpInboundFetchModule(IHttpInboundRegistry registry, ILogge
 
         public IAsyncDisposable Subscribe(PushFlowTriggerContext context)
         {
+            if (_inbox is not null && _flowId is not null && !_flowId.Equals(context.FlowId, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Durable HTTP routes must belong to a single flow.");
+            _flowId = context.FlowId;
             var subscriptionId = Guid.NewGuid();
             _subscriptions[subscriptionId] = context;
             return new Subscription(this, subscriptionId);

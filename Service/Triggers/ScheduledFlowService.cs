@@ -5,7 +5,8 @@ namespace Service.Triggers;
 public sealed class ScheduledFlowService(
     IFlowRuntime flowRuntime,
     TimeProvider timeProvider,
-    ILogger<ScheduledFlowService> logger) : BackgroundService
+    ILogger<ScheduledFlowService> logger,
+    ProcessingCoordinator? processing = null) : BackgroundService
 {
     private readonly Dictionary<string, DateTimeOffset> _nextRunByFlowId = new(StringComparer.OrdinalIgnoreCase);
 
@@ -13,6 +14,11 @@ public sealed class ScheduledFlowService(
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            if (processing?.IsAccepting == false)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken).ConfigureAwait(false);
+                continue;
+            }
             var now = timeProvider.GetUtcNow();
             var intervalFlows = flowRuntime.GetConfiguredFlows()
                 .Where(static flow => flow.Enabled && flow.Trigger.Mode == PipelineTriggerMode.Interval && flow.Trigger.Interval is not null)
@@ -22,6 +28,7 @@ public sealed class ScheduledFlowService(
 
             foreach (var flow in intervalFlows)
             {
+                if (processing?.IsAccepting == false) break;
                 if (flow.Trigger.Interval is not { } interval || interval <= TimeSpan.Zero)
                 {
                     continue;
@@ -38,9 +45,16 @@ public sealed class ScheduledFlowService(
                     continue;
                 }
 
+                var admitted = true;
                 try
                 {
                     await flowRuntime.ExecuteAsync(flow.Id, stoppingToken).ConfigureAwait(false);
+                }
+                catch (AdmissionRejectedException exception)
+                {
+                    admitted = false;
+                    logger.LogDebug(exception, "Scheduled admission deferred for flow {FlowId}; keeping its due time.", flow.Id);
+                    break;
                 }
                 catch (Exception exception)
                 {
@@ -48,7 +62,7 @@ public sealed class ScheduledFlowService(
                 }
                 finally
                 {
-                    _nextRunByFlowId[flow.Id] = timeProvider.GetUtcNow().Add(interval);
+                    if (admitted) _nextRunByFlowId[flow.Id] = timeProvider.GetUtcNow().Add(interval);
                 }
             }
 

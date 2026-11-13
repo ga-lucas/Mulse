@@ -25,6 +25,9 @@ public sealed class FlowRetryState
     /// <summary>Number of attempts already made for this stage (including the failed one that triggered persistence).</summary>
     public int AttemptsMade { get; init; }
 
+    /// <summary>Pre-invocation continuation for an explicitly pure replay-safe stage; capability is checked again on resume.</summary>
+    public bool ReplaySafeStage { get; init; }
+
     public DateTimeOffset NextAttemptAt { get; init; }
 
     public string? LastError { get; init; }

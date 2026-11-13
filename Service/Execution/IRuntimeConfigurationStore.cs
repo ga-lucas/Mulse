@@ -4,6 +4,9 @@ public interface IRuntimeConfigurationStore
 {
     RuntimeMulseState GetState();
 
+    Task SetMaintenanceAsync(bool requested, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This store does not support persistent maintenance mode.");
+
     RuntimeEncryptionStatus GetEncryptionStatus();
 
     Task<RuntimeEncryptionStatus> SetEncryptionAsync(bool enabled, CancellationToken cancellationToken);

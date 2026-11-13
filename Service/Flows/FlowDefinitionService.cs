@@ -142,6 +142,9 @@ public sealed class FlowDefinitionService(IRuntimeConfigurationStore runtimeConf
             foreach (var action in delivery.Delivers)
             {
                 ValidateModuleReference(action.Deliver.Module, ModuleKind.Deliver, availableModules, pipeline.Id);
+                if (action.RequireConfirmation && !available.Any(entry => entry.Descriptor.Kind == ModuleKind.Deliver
+                    && entry.Descriptor.Id.Equals(action.Deliver.Module, StringComparison.OrdinalIgnoreCase) && entry.SupportsConfirmation))
+                    throw new ArgumentException($"Flow '{pipeline.Id}' requires confirmed delivery, but module '{action.Deliver.Module}' does not currently support it.");
                 ValidateConditions(action.Deliver, pipeline.Id);
             }
         }

@@ -7,4 +7,5 @@ public sealed record ModuleCatalogEntry(
     RuntimePackageSourceKind PackageSourceKind,
     string AssemblyPath,
     ModuleDescriptor Descriptor,
-    bool SupportsPushTrigger = false);
+    bool SupportsPushTrigger = false,
+    bool SupportsConfirmation = false);

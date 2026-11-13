@@ -4,6 +4,8 @@ namespace Service.Execution;
 
 public sealed class RuntimeMulseState
 {
+    public bool MaintenanceRequested { get; set; }
+
     public List<string> PluginDirectories { get; set; } = [];
 
     public List<ManagedModulePackageDefinition> ManagedPackages { get; set; } = [];

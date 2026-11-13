@@ -14,11 +14,11 @@ namespace Service.Execution;
 /// <see cref="RetryPolicyDefinition"/> (step override, falling back to the flow-level default, falling back to a
 /// single attempt) governs what happens when that stage throws: if another attempt is allowed, the stage's input
 /// batch (plus, for source-graph stages, the already resolved per-fetch-node raw batches and per-parse-node parsed
-/// batches, and for delivery stages the shared post-augment batch) is snapshotted to disk via
+/// batches, and for delivery stages the shared post-augment batch) is snapshotted to persistent storage via
 /// <see cref="IFlowRetryStateStore"/> and execution returns immediately with a
 /// <see cref="FlowExecutionOutcome.Retrying"/> result; a separate background driver is responsible for waiting
-/// out the delay and calling <see cref="ResumeRetryAsync"/>. Because resumption reads the same durable state a
-/// crash would have left behind, this also provides crash/restart recovery for free.
+/// out the delay and calling <see cref="ResumeRetryAsync"/>. Recovery requires a saved continuation; it is not
+/// universal replay. Database-backed deliveries also persist intent and hold uncertain effects for reconciliation.
 /// </summary>
 public sealed partial class FlowRuntime(
     IFlowDefinitionService flowDefinitionService,
@@ -27,7 +27,8 @@ public sealed partial class FlowRuntime(
     IFlowRetryStateStore flowRetryStateStore,
     IConfigValueResolver configValueResolver,
     TimeProvider timeProvider,
-    ILogger<FlowRuntime> logger) : IFlowRuntime
+    ILogger<FlowRuntime> logger,
+    FlowJournal? journal = null) : IFlowRuntime
 {
     private const string ConditionJsonSetting = "conditionJson";
     private const string ExpectsResponseSetting = "expectsResponse";
@@ -50,7 +51,10 @@ public sealed partial class FlowRuntime(
         try
         {
             pipeline = GetConfiguredFlow(flowId);
+            if (journal is not null && await journal.IsBlockedAsync(pipeline.Id, cancellationToken).ConfigureAwait(false))
+                throw new FlowDurabilityException("This flow has an interrupted or active execution held in history. Inspect recovery state before fetching more input.");
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
+            await ValidateConfirmationAsync(pipeline, cancellationToken).ConfigureAwait(false);
             var pendingSourceWork = (await flowRetryStateStore.GetAllAsync(cancellationToken).ConfigureAwait(false))
                 .FirstOrDefault(state => state.FlowId.Equals(pipeline.Id, StringComparison.OrdinalIgnoreCase)
                     && (state.SourceReceipts.Count > 0 || state.CheckpointCorrelationKey is not null
@@ -409,7 +413,7 @@ public sealed partial class FlowRuntime(
                             pipeline, context, startedAt, postAugmentBatch, routeIndex, deliverIndex, atomicScope, action, renderedBatch,
                             deliverAttempts, committedAtomicDeliveries, failedAtomicScopes, cancellationToken).ConfigureAwait(false);
                     }
-                    catch (Exception exception) when (atomicScope is null && exception is not (FlowRetryScheduledSignal or OperationCanceledException))
+                    catch (Exception exception) when (atomicScope is null && exception is not (FlowRetryScheduledSignal or OperationCanceledException or FlowDurabilityException))
                     {
                         // Independent (no atomic scope) deliver actions are best-effort: record the failure and keep
                         // going with the route's remaining deliver actions rather than failing the whole execution.
@@ -426,7 +430,8 @@ public sealed partial class FlowRuntime(
                 // Not a genuine failure - a retry has already been persisted; bubble straight up without compensating.
                 throw;
             }
-            catch (Exception exception) when (atomicScope is not null)
+            catch (Exception exception) when (atomicScope is not null && exception is not FlowDurabilityException
+                && !(exception is OperationCanceledException && delivery.Delivers.Any(action => action.RequireConfirmation)))
             {
                 logger.LogError(
                     exception,
@@ -521,17 +526,72 @@ public sealed partial class FlowRuntime(
             renderedBatch, committedAtomicDeliveries, failedAtomicScopes, postAugmentBatchForSnapshot: postAugmentBatch, resolvedFetchesForSnapshot: null, resolvedParsesForSnapshot: null,
             invoke: async ct =>
             {
+                var stage = $"delivery:{routeIndex}:deliver:{deliverIndex}";
+                var responseStart = context.CapturedResponses.Count;
+                var intent = journal is null ? null : await journal.PrepareDeliveryIntentAsync(context, stage, action, deliverApplicableBatch, ct).ConfigureAwait(false);
+                if (intent?.State == "Succeeded") return deliverApplicableBatch;
                 await using var deliverModule = await moduleCatalog.LeaseDeliverAsync(deliverStep.Module, ct).ConfigureAwait(false);
-                if (ExpectsResponse(deliverStep) && deliverModule.Module is IRequestResponseDeliverModule requestResponseModule)
+                if (action.RequireConfirmation)
                 {
-                    var response = await requestResponseModule.DeliverAndCaptureResponseAsync(context, deliverApplicableBatch, deliverStep, ct).ConfigureAwait(false);
-                    context.CaptureResponse(response);
+                    if (journal is null || intent is null || deliverModule.Module is not IConfirmedDeliveryModule { IsConfirmationAvailable: true } confirmed)
+                        throw new FlowDurabilityException("Confirmed delivery requires database storage and a confirmation-capable destination.");
+                    if (intent.State is "Unknown" or "InFlight")
+                    {
+                        ConfirmedDeliveryResult verification;
+                        try
+                        {
+                            journal.EnsureAvailable();
+                            verification = await confirmed.ConfirmAsync(intent.Id, context, deliverApplicableBatch, deliverStep, ct).ConfigureAwait(false);
+                        }
+                        catch (Exception exception) { throw new FlowDurabilityException("Destination confirmation failed; delivery remains held.", exception); }
+                        if (verification.Status == DeliveryConfirmationStatus.Confirmed)
+                        {
+                            if (ExpectsResponse(deliverStep) && verification.Responses is null)
+                                throw new FlowDurabilityException("Destination confirmation did not include the required captured response.");
+                            if (verification.Responses is not null) context.CaptureResponse(verification.Responses);
+                            await journal.DeliveryStateAsync(context, stage, "Succeeded", ct, responseStart).ConfigureAwait(false);
+                            return deliverApplicableBatch;
+                        }
+                        if (verification.Status != DeliveryConfirmationStatus.NotDelivered)
+                            throw new FlowDurabilityException("Destination confirmation remains unknown; no delivery was replayed.");
+                    }
+                    await journal.DeliveryStateAsync(context, stage, "InFlight", ct).ConfigureAwait(false);
+                    try
+                    {
+                        journal.EnsureAvailable();
+                        var result = await confirmed.DeliverOnceAsync(intent.Id, context, deliverApplicableBatch, deliverStep, ct).ConfigureAwait(false);
+                        if (result.Status != DeliveryConfirmationStatus.Confirmed)
+                            throw new FlowDurabilityException("Destination did not confirm delivery; verification is required before retry.");
+                        if (ExpectsResponse(deliverStep) && result.Responses is null)
+                            throw new FlowDurabilityException("Destination did not return the required captured response.");
+                        if (result.Responses is not null) context.CaptureResponse(result.Responses);
+                    }
+                    catch (Exception exception)
+                    {
+                        using var recovery = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        await journal.DeliveryStateAsync(context, stage, "Unknown", recovery.Token).ConfigureAwait(false);
+                        throw new FlowDurabilityException("Delivery outcome is uncertain; destination verification is required.", exception);
+                    }
                 }
                 else
                 {
-                    await deliverModule.Module.DeliverAsync(context, deliverApplicableBatch, deliverStep, ct).ConfigureAwait(false);
+                    if (journal is not null) await journal.DeliveryStateAsync(context, stage, "InFlight", ct).ConfigureAwait(false);
+                    try
+                    {
+                        journal?.EnsureAvailable();
+                        if (ExpectsResponse(deliverStep) && deliverModule.Module is IRequestResponseDeliverModule requestResponseModule)
+                            context.CaptureResponse(await requestResponseModule.DeliverAndCaptureResponseAsync(context, deliverApplicableBatch, deliverStep, ct).ConfigureAwait(false));
+                        else
+                            await deliverModule.Module.DeliverAsync(context, deliverApplicableBatch, deliverStep, ct).ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (journal is not null)
+                    {
+                        using var recovery = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        await journal.DeliveryStateAsync(context, stage, "Unknown", recovery.Token).ConfigureAwait(false);
+                        throw new FlowDurabilityException("Delivery was attempted but its outcome is uncertain. Automatic replay is blocked; inspect destination evidence.", exception);
+                    }
                 }
-
+                if (journal is not null) await journal.DeliveryStateAsync(context, stage, "Succeeded", ct, responseStart).ConfigureAwait(false);
                 return deliverApplicableBatch;
             },
             cancellationToken).ConfigureAwait(false);
@@ -576,40 +636,40 @@ public sealed partial class FlowRuntime(
     {
         var attemptNumber = attemptsAlreadyMade + 1;
         IntegrationBatch output;
+        var durableDelivery = journal is not null && stageId.StartsWith("delivery:", StringComparison.Ordinal) && stageId.Contains(":deliver:", StringComparison.Ordinal);
+        var replaySafeStage = journal is not null && await IsReplaySafeStageAsync(pipeline, stageId, cancellationToken).ConfigureAwait(false);
+        FlowRetryState SnapshotRetry(int attempts, DateTimeOffset next, string? error) => new()
+        {
+            FlowId = pipeline.Id, ExecutionId = context.ExecutionId, PipelineSnapshot = pipeline, StageId = stageId,
+            AttemptsMade = attempts, NextAttemptAt = next, LastError = error, ExecutionStartedAt = executionStartedAt, ReplaySafeStage = replaySafeStage,
+            InputPayloads = SnapshotBatch(inputBatch), ResolvedFetchPayloads = SnapshotResolvedBatches(resolvedFetchesForSnapshot),
+            ResolvedParsePayloads = SnapshotResolvedBatches(resolvedParsesForSnapshot),
+            PostAugmentPayloads = postAugmentBatchForSnapshot is null ? null : SnapshotBatch(postAugmentBatchForSnapshot),
+            CommittedAtomicDeliveries = committedAtomicDeliveries.ToList(), FailedAtomicScopes = failedAtomicScopes.ToList(),
+            SourceReceipts = context.SourceReceipts.ToList(), DeliveryFailures = context.DeliveryFailures.ToList(),
+            Responses = SnapshotBatch(new IntegrationBatch(context.CapturedResponses)),
+            CheckpointFlowId = context.PendingCheckpointCompletion?.FlowId, CheckpointCorrelationKey = context.PendingCheckpointCompletion?.CorrelationKey
+        };
 
         try
         {
+            if (replaySafeStage)
+                await flowRetryStateStore.UpsertAsync(SnapshotRetry(attemptsAlreadyMade, timeProvider.GetUtcNow(), "Prepared pure-stage continuation."), cancellationToken).ConfigureAwait(false);
+            if (journal is not null) await journal.StageAsync(context, stageId, "Started", inputBatch, null, cancellationToken, replaySafeStage).ConfigureAwait(false);
+            if (durableDelivery)
+                await flowRetryStateStore.UpsertAsync(SnapshotRetry(attemptsAlreadyMade, timeProvider.GetUtcNow(), "Prepared delivery continuation; outcome journal controls safe resumption."), cancellationToken).ConfigureAwait(false);
             output = await invoke(cancellationToken).ConfigureAwait(false);
+            if (journal is not null) await journal.StageAsync(context, stageId, "Succeeded", output, null, cancellationToken, replaySafeStage).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is not (OperationCanceledException or Mulse.Modules.Orchestration.OdxAmbiguousEffectException or Mulse.Modules.Orchestration.OdxPersistenceException
+        catch (Exception exception) when (exception is not (OperationCanceledException or FlowDurabilityException or Mulse.Modules.Orchestration.OdxAmbiguousEffectException or Mulse.Modules.Orchestration.OdxPersistenceException
             or Mulse.Modules.ControlFlow.NativeAmbiguousEffectException or Mulse.Modules.ControlFlow.NativePersistenceException or Mulse.Modules.ControlFlow.NativeUnmatchedMessageException)
             && !IsOdxStage(pipeline, stageId) && !IsNativeDurableStage(pipeline, stageId))
         {
+            if (journal is not null) await journal.StageAsync(context, stageId, "Failed", null, exception.Message, cancellationToken).ConfigureAwait(false);
             if (retryPolicy.AllowsAnotherAttempt(attemptNumber))
             {
                 var nextAttemptAt = timeProvider.GetUtcNow().Add(retryPolicy.ComputeDelay(attemptNumber + 1));
-                var retryState = new FlowRetryState
-                {
-                    FlowId = pipeline.Id,
-                    ExecutionId = context.ExecutionId,
-                    PipelineSnapshot = pipeline,
-                    StageId = stageId,
-                    AttemptsMade = attemptNumber,
-                    NextAttemptAt = nextAttemptAt,
-                    LastError = exception.Message,
-                    ExecutionStartedAt = executionStartedAt,
-                    InputPayloads = SnapshotBatch(inputBatch),
-                    ResolvedFetchPayloads = SnapshotResolvedBatches(resolvedFetchesForSnapshot),
-                    ResolvedParsePayloads = SnapshotResolvedBatches(resolvedParsesForSnapshot),
-                    PostAugmentPayloads = postAugmentBatchForSnapshot is null ? null : SnapshotBatch(postAugmentBatchForSnapshot),
-                    CommittedAtomicDeliveries = committedAtomicDeliveries.ToList(),
-                    FailedAtomicScopes = failedAtomicScopes.ToList(),
-                    SourceReceipts = context.SourceReceipts.ToList(),
-                    DeliveryFailures = context.DeliveryFailures.ToList(),
-                    Responses = SnapshotBatch(new IntegrationBatch(context.CapturedResponses)),
-                    CheckpointFlowId = context.PendingCheckpointCompletion?.FlowId,
-                    CheckpointCorrelationKey = context.PendingCheckpointCompletion?.CorrelationKey
-                };
+                var retryState = SnapshotRetry(attemptNumber, nextAttemptAt, exception.Message);
                 await flowRetryStateStore.UpsertAsync(retryState, cancellationToken).ConfigureAwait(false);
                 logger.LogWarning(
                     exception,
@@ -636,6 +696,8 @@ public sealed partial class FlowRuntime(
             throw;
         }
 
+        if ((durableDelivery || replaySafeStage) && attemptsAlreadyMade == 0)
+            await flowRetryStateStore.DeleteAsync(pipeline.Id, context.ExecutionId, stageId, cancellationToken).ConfigureAwait(false);
         if (attemptsAlreadyMade > 0)
         {
             await flowRetryStateStore.DeleteAsync(pipeline.Id, context.ExecutionId, stageId, cancellationToken).ConfigureAwait(false);
@@ -645,6 +707,44 @@ public sealed partial class FlowRuntime(
         }
 
         return output;
+    }
+
+    private async Task<bool> IsReplaySafeStageAsync(PipelineDefinition pipeline, string stage, CancellationToken cancellationToken)
+    {
+        if (IsOdxStage(pipeline, stage) || IsNativeDurableStage(pipeline, stage)) return false;
+        if (stage.StartsWith(ParseStagePrefix, StringComparison.Ordinal))
+        {
+            var node = pipeline.Parses.SingleOrDefault(item => item.Id == stage[ParseStagePrefix.Length..]);
+            if (node is null) return false;
+            await using var lease = await moduleCatalog.LeaseParseAsync(node.Parse.Module, cancellationToken).ConfigureAwait(false);
+            return lease.Module is IReplaySafeModule;
+        }
+        var parts = stage.Split(':');
+        if (parts.Length == 2 && parts[0] == "augment" && int.TryParse(parts[1], out var augment) && augment >= 0 && augment < pipeline.Augments.Count)
+        {
+            if (pipeline.Augments[augment].Module.Equals(Mulse.Modules.ControlFlow.NativeFlowDefinition.ModuleId, StringComparison.OrdinalIgnoreCase)) return false;
+            await using var lease = await moduleCatalog.LeaseOrchestrationAugmentAsync(pipeline.Augments[augment].Module, cancellationToken).ConfigureAwait(false);
+            return lease.Module is IReplaySafeModule;
+        }
+        if (parts.Length == 3 && parts[0] == "delivery" && parts[2] == "render" && int.TryParse(parts[1], out var route) && route >= 0 && route < pipeline.Deliveries.Count)
+        {
+            await using var lease = await moduleCatalog.LeaseRenderAsync(pipeline.Deliveries[route].Render.Module, cancellationToken).ConfigureAwait(false);
+            return lease.Module is IReplaySafeModule;
+        }
+        return false;
+    }
+
+    private async Task ValidateConfirmationAsync(PipelineDefinition pipeline, CancellationToken cancellationToken)
+    {
+        var actions = pipeline.Deliveries.SelectMany(route => route.Delivers).Where(action => action.RequireConfirmation).ToArray();
+        if (actions.Length == 0) return;
+        if (journal is null) throw new FlowDurabilityException("Confirmed delivery requires database storage; JSON mode cannot run this flow.");
+        foreach (var action in actions)
+        {
+            await using var lease = await moduleCatalog.LeaseDeliverAsync(action.Deliver.Module, cancellationToken).ConfigureAwait(false);
+            if (lease.Module is not IConfirmedDeliveryModule { IsConfirmationAvailable: true })
+                throw new FlowDurabilityException($"Delivery module '{action.Deliver.Module}' does not provide available confirmed delivery.");
+        }
     }
 
     private static bool ExpectsResponse(ModuleStepDefinition step)

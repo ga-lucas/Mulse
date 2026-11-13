@@ -62,6 +62,127 @@ namespace Mulse.Persistence.PostgreSql.Migrations
                     b.ToTable("ConfigurationValues", (string)null);
                 });
 
+            modelBuilder.Entity("Mulse.Persistence.DeliveryRecord", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ExecutionKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<byte[]>("Payload")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<long>("UpdatedUtcTicks")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("ExecutionKey");
+
+                    b.ToTable("Deliveries", (string)null);
+                });
+
+            modelBuilder.Entity("Mulse.Persistence.ExecutionEventRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("CreatedUtcTicks")
+                        .HasColumnType("bigint");
+
+                    b.Property<byte[]>("Detail")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("ExecutionKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExecutionKey", "CreatedUtcTicks");
+
+                    b.ToTable("ExecutionEvents", (string)null);
+                });
+
+            modelBuilder.Entity("Mulse.Persistence.ExecutionRecord", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<byte[]>("Definition")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("ExecutionId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("FlowId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("FlowKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("StartedUtcTicks")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<long>("UpdatedUtcTicks")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("StartedUtcTicks");
+
+                    b.HasIndex("FlowKey", "StartedUtcTicks");
+
+                    b.ToTable("Executions", (string)null);
+                });
+
             modelBuilder.Entity("Mulse.Persistence.FlowRecord", b =>
                 {
                     b.Property<string>("Key")
@@ -119,6 +240,60 @@ namespace Mulse.Persistence.PostgreSql.Migrations
                         .IsUnique();
 
                     b.ToTable("FlowRevisions", (string)null);
+                });
+
+            modelBuilder.Entity("Mulse.Persistence.MessageRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ChannelKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("CreatedUtcTicks")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ExecutionId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExecutionKey")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("FlowId")
+                        .HasColumnType("text");
+
+                    b.Property<byte[]>("Payload")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<bool>("RetainForConfirmation")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<long>("UpdatedUtcTicks")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExecutionKey");
+
+                    b.HasIndex("ChannelKey", "State", "CreatedUtcTicks");
+
+                    b.ToTable("Messages", (string)null);
                 });
 
             modelBuilder.Entity("Mulse.Persistence.ModulePackageRecord", b =>
@@ -190,6 +365,9 @@ namespace Mulse.Persistence.PostgreSql.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<bool>("MaintenanceRequested")
+                        .HasColumnType("boolean");
+
                     b.Property<byte[]>("PluginDirectories")
                         .IsRequired()
                         .HasColumnType("bytea");
@@ -201,6 +379,24 @@ namespace Mulse.Persistence.PostgreSql.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Workspaces", (string)null);
+                });
+
+            modelBuilder.Entity("Mulse.Persistence.DeliveryRecord", b =>
+                {
+                    b.HasOne("Mulse.Persistence.ExecutionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ExecutionKey")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Mulse.Persistence.ExecutionEventRecord", b =>
+                {
+                    b.HasOne("Mulse.Persistence.ExecutionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ExecutionKey")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Mulse.Persistence.FlowRecord", b =>

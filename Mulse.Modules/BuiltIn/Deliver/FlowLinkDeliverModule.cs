@@ -5,9 +5,10 @@ namespace Mulse.Modules.BuiltIn.Deliver;
 /// <see cref="Fetch.FlowLinkFetchModule"/> source subscribed to that same "channel" setting. Pair this with a
 /// flow-link-fetch source (in a different flow, or the same one for a self-feeding loop) to chain flows
 /// together without an external transport - e.g. flow A parses and renders an order, then flow B's push-triggered
-/// fetch picks it straight up to render a shipping confirmation.
+/// fetch picks it straight up to render a shipping confirmation. With IDurableInbox registered, delivery
+/// commits the hand-off before returning and pending work survives process restarts.
 /// </summary>
-public sealed class FlowLinkDeliverModule : IDeliverModule
+public sealed class FlowLinkDeliverModule(IDurableInbox? inbox = null) : IConfirmedDeliveryModule
 {
     private static readonly IReadOnlyList<ModuleSettingDescriptor> SettingDescriptors =
     [
@@ -27,7 +28,7 @@ public sealed class FlowLinkDeliverModule : IDeliverModule
         SettingDescriptors,
         Recommendation);
 
-    public Task DeliverAsync(
+    public async Task DeliverAsync(
         FlowExecutionContext context,
         IntegrationBatch batch,
         ModuleStepDefinition step,
@@ -37,16 +38,40 @@ public sealed class FlowLinkDeliverModule : IDeliverModule
         var channelName = ModuleSettingReader.GetRequired(step.Settings, "channel", Descriptor.Id);
         if (batch.Payloads.Count == 0)
         {
-            return Task.CompletedTask;
+            return;
         }
 
         var payloads = batch.Payloads
             .Select(payload => WithProvenance(payload, channelName, context))
             .ToArray();
 
+        if (inbox is not null)
+        {
+            await inbox.EnqueueAsync("flow-link:" + channelName, null, Guid.NewGuid(), new IntegrationBatch(payloads), cancellationToken).ConfigureAwait(false);
+            return;
+        }
         var channel = FlowLinkChannel.GetOrCreate(channelName);
         channel.Publish(payloads, $"Flow {context.FlowId} delivered {payloads.Length} payload(s) to channel '{channelName}'.");
-        return Task.CompletedTask;
+    }
+
+    public bool IsConfirmationAvailable => inbox is not null;
+
+    public async Task<ConfirmedDeliveryResult> ConfirmAsync(Guid stableDeliveryId, FlowExecutionContext context, IntegrationBatch batch, ModuleStepDefinition step, CancellationToken cancellationToken)
+    {
+        var channel = ModuleSettingReader.GetRequired(step.Settings, "channel", Descriptor.Id);
+        var prepared = new IntegrationBatch(batch.Payloads.Select(payload => WithProvenance(payload, channel, context)).ToArray());
+        return new(await (inbox ?? throw new FlowDurabilityException("Flow-link confirmation requires a durable inbox."))
+            .ContainsAsync("flow-link:" + channel, stableDeliveryId, prepared, cancellationToken).ConfigureAwait(false)
+            ? DeliveryConfirmationStatus.Confirmed : DeliveryConfirmationStatus.NotDelivered);
+    }
+
+    public async Task<ConfirmedDeliveryResult> DeliverOnceAsync(Guid stableDeliveryId, FlowExecutionContext context, IntegrationBatch batch, ModuleStepDefinition step, CancellationToken cancellationToken)
+    {
+        var channel = ModuleSettingReader.GetRequired(step.Settings, "channel", Descriptor.Id);
+        var prepared = new IntegrationBatch(batch.Payloads.Select(payload => WithProvenance(payload, channel, context)).ToArray());
+        await (inbox ?? throw new FlowDurabilityException("Flow-link confirmation requires a durable inbox."))
+            .EnqueueConfirmedAsync("flow-link:" + channel, stableDeliveryId, prepared, cancellationToken).ConfigureAwait(false);
+        return new(DeliveryConfirmationStatus.Confirmed);
     }
 
     private static IntegrationPayload WithProvenance(IntegrationPayload payload, string channelName, FlowExecutionContext context)

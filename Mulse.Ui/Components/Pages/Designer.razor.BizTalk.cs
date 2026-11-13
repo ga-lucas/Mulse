@@ -192,6 +192,7 @@ public partial class Designer
             foreach (var action in route.Delivers ?? [])
             {
                 var deliver = CreateNode(NodeStage.Deliver, action.Deliver.Module, action.Deliver.Settings, order: routeIndex, routeId: routeId);
+                deliver.RequireConfirmation = action.RequireConfirmation;
                 deliver.Compensation = action.Compensation is { } compensation
                     ? new FlowStepRequestViewModel(compensation.Module, new Dictionary<string, string>(compensation.Settings, StringComparer.OrdinalIgnoreCase))
                     : null;

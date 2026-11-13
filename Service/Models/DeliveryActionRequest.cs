@@ -11,4 +11,6 @@ public sealed record DeliveryActionRequest
 
     /// <summary>Optional deliver-module step that undoes this specific delivery if another deliver action in the same atomic scope fails.</summary>
     public FlowStepRequest? Compensation { get; init; }
+
+    public bool RequireConfirmation { get; init; }
 }

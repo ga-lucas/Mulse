@@ -175,10 +175,19 @@ for a paired `http-inbound-reply-deliver`; no reply within that window returns `
 HTTP endpoints, not a full WCF runtime. Outbound `http-deliver` can capture replies when its deliver
 settings include `"expectsResponse": "true"`; captured payloads are included in the run API response.
 
-`flow-link-deliver` and `flow-link-fetch` share a named `channel` within the same process. They provide
-an in-memory hand-off, not durable messaging or broadcast delivery: consumers drain a shared queue.
-Inbound HTTP queues and watcher queues are also process-local; pending retry/checkpoint persistence
-does not make queued-but-not-yet-fetched input durable.
+With database storage, HTTP acceptance commits the message before returning `202`, and flow links use a
+durable named inbox. Pending messages survive restart and are polled every two seconds for enabled Push
+flows. Consumers compete for a channel; this is not broadcast delivery or cross-workspace messaging.
+Claimed messages are never blindly put back on the queue after interruption: saved continuations resume
+where safe, otherwise the execution is held for inspection. Legacy `Json` mode retains the old in-memory
+HTTP/flow-link queues. File-watcher events remain process-local; use periodic file scans for rediscovery.
+
+For retryable HTTP acceptance, send `Idempotency-Key` (up to 256 characters). On the same route, identical
+requests with the same key are accepted without a second queue entry; conflicting content/ownership is
+rejected. Keep request headers/query/body consistent when retrying. Deduplication lasts while the message
+record is retained, not forever; without the header, separate requests are separate messages. A lost
+acceptance acknowledgement does not prove the request was not committed. Two-way HTTP connections and
+reply waiters are still process-local: a restart cannot restore the original client connection.
 
 ### Delivery behavior and retry policy
 
@@ -186,6 +195,17 @@ Each route renders once, then executes its deliver actions sequentially. Without
 permanent **deliver action** failure is recorded while other actions continue; the final result may be
 `Completed` with failure details. A render failure without an atomic scope terminates processing.
 Always inspect `outcome` **and** `detail`, not just the HTTP status or `Completed` label.
+
+**Database delivery safety:** top-level deliver stages persist their input, resolved step and continuation
+before invocation. The delivery journal progresses through Prepared, InFlight and Succeeded. An exception,
+cancellation or restart during an attempted effect leaves Unknown and holds the execution, instead of
+blindly repeating a potentially committed delivery or compensating based on an uncertain outcome. This
+intentionally overrides best-effort continuation and automatic deliver retries for these uncertain effects.
+History offers **Confirm independently verified delivery** for one-way effects: inspect destination evidence,
+enter it and type `CONFIRM DELIVERED`. This records success and releases the saved continuation; it never
+resends the confirmed effect. Later deliveries and source acknowledgements can then run. This action rejects
+active effects, missing continuations and request-response deliveries whose response data is unavailable.
+Native/ODX internal effects continue to use their existing checkpoint/reconciliation protocol.
 
 An optional shared `atomicScope` compensates already committed deliveries in reverse order when that
 scope fails, skips its remaining actions, and lets unrelated routes proceed before reporting failure.
@@ -1433,18 +1453,142 @@ The shared model has `Flows`, append-only `FlowRevisions`, `ConfigurationValues`
 `Checkpoints`, `Retries` and workspace metadata. Each saved flow change creates an immutable definition
 revision. Deleted/replaced flows retain historical revisions; the workspace backup UI exports current
 configuration, not this revision archive. Processing retries still carry their original resolved definition
-snapshots. Execution/message-history APIs, their UI, and durable inbox/outbox behavior are **not implemented
-by this storage migration**.
+snapshots. `Executions`, `ExecutionEvents`, `Messages` and `Deliveries` add connected operational history,
+a durable HTTP/flow-link inbox and a delivery intent/outcome journal. Provider-specific
+`DurableExecutionJournal` migrations upgrade existing databases without discarding workspace state.
 
-Use **one Service process per workspace**. The runtime still has an in-process state cache and execution
-locks; a server database alone does not enable active-active execution. An application-managed workspace
-version rejects stale writes from another instance rather than overwriting its committed work. A detected
+#### Execution and message history
+
+Open **Workspace > History** to inspect retained executions, stage events, inbox messages and delivery
+outcomes. Payloads are fetched/decrypted only after **Inspect payload**; metadata/detail lists do not
+include message bodies. The management API remains authenticated, and history responses use `no-store`.
+Treat event details, headers and payloads as sensitive; these runtime events do not capture every module's
+`ILogger` output. Execution IDs connect retries, claimed messages, events and deliveries. An execution
+retains its resolved definition, including settings/secrets; queued messages use the flow definition
+resolved when first processed, not necessarily the definition at acceptance time.
+
+`Persistence:History:CaptureStagePayloads` (environment `Persistence__History__CaptureStagePayloads`) defaults
+to **false**. Enable it to retain stage input/output snapshots for file and other sources as well as inbox
+messages. Required inbox/outbox payloads are always stored for recovery, regardless of optional capture.
+`Persistence:History:RetentionDays` (`Persistence__History__RetentionDays`) defaults to **30**, range 1-36500.
+Hourly cleanup removes up to 100 eligible terminal histories per pass; pending/held/suspended work, retries,
+checkpoint-linked executions and uncertain deliveries are protected. Deduplication of HTTP requests expires
+when their terminal message records are purged. The Storage page shows these effective options.
+
+On startup, interrupted executions are marked Held or Retrying according to their saved continuations;
+in-flight deliveries become Unknown, and claimed messages stay held until completion/reconciliation. A
+persisted Succeeded delivery can be skipped during continuation with its captured response restored.
+The inbox and external destination are **not** one distributed transaction: exactly-once external delivery
+is not promised. Generic crashes outside a saved continuation are retained for investigation, not guessed
+into a replay. For held work with no retry/checkpoint continuation, History offers **Close held execution
+without replay** after independent review, evidence and typing `CLOSE WITHOUT REPLAY`. This explicitly
+abandons held input; it does not resend or roll back effects, and can lose unprocessed work. It rejects
+existing runtime continuations rather than deleting them. Full automatic/manual replay for every arbitrary
+stage/plugin is not implemented. Legacy Json mode has no operational history or durable inbox/outbox and
+reports that explicitly.
+
+#### Opt-in confirmed delivery and safe stage recovery
+
+Delivery nodes support `RequireConfirmation` (default **false**, preserving legacy behavior). Enable it only
+for a module implementing `IConfirmedDeliveryModule` with durable atomic destination deduplication. The
+runtime persists a stable delivery GUID and exact input/settings before invoking the destination. After an
+ambiguous interruption it queries that ID first: Confirmed skips the effect and restores its response;
+NotDelivered permits a stable-ID resend; Unknown remains held. Unsupported modules or legacy JSON storage
+are rejected rather than silently pretending to provide confirmation. Required response data must also
+be recoverable; a success acknowledgement without that required data does not suffice.
+
+The built-in **flow-link delivery** supports this with the local durable inbox. This guarantees once-only
+**enqueue**, not once-only arbitrary effects in the receiving flow. Confirmed hand-off receipts retain their
+full input message rows/bodies **permanently**, even when related terminal execution history expires; this
+is not a compact tombstone. Plan storage/privacy retention and enable payload encryption where required.
+Unchecked flow-link messages retain the normal terminal retention policy. The provider-specific
+`ConfirmedDeliveryReceipts` migration adds this distinction to existing databases.
+Generic HTTP/SMTP/file destinations do
+not gain exactly-once semantics from a checkbox: a plugin must implement the destination-side contract,
+including deduplication and the effect in the same atomic boundary, and retain its IDs for the entire replay
+lifetime. Native/ODX effect reconciliation retains its existing separate conservative protocols.
+
+`IReplaySafeModule` explicitly opts a parse/render/augment implementation into safe restart replay. Only
+built-in JSON parse/render initially opt in; fetches and arbitrary plugins are not assumed safe. Database
+continuations pin the resolved definition and retain inputs, responses and source receipts before a safe
+stage. Attempt tracking prevents an older safe continuation from replaying an already-started unsafe
+stage. Such uncertainty stays held for review. Native/ODX checkpoints are not replaced by this contract;
+there is still no universal replay guarantee for arbitrary code, external effects or lost HTTP connections.
+See [Module-Developer-Guide.md](Module-Developer-Guide.md) before advertising either capability in a plugin.
+
+#### Maintenance, graceful shutdown and ownership
+
+Use **Configuration > Storage > Pause and drain flows** before maintenance. Admission closes before the
+pause is committed. Already admitted executions and HTTP intake finish normally; the status moves from
+**Draining** to **Paused** when both counts reach zero. Refresh status to observe completion. The pause
+is workspace state and survives restart (including legacy JSON mode). **Resume processing** explicitly
+reopens intake. A failed/unacknowledged pause transition remains fail-closed until restart; never assume
+that a failed response means the pause rolled back. Provider-specific `PersistentMaintenance` migrations
+add the pause flag to existing databases, defaulting to running.
+
+The gate covers manual runs, push/interval triggers, inbox polling, retry/deadline drivers, explicit batch
+release and native-effect reconciliation. Inbound requests rejected by maintenance/capacity receive **503**
+with **Retry-After: 5**. Maintenance is checked before reading the body; inbox capacity is checked in the
+acceptance transaction before commit. Pending database messages remain durable. JSON queues
+and file-watcher notifications are still process-local; a pause does not make them durable. **Paused does
+not mean database-offline**: management and ownership sessions remain active. Stop the Service after
+draining before copying/migrating its database. There is still no automatic cross-provider transfer wizard.
+
+When the host receives a graceful stop notification (for example Ctrl+C, SIGTERM or a service-manager/OS
+notification), it closes admission immediately and allows active work to finish before worker cancellation.
+`Processing:ShutdownDrainSeconds` (`Processing__ShutdownDrainSeconds`) defaults to
+**90**, range 1-3600. The host cleanup timeout is this budget plus 30 seconds; configure the OS/service
+manager/container termination grace period above that. On expiry the Service logs an error and cancels
+remaining work; it does **not** report a safe drain. Ordinary host shutdown does not persist a permanent
+maintenance pause. Power loss, forced kill, uncooperative plugins and insufficient OS grace time cannot
+be made into a guaranteed graceful shutdown; existing journal/reconciliation rules still apply.
+
+`Processing:MaxConcurrentExecutions` (`Processing__MaxConcurrentExecutions`) defaults to **64**, range
+1-10000, counting admitted work including per-flow lock waiters. `Persistence:History:MaxPendingMessages`
+(`Persistence__History__MaxPendingMessages`) defaults to **10000**, range 1-1000000, and bounds Pending,
+Claimed and Held database inbox messages. New acceptance fails explicitly when full; an identical existing
+idempotent acceptance still returns its original receipt. The Storage panel shows inbox capacity, held work
+and uncertain deliveries, warning at **90%** capacity and whenever recovery attention is required. Refresh
+these snapshots and monitor Service error/critical logs. This is backpressure and operator visibility, not
+a guarantee of upstream retries or an external alerting service.
+
+Use **one Service process per workspace**. Startup enforces exclusive ownership: JSON/SQLite keep an OS
+file handle at `<data-file>.owner.lock`; SQL Server keeps a session-owned application lock; PostgreSQL keeps
+an advisory lock on a dedicated non-pooled session. Ownership is checked before work/storage operations and
+by a five-second heartbeat. Losing ownership or being unable to verify it blocks admission and cancels work;
+there is no silent reconnect/takeover. OS/session locks are released on process exit; leftover local lock
+files are harmless and must not be deleted while a process owns them. Server databases must exist before
+ownership/migration startup. Local storage must be a single canonical file path, not aliases/network shares.
+These are single-owner guards, **not remote destination fencing**: a previously started external request may
+still complete during a partition. Use a destination's atomic idempotency contract for confirmed delivery.
+
+The runtime still has an in-process state cache and execution locks; a server database alone does not enable
+active-active execution. An application-managed workspace version rejects stale writes from another
+instance rather than overwriting its committed work. A detected
 stale cache or unacknowledged commit blocks subsequent runtime reads/writes. Stop competing instances and
 restart to reload committed state; a lost acknowledgement does not prove a transaction rolled back.
 Changing providers points at a different database, not an automatic database-to-database migration. Do not
 switch to an empty database with a stale legacy file; transfer/reconcile the complete state first.
 
 #### Selecting a database and applying migrations
+
+The sidebar separates **Modules** (Modules / Module Packages) from **Configuration** (Config values /
+Storage / Backup & Restore). **Configuration > Storage** shows the Service's effective startup engine,
+resolved local data-file path where applicable, migration policy and payload-encryption status. It lists
+configuration keys, environment-variable names and connection-string templates, but never returns the
+actual connection string or encryption key. Engine/bootstrap settings are read-only, not a connectivity
+check or live engine switch; the separate processing panel provides persistent pause/resume controls.
+
+Configure storage on the **Service process**, using `Service\appsettings.json`, environment-specific
+settings, Service user secrets for development, or deployment secret injection. Settings on the UI or
+AppHost alone do not configure the Service unless explicitly forwarded. Restart the Service to change
+providers, connections or bootstrap options. The page reports the settings selected at startup even if
+configuration files are subsequently edited.
+
+A safe UI-driven engine swap needs maintenance mode, draining active work, a complete cross-provider
+transfer (including retries, checkpoints and retained revisions), validation and a controlled restart.
+That workflow is not implemented. Merely changing the provider does not migrate state; the workspace
+backup export is not a substitute for a full database transfer.
 
 Set `Persistence:Provider` to `Sqlite`, `SqlServer` or `PostgreSql`, and supply `ConnectionStrings:Mulse`.
 For deployments, use `Persistence__Provider` and `ConnectionStrings__Mulse` environment variables or a
@@ -1484,15 +1628,17 @@ Missing/wrong keys or modified ciphertext fail explicitly. Key rotation is not y
 replace a key in place while encrypted data remains.
 
 AES-GCM protects configuration/package payloads, current and historical flow definitions, plugin directories,
-checkpoints and retry snapshots before they reach any database provider. Authentication binds ciphertext
-to its record identity. Flow IDs/names/categories/enabled flags, revision identifiers/timestamps, hashed
-lookup identities and scheduling indexes remain queryable metadata; this is **payload encryption**, not
+checkpoints, retry snapshots, execution definitions, event details, inbox/history payloads and delivery
+intents/responses before they reach any database provider. Authentication binds ciphertext to its record
+identity. Flow IDs/names/categories/enabled flags, execution IDs/statuses, stage/channel names, timestamps,
+revision identifiers, hashed lookup identities and scheduling indexes remain queryable metadata; this is **payload encryption**, not
 whole-database encryption. Enabling/disabling encryption rewrites all payloads and historical revisions in
 one transaction. It does not erase older plaintext from database journals, backups or the retained JSON
 file. Use OS/disk encryption as additional protection and avoid plaintext payloads in logs.
 
 For disaster recovery, back up the **database**, encryption keys and plugin binaries separately. The UI's
-workspace export excludes pending execution state and historical revisions; it is not a database backup.
+workspace export excludes pending execution state, inbox/outbox records, execution/message history and
+historical revisions; it is not a database backup.
 Use the SQLite online backup API (or stop the Service and follow SQLite's safe-copy procedure); copying
 only a live `.db` file can omit committed WAL data. SQL Server/PostgreSQL use their normal database backup
 and restore tooling. Test restore before relying on any backup.
@@ -1845,7 +1991,12 @@ UI URL. Main surfaces:
 | BizTalk import | `POST /api/biztalk-import/analyze`, `POST /api/biztalk-import/flows`, `POST /api/biztalk-import/rules/preview`, and scaffolded-module download endpoints. |
 | Config values | `GET /api/config-values`, `GET /api/config-values/references`, `GET /api/config-values/usages`; `PUT`/`DELETE /api/config-values/{reference}`. |
 | Workspace | `GET`/`PUT /api/workspace/encryption`; `POST /api/workspace/backup`, `/api/workspace/restore/preview`, `/api/workspace/restore`, `/api/workspace/flows/delete-all`. |
-| Inbound HTTP | `POST`/`PUT /api/inbound/{route}` for a registered HTTP push source. |
+| Storage diagnostics | `GET /api/workspace/storage` (no connection strings or keys). |
+| Processing / maintenance | `GET /api/workspace/processing`; `GET /api/workspace/processing/backlog` (metadata counters/capacity); `PUT /api/workspace/processing/maintenance` with `requested: true` to pause/drain or `false` to resume. Authenticated; poll until Paused before maintenance. |
+| History | `GET /api/history/executions?flowId=...&take=50`, `GET /api/history/executions/{executionId}`, `GET /api/history/messages?take=50`, `GET /api/history/messages/{id}` (explicit payload inspection). List `take`: 1-200; execution-detail lists are bounded to 1000 each. |
+| Delivery reconciliation | `POST /api/history/executions/{executionId}/deliveries/{deliveryId}/confirm-delivered` with `confirmation: "CONFIRM DELIVERED"` and independently verified `evidence` (10-4096 characters). Never resends the effect. |
+| Held disposition | `POST /api/history/executions/{executionId}/close` with `confirmation: "CLOSE WITHOUT REPLAY"` and review `evidence` (10-4096 characters); explicitly abandons held input, only when no retry/checkpoint continuation remains. |
+| Inbound HTTP | `POST`/`PUT /api/inbound/{route}` for a registered HTTP push source; optional `Idempotency-Key` for database-backed acceptance. |
 
 For example, from PowerShell while the local Service is running:
 
@@ -1884,17 +2035,18 @@ unhandled execution failures `500`.
 - **Runtime state cannot be decrypted:** verify the configured environment key and encoding before
   changing anything. Losing that key loses access to encrypted state; the UI cannot recover it.
 
-Mulse is a **single-process proof of concept**, not a production-hardened integration service. There is
-currently no application authentication/authorization layer: protect **both** UI and Service endpoints
-with network/access controls before exposing them beyond a trusted development machine. Masking and
-at-rest encryption do not restrict API access, plugin code, logs, network traffic, or external files.
+Mulse is a **single-process proof of concept**, not a production-hardened integration service. Management
+UI/API access uses the configured OIDC authentication/authorization; the inbound receive route remains
+intentionally anonymous and needs appropriate source/network protection. Masking and at-rest encryption
+do not restrict authorized API access, plugin code, logs, network traffic, or external files.
 
-There is no distributed locking, shared-state multi-instance coordination, exactly-once guarantee,
-transactional message broker, or general rollback across external systems. Persisted retries/checkpoints
-and idempotent callbacks cover specific continuations, not every crash window. Built-in polling modules
-read batches into memory; apply sensible input/workbook limits and test external-system behavior before
-using destructive cleanup. Workspace backups omit live work and binaries as described above; retain a
-separate operational recovery plan for state, keys, plugin files and source/destination data.
+Exclusive workspace ownership is not active-active coordination or external-effect fencing. There is no
+universal exactly-once guarantee, transactional message broker, or general rollback across external systems.
+Confirmed delivery depends on the destination contract; persisted retries/checkpoints and replay-safe
+modules cover specific continuations, not every crash window. Built-in polling modules read batches into
+memory; apply sensible input/workbook limits and test external-system behavior before using destructive
+cleanup. Workspace backups omit live work and binaries as described above; retain a separate operational
+recovery plan for state, keys, plugin files and source/destination data.
 
 ## Status
 

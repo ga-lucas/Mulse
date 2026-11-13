@@ -9,6 +9,9 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient();
         services.AddSingleton(TimeProvider.System);
         services.Configure<MulseOptions>(configuration.GetSection("Mulse"));
+        services.AddOptions<FlowHistoryOptions>().Bind(configuration.GetSection("Persistence:History"))
+            .Validate(options => options.RetentionDays is >= 1 and <= 36500, "History RetentionDays must be between 1 and 36500.")
+            .Validate(options => options.MaxPendingMessages is >= 1 and <= 1000000, "History MaxPendingMessages must be between 1 and 1000000.").ValidateOnStart();
         services.AddWorkspacePersistence(configuration, contentRootPath);
         services.AddSingleton<IRuntimeConfigurationStore, RuntimeConfigurationStore>();
         services.AddSingleton<WorkspaceBackupService>();
@@ -24,7 +27,16 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFlowRetryStateStore, FlowRetryStateStore>();
         services.AddSingleton<IConfigValueResolver, ConfigValueResolver>();
         services.AddSingleton<IHttpInboundRegistry, HttpInboundRegistry>();
-        services.AddSingleton<IFlowRuntime, FlowRuntime>();
+        services.AddOptions<ProcessingOptions>().Bind(configuration.GetSection("Processing"))
+            .Validate(options => options.ShutdownDrainSeconds is >= 1 and <= 3600 && options.MaxConcurrentExecutions is >= 1 and <= 10000,
+                "Processing ShutdownDrainSeconds must be 1-3600 and MaxConcurrentExecutions 1-10000.").ValidateOnStart();
+        services.Configure<HostOptions>(options => options.ShutdownTimeout = TimeSpan.FromSeconds(
+            configuration.GetValue("Processing:ShutdownDrainSeconds", 90) + 30));
+        services.AddSingleton<ProcessingCoordinator>();
+        services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<ProcessingCoordinator>());
+        services.AddSingleton<FlowRuntime>();
+        services.AddSingleton<IFlowRuntime>(serviceProvider => new CoordinatedFlowRuntime(
+            serviceProvider.GetRequiredService<FlowRuntime>(), serviceProvider.GetRequiredService<ProcessingCoordinator>()));
         services.AddHostedService<ModuleSynchronizationService>();
         services.AddHostedService<ScheduledFlowService>();
         services.AddHostedService<PushTriggeredFlowService>();

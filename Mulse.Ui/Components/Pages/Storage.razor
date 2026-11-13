@@ -1,0 +1,215 @@
+@page "/storage"
+@inject IMulseApiClient ApiClient
+
+<PageTitle>Storage | Mulse</PageTitle>
+
+<div class="page-shell">
+    <header class="page-hero">
+        <div>
+            <p class="eyebrow">Configuration</p>
+            <h1>Storage</h1>
+            <p class="lede">Inspect the Service's storage engine and learn where to configure it. Connection strings and encryption keys are never displayed here.</p>
+        </div>
+        <button class="secondary-button" disabled="@_isLoading" @onclick="LoadAsync">Refresh storage settings</button>
+    </header>
+
+    <StatusBanner Error="@_errorMessage" />
+    <StatusBanner Error="@_processingError" />
+    <StatusBanner Error="@_backlogError" />
+
+    <Panel Title="Processing and maintenance" Description="Pause new flow work, let admitted work finish, and keep the pause across Service restarts.">
+        @if (_processing is not null)
+        {
+            <dl class="overview-grid" aria-label="Processing status" aria-live="polite">
+                <div class="overview-stat"><dt>State</dt><dd>@_processing.State</dd></div>
+                <div class="overview-stat"><dt>Active executions</dt><dd>@_processing.ActiveExecutions</dd></div>
+                <div class="overview-stat"><dt>Active inbound admissions</dt><dd>@_processing.ActiveAdmissions</dd></div>
+                <div class="overview-stat"><dt>Persistent maintenance</dt><dd>@(_processing.MaintenanceRequested ? "On" : "Off")</dd></div>
+            </dl>
+            @if (_processing.Error is not null)
+            {
+                <p role="alert">@_processing.Error</p>
+            }
+            <button class="primary-button" disabled="@(_isUpdating || _processing.ShutdownRequested || _processing.Error is not null)" @onclick="ToggleMaintenanceAsync">
+                @(_processing.MaintenanceRequested ? "Resume processing" : "Pause and drain flows")
+            </button>
+        }
+        <button class="secondary-button" disabled="@_isUpdating" @onclick="LoadProcessingAsync">Refresh processing status</button>
+        @if (_backlog?.DurableInboxSupported == true)
+        {
+            <dl class="overview-grid" aria-label="Durable work backlog">
+                <div class="overview-stat"><dt>Unfinished inbox / capacity</dt><dd>@_backlog.UnfinishedMessages / @_backlog.MaxPendingMessages</dd></div>
+                <div class="overview-stat"><dt>Pending / claimed / held messages</dt><dd>@_backlog.PendingMessages / @_backlog.ClaimedMessages / @_backlog.HeldMessages</dd></div>
+                <div class="overview-stat"><dt>Held executions</dt><dd>@_backlog.HeldExecutions</dd></div>
+                <div class="overview-stat"><dt>Unknown / in-flight deliveries</dt><dd>@_backlog.UnknownDeliveries / @_backlog.InFlightDeliveries</dd></div>
+            </dl>
+            @if (_backlog.HeldExecutions > 0 || _backlog.HeldMessages > 0 || _backlog.UnknownDeliveries > 0)
+            {
+                <p role="alert">Recovery attention required. Review held work and uncertain deliveries in <a href="/history">History</a>; do not resend unknown effects blindly.</p>
+            }
+            @if (_backlog.UnfinishedMessages >= _backlog.MaxPendingMessages * 0.9)
+            {
+                <p role="alert">Inbox capacity is at least 90% used. New acceptance will be rejected when full; inspect blocked work and upstream retry behavior.</p>
+            }
+        }
+        <p>Paused means no admitted flow or HTTP intake remains. New requests receive 503 with Retry-After; persisted pending work stays queued. Refresh until the state is Paused before maintenance. Resume explicitly when ready.</p>
+        <p><strong>Paused is not database-offline:</strong> management operations and the ownership connection remain active. Stop the Service after draining before copying, migrating or taking its database offline. Graceful host shutdown drains automatically within its time budget; forced termination cannot.</p>
+        @if (_storage?.Provider == "Json")
+        {
+            <p>Legacy JSON mode has no durable HTTP/flow-link inbox. Pausing does not make its in-memory queues crash-safe.</p>
+        }
+    </Panel>
+
+    @if (_isLoading)
+    {
+        <p class="loading-state" role="status">Loading storage settings...</p>
+    }
+    else if (_storage is not null)
+    {
+        <Panel Title="Current storage" Description="Effective settings selected when the Service started. This is not a database connectivity or health check.">
+            <dl class="overview-grid" aria-label="Storage summary">
+                <div class="overview-stat"><dt>Engine</dt><dd>@EngineName</dd></div>
+                <div class="overview-stat"><dt>Connection configured</dt><dd>@(_storage.Provider == "Json" ? "Not applicable" : _storage.ConnectionConfigured ? "Yes (hidden)" : "No")</dd></div>
+                <div class="overview-stat"><dt>Apply migrations at startup</dt><dd>@(_storage.Provider == "Json" ? "Not applicable" : _storage.ApplyMigrations ? "Yes" : "No")</dd></div>
+                @if (_encryption is not null)
+                {
+                    <div class="overview-stat"><dt>Payload encryption</dt><dd>@(_encryption.Enabled ? "On" : "Off")</dd></div>
+                }
+            </dl>
+            @if (_storage.DataFile is not null)
+            {
+                <p>Data file on the Service machine: <code class="path-value">@_storage.DataFile</code></p>
+            }
+            @if (_storage.Provider == "Sqlite")
+            {
+                <p>SQLite uses local persistent storage, WAL, FULL synchronous writes, foreign keys and a fixed 30-second busy timeout. These durability settings are enforced, not configurable in this page.</p>
+            }
+            <p>Run only one Service process per workspace, including with SQL Server or PostgreSQL.</p>
+        </Panel>
+
+        <Panel Title="Where to configure" Description="Storage is host/bootstrap configuration, not a workspace config value. Changes require a Service restart.">
+            <p>Edit <code>Service\appsettings.json</code> (or its environment-specific override), or set environment variables on the <strong>Service process</strong>. Use user secrets for local development and a secret store/environment injection for deployments. Do not commit credentials.</p>
+            <p>In Visual Studio, use <strong>Manage User Secrets</strong> on the <strong>Service</strong> project for <code>ConnectionStrings:Mulse</code>. When running through AppHost, ensure deployment/environment overrides reach the Service resource, not just the UI or AppHost.</p>
+            <table class="module-table">
+                <thead><tr><th>Setting</th><th>Environment variable</th><th>Behavior / effective value</th></tr></thead>
+                <tbody>
+                    <tr><td><code>Persistence:Provider</code></td><td><code>Persistence__Provider</code></td><td>Sqlite, SqlServer, PostgreSql or Json. Current: @_storage.Provider.</td></tr>
+                    <tr><td><code>ConnectionStrings:Mulse</code></td><td><code>ConnectionStrings__Mulse</code></td><td>Required for database engines. Hidden even if it contains no password. Ignored for Json.</td></tr>
+                    <tr><td><code>Persistence:ApplyMigrations</code></td><td><code>Persistence__ApplyMigrations</code></td><td>Defaults to true for SQLite, false for server databases. Deploy server migrations separately with an appropriate account. Ignored for Json.</td></tr>
+                    <tr><td><code>Persistence:Encryption:KeyId</code></td><td><code>Persistence__Encryption__KeyId</code></td><td>Database key identifier (not a key): <code>@(_storage.EncryptionKeyId ?? "Not applicable")</code>. Default: primary. Must match an encrypted database.</td></tr>
+                    <tr><td><code>Mulse:Encryption:KeyEnvironmentVariable</code></td><td><code>Mulse__Encryption__KeyEnvironmentVariable</code></td><td>Name of the variable holding the base64 AES key: <code>@_storage.KeyEnvironmentVariable</code>. Never put the key itself in this setting.</td></tr>
+                    <tr><td><code>Mulse:Encryption:Enabled</code></td><td><code>Mulse__Encryption__Enabled</code></td><td>Initial encryption mode for a new workspace. Existing persisted mode wins. Change current encryption in <a href="/config-values">Config values</a>.</td></tr>
+                    <tr><td><code>Persistence:History:CaptureStagePayloads</code></td><td><code>Persistence__History__CaptureStagePayloads</code></td><td>Optional stage input/output snapshots: @(_storage.CaptureStagePayloads ? "On" : "Off"). Default: off. Required inbox/outbox payloads are always stored for recovery. Ignored for Json.</td></tr>
+                    <tr><td><code>Persistence:History:RetentionDays</code></td><td><code>Persistence__History__RetentionDays</code></td><td>Terminal history retention: @_storage.HistoryRetentionDays days (default: 30). Pending, held, retry and checkpoint-linked work is retained. Confirmed flow-link receipt bodies are kept permanently for deduplication; plan storage and privacy accordingly. Ignored for Json.</td></tr>
+                    <tr><td><code>Persistence:History:MaxPendingMessages</code></td><td><code>Persistence__History__MaxPendingMessages</code></td><td>Unfinished inbox limit: @_storage.MaxPendingMessages (default: 10000). New acceptance is rejected when full; an identical idempotent retry still returns its existing receipt. Ignored for Json.</td></tr>
+                    <tr><td><code>Processing:ShutdownDrainSeconds</code></td><td><code>Processing__ShutdownDrainSeconds</code></td><td>Graceful drain budget: @_storage.ShutdownDrainSeconds seconds (default: 90). Configure the OS/container stop grace period above this plus cleanup time.</td></tr>
+                    <tr><td><code>Processing:MaxConcurrentExecutions</code></td><td><code>Processing__MaxConcurrentExecutions</code></td><td>Admitted execution limit: @_storage.MaxConcurrentExecutions (default: 64). Busy requests fail explicitly and scheduled work waits for a later poll.</td></tr>
+                    <tr><td><code>Mulse:RuntimeStatePath</code></td><td><code>Mulse__RuntimeStatePath</code></td><td>JSON file path, relative to Service content root unless absolute. Default: Data\mulse-runtime.json. For databases, used only for one-time import into an empty database.</td></tr>
+                </tbody>
+            </table>
+            <h3>Connection string shapes</h3>
+            <p>Examples below are templates, not the current connection details. Configure provider-supported TLS, authentication and timeout options in the connection string.</p>
+            <ul>
+                <li>SQLite: <code>Data Source=Data\mulse.db</code> (local durable file; no in-memory databases).</li>
+                <li>SQL Server: <code>Server=&lt;host&gt;;Database=&lt;database&gt;;Integrated Security=true;Encrypt=true</code> (Windows authentication example).</li>
+                <li>PostgreSQL: <code>Host=&lt;host&gt;;Database=&lt;database&gt;;Username=&lt;user&gt;;Password=&lt;secret&gt;;SSL Mode=VerifyFull</code>.</li>
+            </ul>
+            <p>Encryption protects payloads, not all metadata or old plaintext in journals/backups. Keep the external key backed up separately; changing its value or key ID is not a key-rotation operation.</p>
+        </Panel>
+
+        <Panel Title="Changing storage engines" Description="Read-only for now: there is no live engine switch or automatic database-to-database migration.">
+            <p>A provider dropdown alone would point at a different workspace, not move the existing one. Safe switching needs a maintenance-mode migration workflow:</p>
+            <ol>
+                <li>Stop new work and drain active executions; stop the Service before transferring state.</li>
+                <li>Back up the complete source database, external encryption key and plugin binaries.</li>
+                <li>Prepare the target schema and transfer all workspace records, including pending retries/checkpoints and retained flow revisions; validate the result.</li>
+                <li>Update the Service's provider and connection settings, restart against the target, then verify recovery before accepting new work. Keep the old source offline.</li>
+            </ol>
+            <p>That full transfer workflow is not implemented yet. Do not point at an empty target with a stale legacy JSON file: it can import old state. The <a href="/backup-restore">Backup &amp; Restore</a> workspace export excludes pending execution state and revision history, so it is not a complete storage migration or database backup.</p>
+        </Panel>
+    }
+</div>
+
+@code {
+    private RuntimeStorageViewModel? _storage;
+    private RuntimeEncryptionViewModel? _encryption;
+    private bool _isLoading = true;
+    private bool _isUpdating;
+    private string? _errorMessage;
+    private string? _processingError;
+    private string? _backlogError;
+    private ProcessingStatusViewModel? _processing;
+    private ProcessingBacklogViewModel? _backlog;
+    private string EngineName => _storage?.Provider switch
+    {
+        "Sqlite" => "SQLite",
+        "SqlServer" => "SQL Server",
+        "PostgreSql" => "PostgreSQL",
+        "Json" => "JSON file (legacy)",
+        _ => _storage?.Provider ?? string.Empty
+    };
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        _storage = null;
+        _encryption = null;
+        try
+        {
+            var storage = ApiClient.GetStorageAsync(CancellationToken.None);
+            var encryption = ApiClient.GetEncryptionAsync(CancellationToken.None);
+            await Task.WhenAll(storage, encryption, LoadProcessingAsync());
+            _storage = await storage;
+            _encryption = await encryption;
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = $"Unable to load storage settings: {exception.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private Task LoadProcessingAsync() => Task.WhenAll(LoadProcessingStateAsync(), LoadBacklogAsync());
+
+    private async Task LoadBacklogAsync()
+    {
+        _backlogError = null;
+        try { _backlog = await ApiClient.GetProcessingBacklogAsync(CancellationToken.None); }
+        catch (Exception exception)
+        {
+            _backlog = null;
+            _backlogError = $"Unable to load durable work backlog: {exception.Message}";
+        }
+    }
+
+    private async Task LoadProcessingStateAsync()
+    {
+        _processingError = null;
+        try { _processing = await ApiClient.GetProcessingAsync(CancellationToken.None); }
+        catch (Exception exception)
+        {
+            _processing = null;
+            _processingError = $"Unable to load processing status: {exception.Message}";
+        }
+    }
+
+    private async Task ToggleMaintenanceAsync()
+    {
+        if (_processing is null) return;
+        _isUpdating = true;
+        _processingError = null;
+        try { _processing = await ApiClient.SetMaintenanceAsync(!_processing.MaintenanceRequested, CancellationToken.None); }
+        catch (Exception exception)
+        {
+            _processingError = $"Maintenance change was not confirmed. Refresh status before proceeding: {exception.Message}";
+            _processing = null;
+        }
+        finally { _isUpdating = false; }
+    }
+}
