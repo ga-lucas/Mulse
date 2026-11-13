@@ -74,6 +74,10 @@ happens at this boundary, not during Fetch. Notification retries do not resend d
 | `Mulse.SamplePlugin` | Reference/example hot-loadable plugin project - the template to follow when authoring a new module package. |
 | `Mulse.AppHost` | .NET Aspire orchestration host for local multi-project run/debug. |
 | `Mulse.ServiceDefaults` | Shared Aspire service-defaults (telemetry, health checks, service discovery). |
+| `Mulse.Persistence` | Shared EF Core model, transactional workspace persistence, immutable flow revisions and payload encryption. |
+| `Mulse.Persistence.Sqlite` | SQLite provider, durability configuration and migrations. |
+| `Mulse.Persistence.SqlServer` | SQL Server provider and migrations (separate from the SQL integration plugin). |
+| `Mulse.Persistence.PostgreSql` | PostgreSQL provider and migrations. |
 | `Service.Tests` | xUnit coverage for runtime/retries/source outcomes, persistence, API/UI interactions, module packages, sample analysis, Excel, and BizTalk migration; also contains the reference-input JavaScript test. |
 | `Mulse.Ui.Tests` | Dependency-free Node.js tests for browser theme, floating panels, and file-drop behavior. |
 
@@ -213,9 +217,16 @@ render and deliver steps, and compensation settings, are retained when a flow is
 
 Retryable failures persist the failed stage/input and return `Retrying` with `nextAttemptAt`. The retry
 driver checks every two seconds and resumes from that stage, preserving prior resolved source batches
-and committed delivery state. Ordinary processing retries use the currently saved flow definition;
-avoid editing an executing/retrying flow. A stage can partially affect an external system before it
-throws, so retries can repeat those side effects: design destination operations for idempotency.
+and committed delivery state. Processing retries also retain the execution's resolved flow definition,
+including configuration/secret values and retry policies: later flow edits or configuration changes do
+not redirect pending work. Disabling a flow pauses processing retries without deleting them; enabling
+it permits resumption. Modules required by a saved retry cannot be unloaded or removed.
+Legacy processing retries without a saved definition are retained but cannot resume automatically:
+drain pending processing retries before upgrading, or reconcile their original definition and external
+outcomes before recovery. Source-notification-only retries still use their saved receipts.
+A stage can partially affect an external system before it throws, so retries can repeat those side
+effects: design destination operations for idempotency. Snapshots pin definitions, not plugin binaries;
+keep compatible plugin versions available. Resolved secrets remain in state, so enable at-rest encryption.
 
 `Suspended` means a stateful augment stored a checkpoint for a correlated follow-up. Configure
 `stateful-orchestration-augment` with `ResumeOrWait`, `Suspend` or `Complete`, a correlation source/key,
@@ -422,7 +433,9 @@ Enable **Durable execution** in Properties for persisted Wait/Receive nodes, nam
 Reply and leased Deliver operations. Configure stable instance/message metadata keys and incoming channels;
 receive filters and pinned correlation keys are editable without source code. Timer polling resumes directly
 at the persisted cursor without fetching or replaying upstream nodes. Named batches and source receipts survive
-restart. Checkpoints expose wait deadlines/recovery holds, not message bodies or credentials. Configuration edits
+restart. The deadline driver checks enabled native flows every two seconds, including after restart, so
+persisted waits and timed receives progress without a new source arrival or manual run. Disabled and
+migration-blocked flows are not advanced. Checkpoints expose wait deadlines/recovery holds, not message bodies or credentials. Configuration edits
 and flow deletion are prevented while native work is pending. Internal delivery/reply flows need no outer route.
 Add **CreateXmlMessage** to build a named XML payload from a String expression; no source metadata is implicitly
 inherited. Add **SetMessageValue**, select a named target and a typed XML path (including sample-path clicks)
@@ -683,18 +696,19 @@ Service process before starting it (restart Visual Studio/AppHost if they need t
 variable). Do not generate a different key on each launch. The UI never accepts, returns or stores the
 key. A legacy `Mulse:Encryption:KeyBase64` setting alone does not enable the UI switch.
 
-Take a workspace backup first. Turning encryption on atomically migrates the existing state to AES-GCM;
-turning it off requires confirmation and rewrites the state without encryption. Changes take effect
-immediately, serialize with other state writes, and persist across restarts without manually moving
-the state file. The state file includes a versioned envelope recording the selected mode (the disabled
-payload is base64-encoded JSON, not encrypted). Saved mode overrides the original
-`Mulse:Encryption:Enabled` default. Legacy plaintext and configuration-encrypted files remain readable;
-a UI switch migrates them to the new format, which older application versions cannot read.
+Take a database backup first (or a state-file backup when explicitly using the legacy JSON provider).
+Turning encryption on atomically migrates persisted payloads to AES-GCM; turning it off requires
+confirmation and rewrites payloads without encryption. Changes serialize with other state writes and
+survive restarts. Saved mode overrides the original `Mulse:Encryption:Enabled` default.
+The database stores the mode/key ID in workspace metadata and encrypts all payload records, including
+historical revisions. Queryable flow metadata and scheduling indexes remain unencrypted; see
+**Encryption and backups** below. In legacy JSON mode, a versioned file envelope records the mode;
+its disabled payload is base64-encoded JSON, not encrypted.
 
 Keep the same environment key available while encryption is on. A missing/wrong key or damaged
 encrypted payload fails startup rather than replacing your data with an empty workspace. Workspace
-backup encryption uses its own password, independently of this switch. At-rest encryption protects
-the state file, not live API/UI access or other files produced by modules.
+export encryption uses its own password, independently of this switch. At-rest encryption does not
+protect live API/UI access, logs, or other files produced by modules.
 
 This remains a PoC without application access control. Use only in a trusted environment; masking and
 encryption are not authentication or authorization. Add access control and HTTPS before exposing it
@@ -1314,21 +1328,180 @@ Use the launch endpoints shown by Aspire and ensure `MulseApi:BaseUrl` still res
 Service endpoint. For a single optional plugin, `dotnet build .\Mulse.Excel\Mulse.Excel.csproj` (or its
 SQL Server/HL7/sample equivalent) is enough; then load it in **Module Packages**.
 
+### Local identity-provider sandbox
+
+`compose.auth.yml` starts a local Keycloak instance backed by PostgreSQL. This is a development sandbox,
+not a network deployment: Keycloak runs in development mode and its HTTP port is bound to loopback only.
+Do not change the port binding or expose this Keycloak setup to a LAN; network deployment needs HTTPS and a
+production Keycloak configuration.
+
+Create a local environment file and replace the example values with two different, long random passwords:
+
+```powershell
+Copy-Item .env.auth.example .env.auth
+# Edit .env.auth; do not commit it or reuse these credentials.
+docker compose --env-file .env.auth -f .\compose.auth.yml up -d
+docker compose --env-file .env.auth -f .\compose.auth.yml ps
+```
+
+Open **http://localhost:8081** and sign in with `KC_BOOTSTRAP_ADMIN_USERNAME` and
+`KC_BOOTSTRAP_ADMIN_PASSWORD` from `.env.auth`. The PostgreSQL database is persisted in a named Docker
+volume and is not published to the host. Stop the containers with:
+
+```powershell
+docker compose --env-file .env.auth -f .\compose.auth.yml down
+```
+
+This keeps the database. `down --volumes` deletes the database and all Keycloak accounts. `.env.auth`
+contains plaintext local secrets and is excluded from Git.
+
+### Mulse OIDC authentication
+
+Mulse uses OpenID Connect authorization-code login for the administrator UI and OAuth client credentials
+for server-to-server UI/API calls. Configure the `mulse-ui` client with its HTTPS callback URLs as described
+above, and create the `mulse-service` confidential client with a service account assigned the
+`mulse-api-access` realm role. Keep the two client secrets separate.
+
+The Service validates issuer, signature, expiration and the `mulse-api` audience. In Keycloak, open the
+`mulse-service` client, add an **Audience** protocol mapper to its dedicated client scope, set the included
+custom audience to `mulse-api`, and enable **Add to access token**. The access token must also contain the
+assigned `mulse-api-access` realm role. UI sign-in additionally requires the user's `mulse-admin` realm role
+in the **ID token**, not just the access token. In **Clients > mulse-ui > Client scopes**, open its dedicated
+scope, then **Mappers > Configure a new mapper > User Realm Role**. Set **Name** to `mulse-realm-roles`,
+**Token Claim Name** to `realm_access.roles`, **Claim JSON Type** to `String`, **Multivalued** to ON, and
+**Add to ID token** to ON. Leave the role prefix empty. Ensure `mulse-admin` is assigned to your user and
+allowed by the client's role scope mappings. Sign out and sign in again to issue a fresh session after
+changing role assignments or mappers. Missing administrator roles produce a 403 page with sign-out,
+not another login redirect. This mapping is Keycloak configuration; Mulse's issuer and role-claim names
+remain configurable for other providers.
+
+Store both client secrets in Visual Studio's **Manage User Secrets** for the `Mulse.Ui` project; do not put
+them in appsettings, Compose files or source control. Add these entries to its user-secrets JSON, replacing
+the placeholders with the values from the matching Keycloak client's **Credentials** tab:
+
+```json
+{
+  "Authentication": {
+    "ClientSecret": "<mulse-ui-client-secret>"
+  },
+  "MulseApi": {
+    "ClientSecret": "<mulse-service-client-secret>"
+  }
+}
+```
+
+Run the UI using its **https** launch profile so its callback is `https://localhost:7021/signin-oidc`.
+The management API requires a valid bearer token from the configured issuer, the expected `mulse-api`
+audience, `azp` equal to `mulse-service`, and the `mulse-api-access` role. The UI itself requires the
+`mulse-admin` role. The local HTTP Keycloak issuer is permitted only in Development; production must use
+HTTPS and an appropriately configured secret store, callback URLs, and stable Data Protection keys.
+
+Start sign-in at `https://localhost:7021`; visiting Keycloak's account console first is not required.
+The protected UI cookie retains only the ID token needed for Keycloak logout, not the user's access or
+refresh tokens. Sign-out clears the UI cookie and requests identity-provider logout. Existing sessions
+without an ID token use the client ID and may receive a Keycloak logout confirmation prompt. Ensure
+`https://localhost:7021/signout-callback-oidc` is registered as a valid post-logout redirect URI for
+`mulse-ui`. After changing authentication configuration, restart the UI and sign in afresh.
+
+The `/api/inbound/{route}` endpoint intentionally remains anonymous for compatibility with existing senders.
+It is not protected by the administrator login, and an IP allowlist is not yet implemented. Until inbound
+authentication and network restrictions are added, expose that route only behind a firewall or trusted
+network gateway; do not publish the Service port to an untrusted network.
+
 ### First run and persistence
 
-`Mulse:RuntimeStatePath` defaults to `Data\mulse-runtime.json` relative to the **Service content root**.
-On first creation, `Mulse:Pipelines` and `Mulse:PluginDirectories` in `Service\appsettings.json` seed the
-runtime state. Once that file exists it is authoritative: changing those seed sections does **not**
-update existing flows or the saved plugin directory list. Use the UI/API for flow/package changes.
-The state stores definitions, config/secrets, package registrations, retries and orchestration
-checkpoints; it is not just a disposable flow cache and may be encrypted rather than plain JSON.
+The shipped application uses **SQLite**, with `ConnectionStrings:Mulse` set to
+`Data Source=Data\mulse.db` relative to the **Service content root**. Keep it on local persistent storage,
+not a network share. Connections use WAL mode, `synchronous=FULL`, foreign keys and a 30-second busy timeout.
+Transactions persist workspace metadata and changed operational records together; failed writes are not
+published to the runtime. Only changed records are written, not one growing workspace JSON blob.
 
-The Service account needs read access to source/plugin paths and write access to its state directory,
-`Runtime\PluginCache` shadow-copy directory, output folders, and any archive/quarantine paths it uses.
-Cleanup additionally requires delete/move permissions on input files. Module filesystem paths and
-BizTalk source paths refer to the **Service machine**, not the browser machine. For deployment, prefer
-explicit absolute paths and preserve the state file and external encryption key separately. Do not
-delete the state file to refresh examples without backing up/reconciling pending work.
+On an empty database, the Service imports the file at `Mulse:RuntimeStatePath` (default
+`Data\mulse-runtime.json`), including definitions, configuration/secrets, package registrations, pending
+retries and checkpoints. The import is one transaction. The original file is **not modified or deleted**;
+protect/archive it after validating the database. Existing encrypted files require their original key;
+database encryption requires the environment key described below. Invalid input or an unavailable database
+fails startup instead of silently seeding a replacement. Legacy processing retries without a pinned
+definition remain subject to the recovery hold documented above.
+
+If no legacy file exists, `Mulse:Pipelines` and `Mulse:PluginDirectories` seed the database. Once initialized,
+the database is authoritative: later changes to seed sections or the legacy file do not change it.
+Use the UI/API for flow/package/configuration changes. Do not run an old JSON-backed Service against the
+retained import file: that would create a separate, divergent workspace, not a rollback.
+
+The shared model has `Flows`, append-only `FlowRevisions`, `ConfigurationValues`, `ModulePackages`,
+`Checkpoints`, `Retries` and workspace metadata. Each saved flow change creates an immutable definition
+revision. Deleted/replaced flows retain historical revisions; the workspace backup UI exports current
+configuration, not this revision archive. Processing retries still carry their original resolved definition
+snapshots. Execution/message-history APIs, their UI, and durable inbox/outbox behavior are **not implemented
+by this storage migration**.
+
+Use **one Service process per workspace**. The runtime still has an in-process state cache and execution
+locks; a server database alone does not enable active-active execution. An application-managed workspace
+version rejects stale writes from another instance rather than overwriting its committed work. A detected
+stale cache or unacknowledged commit blocks subsequent runtime reads/writes. Stop competing instances and
+restart to reload committed state; a lost acknowledgement does not prove a transaction rolled back.
+Changing providers points at a different database, not an automatic database-to-database migration. Do not
+switch to an empty database with a stale legacy file; transfer/reconcile the complete state first.
+
+#### Selecting a database and applying migrations
+
+Set `Persistence:Provider` to `Sqlite`, `SqlServer` or `PostgreSql`, and supply `ConnectionStrings:Mulse`.
+For deployments, use `Persistence__Provider` and `ConnectionStrings__Mulse` environment variables or a
+secret store; never commit credentials. SQLite applies migrations automatically by default. Server providers
+default to **no automatic migrations**: deploy the schema with a migration account before starting the Service.
+`Persistence:ApplyMigrations` explicitly overrides this behavior. Back up before schema upgrades; do not run
+migrations concurrently with a live Service. Each provider has its own generated migrations and model snapshot.
+
+```powershell
+dotnet tool restore
+# Set this process variable securely to the target database connection string first.
+$env:MULSE_MIGRATION_CONNECTION = $env:ConnectionStrings__Mulse
+dotnet ef database update --project .\Mulse.Persistence.SqlServer --startup-project .\Mulse.Persistence.SqlServer --context SqlServerMulseDbContext
+# PostgreSQL: use .\Mulse.Persistence.PostgreSql for both projects and PostgreSqlMulseDbContext
+# SQLite:    use .\Mulse.Persistence.Sqlite for both projects and SqliteMulseDbContext
+```
+
+Migration factories do not load application settings: SQLite's fallback is a design-time file in the current
+directory, not the Service runtime database. Always specify an absolute SQLite path when migrating manually.
+To add a shared model change, generate a migration for **each** provider using `dotnet ef migrations add`
+with the corresponding project/context. EF Core 10.0.15 is used consistently because the stable PostgreSQL
+provider currently targets EF 10; the application's .NET target is unchanged.
+
+`Persistence:Provider=Json` explicitly retains the legacy file store. Unconfigured library/test consumers
+also retain JSON for compatibility; the shipped application explicitly selects SQLite. An unknown provider
+or missing database connection string is an error, never a fallback to JSON.
+
+#### Encryption and backups
+
+Enable runtime payload encryption in **Config values**, or set `Mulse:Encryption:Enabled=true` for a new
+workspace. Encryption mode is subsequently saved in the database. Set `MULSE_STATE_ENCRYPTION_KEY` to a
+base64-encoded AES key (prefer 32 random bytes); override its name with
+`Mulse:Encryption:KeyEnvironmentVariable`. Keys stay outside the database and source control. Database
+writes do not use `Mulse:Encryption:KeyBase64`. `Persistence:Encryption:KeyId` defaults to `primary` and
+must match the ID recorded in an encrypted database. Keep both ID and key available after restart.
+Missing/wrong keys or modified ciphertext fail explicitly. Key rotation is not yet automated: do not
+replace a key in place while encrypted data remains.
+
+AES-GCM protects configuration/package payloads, current and historical flow definitions, plugin directories,
+checkpoints and retry snapshots before they reach any database provider. Authentication binds ciphertext
+to its record identity. Flow IDs/names/categories/enabled flags, revision identifiers/timestamps, hashed
+lookup identities and scheduling indexes remain queryable metadata; this is **payload encryption**, not
+whole-database encryption. Enabling/disabling encryption rewrites all payloads and historical revisions in
+one transaction. It does not erase older plaintext from database journals, backups or the retained JSON
+file. Use OS/disk encryption as additional protection and avoid plaintext payloads in logs.
+
+For disaster recovery, back up the **database**, encryption keys and plugin binaries separately. The UI's
+workspace export excludes pending execution state and historical revisions; it is not a database backup.
+Use the SQLite online backup API (or stop the Service and follow SQLite's safe-copy procedure); copying
+only a live `.db` file can omit committed WAL data. SQL Server/PostgreSQL use their normal database backup
+and restore tooling. Test restore before relying on any backup.
+
+The Service account needs read access to source/plugin paths and write access to its SQLite/state directory,
+`Runtime\PluginCache` shadow-copy directory, output folders, and archive/quarantine paths. Cleanup additionally
+requires delete/move permissions on input files. Module filesystem paths and BizTalk source paths refer to
+the **Service machine**, not the browser machine. Prefer explicit absolute paths and never delete state
+or the database to refresh examples without backing up/reconciling pending work.
 
 A fresh workspace includes `sample-file-pipeline` and `sample-multi-source-join-pipeline`, both on-demand.
 For a basic smoke test, open the first sample in the dashboard, inspect its source/output paths, and
@@ -1346,9 +1519,19 @@ dotnet test .\Service.Tests\Service.Tests.csproj
 node --test .\Mulse.Ui.Tests\*.test.cjs .\Service.Tests\*.test.mjs
 ```
 
-The JavaScript suites need no npm dependencies.
-end-to-end behavior against your live SQL, SFTP, SMTP or HTTP systems; validate those separately before
-letting a flow modify source data.
+The JavaScript suites need no npm dependencies. Workspace persistence tests always exercise SQLite.
+To run the same contracts against SQL Server/PostgreSQL, set `MULSE_TEST_SQLSERVER` and/or
+`MULSE_TEST_POSTGRESQL` to test-server connections and run:
+
+```powershell
+dotnet test .\Service.Tests\Service.Tests.csproj --filter FullyQualifiedName~WorkspacePersistenceTests
+```
+
+These tests create and delete uniquely named `mulse_ef_tests_*` databases; the test account needs database
+creation/deletion privileges. Only use isolated test servers. Without those variables, server migration
+models/scripts are checked without connecting; server integration cases are not included.
+Tests do not establish end-to-end behavior against your live SQL, SFTP, SMTP or HTTP systems; validate
+those separately before letting a flow modify source data.
 
 ## UI workspace
 

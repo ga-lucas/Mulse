@@ -6,6 +6,10 @@
   <Project Path="Mulse.Excel/Mulse.Excel.csproj" />
   <Project Path="Mulse.Hl7/Mulse.Hl7.csproj" />
   <Project Path="Mulse.Modules/Mulse.Modules.csproj" />
+  <Project Path="Mulse.Persistence.PostgreSql/Mulse.Persistence.PostgreSql.csproj" />
+  <Project Path="Mulse.Persistence.Sqlite/Mulse.Persistence.Sqlite.csproj" />
+  <Project Path="Mulse.Persistence.SqlServer/Mulse.Persistence.SqlServer.csproj" />
+  <Project Path="Mulse.Persistence/Mulse.Persistence.csproj" />
   <Project Path="Mulse.SamplePlugin/Mulse.SamplePlugin.csproj" />
   <Project Path="Mulse.ServiceDefaults/Mulse.ServiceDefaults.csproj" />
   <Project Path="Mulse.Ui/Mulse.Ui.csproj" />

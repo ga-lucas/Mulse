@@ -411,6 +411,35 @@ public sealed class ModulePackageLifecycleTests : IDisposable
         Assert.False(catalog.GetPackages().Single(package => package.Id == "fixture").IsLoaded);
     }
 
+    [Fact]
+    public async Task PendingRetryDefinition_BlocksPackageUnloadWithoutCurrentFlowReference()
+    {
+        var pluginDirectory = Path.Combine(_directory, "plugins");
+        Directory.CreateDirectory(pluginDirectory);
+        var assemblyPath = Path.Combine(pluginDirectory, "fixture.dll");
+        File.Copy(typeof(LifecycleTestInstaller).Assembly.Location, assemblyPath);
+        var store = Store();
+        var catalog = Catalog(store);
+        await catalog.UpsertManagedPackageAsync(new()
+        {
+            Id = "fixture", AssemblyPath = assemblyPath, Enabled = true
+        }, default);
+        await store.UpsertRetryStateAsync(new()
+        {
+            FlowId = "pending", ExecutionId = "execution", StageId = "fetch:f",
+            PipelineSnapshot = new()
+            {
+                Id = "pending", Fetches = [new() { Id = "f", Fetch = new() { Module = "lifecycle-test-fetch" } }]
+            }
+        }, default);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => catalog.RemoveManagedPackageAsync("fixture", default));
+        Assert.Contains("pending processing retry definitions", error.Message);
+        Assert.True(catalog.GetPackages().Single(package => package.Id == "fixture").IsLoaded);
+        await store.DeleteAllRetryStateForExecutionAsync("pending", "execution", default);
+        await catalog.UpsertManagedPackageAsync(new() { Id = "fixture", AssemblyPath = assemblyPath, Enabled = false }, default);
+        Assert.False(catalog.GetPackages().Single(package => package.Id == "fixture").IsLoaded);
+    }
+
     public void Dispose()
     {
         _services.Dispose();

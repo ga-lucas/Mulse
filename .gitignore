@@ -362,6 +362,16 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 
+# Local authentication sandbox secrets
+.env.auth
+
 # Plugin build output
 /Service/plugins/
 /Service/Runtime/
+
+# Local SQLite runtime databases (including journals)
+/Service/Data/*.db
+/Service/Data/*.db-wal
+/Service/Data/*.db-shm
+/Service/Data/*.db-journal
+/mulse-design.db*

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Service.Middleware;
 
@@ -14,7 +15,7 @@ internal sealed class ApiExceptionHandler(ILogger<ApiExceptionHandler> logger) :
         {
             KeyNotFoundException => (StatusCodes.Status404NotFound, "Not Found"),
             ArgumentException => (StatusCodes.Status400BadRequest, "Bad Request"),
-            InvalidOperationException => (StatusCodes.Status409Conflict, "Conflict"),
+            InvalidOperationException or DbUpdateConcurrencyException => (StatusCodes.Status409Conflict, "Conflict"),
             OperationCanceledException => (0, (string?)null),
             // Any other exception type (HttpRequestException from an unreachable delivery endpoint,
             // TimeoutException, SocketException, etc.) still gets a real message instead of falling

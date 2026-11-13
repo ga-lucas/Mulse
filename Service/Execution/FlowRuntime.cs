@@ -592,6 +592,7 @@ public sealed partial class FlowRuntime(
                 {
                     FlowId = pipeline.Id,
                     ExecutionId = context.ExecutionId,
+                    PipelineSnapshot = pipeline,
                     StageId = stageId,
                     AttemptsMade = attemptNumber,
                     NextAttemptAt = nextAttemptAt,

@@ -16,6 +16,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="11.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0" />
   </ItemGroup>
 
@@ -23,6 +24,9 @@
     <ProjectReference Include="..\Mulse.ServiceDefaults\Mulse.ServiceDefaults.csproj" />
     <ProjectReference Include="..\Mulse.Modules\Mulse.Modules.csproj" />
     <ProjectReference Include="..\Mulse.CompatibilityPack\Mulse.CompatibilityPack.csproj" />
+    <ProjectReference Include="..\Mulse.Persistence.Sqlite\Mulse.Persistence.Sqlite.csproj" />
+    <ProjectReference Include="..\Mulse.Persistence.SqlServer\Mulse.Persistence.SqlServer.csproj" />
+    <ProjectReference Include="..\Mulse.Persistence.PostgreSql\Mulse.Persistence.PostgreSql.csproj" />
   </ItemGroup>
 
   <ItemGroup>

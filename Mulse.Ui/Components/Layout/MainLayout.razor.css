@@ -118,7 +118,6 @@
 }
 
 .layout-shell main {
-    max-width: 1600px;
     margin-left: var(--sidebar-width);
     padding: clamp(1.25rem, 3vw, 3rem);
 }

@@ -1,11 +1,49 @@
+using System.Security.Claims;
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Mulse.ServiceDefaults.Security;
 using Service;
 using Service.Endpoints;
 using Service.Middleware;
-using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var authority = builder.Configuration["Authentication:Authority"]
+    ?? throw new InvalidOperationException("Authentication:Authority is required.");
+var apiAudience = builder.Configuration["Authentication:ApiAudience"] ?? "mulse-api";
+var apiClientId = builder.Configuration["Authentication:ApiClientId"] ?? "mulse-service";
+var apiAccessRole = builder.Configuration["Authentication:ApiAccessRole"] ?? "mulse-api-access";
+var rolesClaim = builder.Configuration["Authentication:RolesClaim"] ?? "realm_access";
+var rolesProperty = builder.Configuration["Authentication:RolesProperty"] ?? "roles";
+
 builder.AddServiceDefaults();
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.Authority = authority;
+        options.Audience = apiAudience;
+        options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters.NameClaimType = "preferred_username";
+        options.TokenValidationParameters.RoleClaimType = ClaimTypes.Role;
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = context =>
+            {
+                OidcRoleClaims.AddJsonArrayRoles(context.Principal, rolesClaim, rolesProperty);
+                return Task.CompletedTask;
+            }
+        };
+    });
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
+        .RequireAuthenticatedUser()
+        .RequireRole(apiAccessRole)
+        .RequireClaim("azp", apiClientId)
+        .Build();
+});
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
@@ -18,6 +56,8 @@ var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+app.UseAuthentication();
+app.UseAuthorization();
 
 if (app.Environment.IsDevelopment())
 {

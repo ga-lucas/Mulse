@@ -13,6 +13,9 @@ public sealed class FlowRetryState
 
     public string ExecutionId { get; init; } = string.Empty;
 
+    /// <summary>The resolved definition used by this execution. Absent on legacy retries and source-only notifications.</summary>
+    public PipelineDefinition? PipelineSnapshot { get; init; }
+
     /// <summary>
     /// Identifies which stage of the flow is stalled: "fetch:{fetchNodeId}", "parse:{parseNodeId}",
     /// "augment:{index}", "delivery:{routeIndex}:render", "delivery:{routeIndex}:deliver:{deliverIndex}", or "source-outcome".

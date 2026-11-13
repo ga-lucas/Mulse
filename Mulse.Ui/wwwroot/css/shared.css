@@ -337,15 +337,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1rem; height: 1rem;
     gap: 1rem;
 }
 
-.flow-pagination {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    gap: 1rem;
-    margin-top: 1rem;
-}
-
 .secondary-button.danger-button {
     color: var(--error-text);
     background: var(--error-bg);

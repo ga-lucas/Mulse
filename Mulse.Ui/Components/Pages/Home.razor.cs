@@ -8,7 +8,6 @@ public partial class Home
 {
     private ElementReference _actionEditor;
     private bool _focusAction;
-    private const int PageSize = 10;
     private string _search = string.Empty;
     private string _categoryFilter = string.Empty;
     private string _statusFilter = string.Empty;
@@ -16,7 +15,6 @@ public partial class Home
     private string _moduleFilter = string.Empty;
     private bool _unresolvedOnly;
     private bool _descending;
-    private int _page = 1;
     private FlowViewModel? _managedFlow;
     private string _flowAction = string.Empty;
     private string _newFlowId = string.Empty;
@@ -39,19 +37,10 @@ public partial class Home
         _categoryFilter.StartsWith("category:", StringComparison.Ordinal) ? _categoryFilter[9..] : null,
         _categoryFilter == "none", _unresolvedOnly, _descending).Apply(_flows, _configUsages);
 
-    private int PageCount => Math.Max(1, (FilteredFlows.Count + PageSize - 1) / PageSize);
-    private int CurrentPage => Math.Clamp(_page, 1, PageCount);
-    private IEnumerable<FlowViewModel> VisibleFlows => FilteredFlows.Skip((CurrentPage - 1) * PageSize).Take(PageSize);
-
-    private void ResetPage() => _page = 1;
-    private void PreviousPage() => _page = Math.Max(1, CurrentPage - 1);
-    private void NextPage() => _page = Math.Min(PageCount, CurrentPage + 1);
-
     private void ClearFilters()
     {
         _search = _categoryFilter = _statusFilter = _triggerFilter = _moduleFilter = string.Empty;
         _unresolvedOnly = _descending = false;
-        ResetPage();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

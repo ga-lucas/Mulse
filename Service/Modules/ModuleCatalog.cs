@@ -343,6 +343,9 @@ public sealed class ModuleCatalog : IModuleCatalog
                 .Select(flow => flow.Id).Order(StringComparer.OrdinalIgnoreCase).ToArray();
             if (dependentFlows.Length > 0)
                 throw new InvalidOperationException($"Package '{packageId}' is used by saved flows: {string.Join(", ", dependentFlows)}. Remove or replace these references (including disabled flows) before unloading or removing the package.");
+            if (state.PendingRetries.Any(retry => retry.PipelineSnapshot is { } snapshot
+                && FlowModuleDependencies.References(snapshot).Any(reference => package.Modules.ContainsKey(reference.Id))))
+                throw new InvalidOperationException($"Package '{packageId}' is required by pending processing retry definitions. Complete those executions before unloading or removing it.");
             var pendingSources = state.PendingRetries.SelectMany(retry => retry.SourceReceipts)
                 .Concat(state.OrchestrationCheckpoints.SelectMany(checkpoint => checkpoint.SourceReceipts));
             if (pendingSources.Any(receipt => package.Modules.ContainsKey(receipt.Step.Module)))

@@ -28,7 +28,7 @@
             <div class="overview-stat"><dt>Unresolved usages</dt><dd>@_unresolvedUsages.Count</dd></div>
         </dl>
 
-        <Panel Title="Runtime state encryption" Description="Encrypts the entire runtime state file, including flows and stored values. The key stays outside the application.">
+        <Panel Title="Runtime state encryption" Description="Encrypts stored runtime payloads, including definitions, configuration values, checkpoints and retries. Database flow names, IDs, categories, enabled flags and scheduling indexes remain queryable. The key stays outside the application.">
             @if (_encryption is not null)
             {
                 <p>Encryption: <strong>@(_encryption.Enabled ? "On" : "Off")</strong></p>
@@ -44,7 +44,7 @@
                 @if (_confirmDisableEncryption)
                 {
                     <div class="action-row" role="alert">
-                        <p>This will rewrite all runtime state without encryption. Continue?</p>
+                        <p>This will rewrite runtime payloads, including retained flow revisions, without encryption. Continue?</p>
                         <button class="run-button" disabled="@_isSaving" @onclick="() => SetEncryptionAsync(false)">Confirm disable encryption</button>
                         <button class="secondary-button" disabled="@_isSaving" @onclick="() => _confirmDisableEncryption = false">Cancel</button>
                     </div>

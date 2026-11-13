@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
 using Mulse.Modules;
+using Mulse.Persistence;
 
 namespace Service.Execution;
 
@@ -18,6 +19,8 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
     private IRuntimeStatePayloadProtector _protector;
     private bool _usesEnvelope;
     private RuntimeMulseState _state;
+    private readonly WorkspaceDatabase? _database;
+    private readonly ILogger<RuntimeConfigurationStore>? _logger;
 
     private const string EnvelopeFormat = "mulse-runtime-state-v1";
     private sealed record StateEnvelope(string Format, bool Encrypted, byte[] Payload);
@@ -27,19 +30,42 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
         SerializerOptions.Converters.Add(new JsonStringEnumConverter());
     }
 
-    public RuntimeConfigurationStore(IOptions<MulseOptions> options, IHostEnvironment environment, IRuntimeStatePayloadProtector? protector = null)
+    public RuntimeConfigurationStore(IOptions<MulseOptions> options, IHostEnvironment environment, IRuntimeStatePayloadProtector? protector = null,
+        WorkspaceDatabase? database = null, ILogger<RuntimeConfigurationStore>? logger = null)
     {
+        _database = database;
+        _logger = logger;
         var configuredPath = options.Value.RuntimeStatePath;
         _statePath = Path.GetFullPath(Path.IsPathRooted(configuredPath)
             ? configuredPath
             : Path.Combine(environment.ContentRootPath, configuredPath));
         _protector = protector ?? NoOpRuntimeStatePayloadProtector.Instance;
         _keyEnvironmentVariable = options.Value.Encryption.KeyEnvironmentVariable;
-        _state = LoadState(options.Value, protector);
+        _state = database is null ? LoadState(options.Value, protector) : LoadDatabase(options.Value, protector);
+    }
+
+    private RuntimeMulseState LoadDatabase(MulseOptions options, IRuntimeStatePayloadProtector? initialProtector)
+    {
+        var persisted = _database!.Load();
+        if (persisted is not null)
+        {
+            _protector = persisted.Encrypted ? RuntimeEncryptionKey.FromEnvironment(_keyEnvironmentVariable) : NoOpRuntimeStatePayloadProtector.Instance;
+            return RuntimeDatabaseMapping.FromDatabase(persisted.State);
+        }
+        var hasLegacyState = File.Exists(_statePath);
+        var initial = hasLegacyState ? LoadState(options, initialProtector) : CreateSeedState(options);
+        var encrypted = hasLegacyState ? _protector is AesGcmRuntimeStatePayloadProtector : options.Encryption.Enabled;
+        if (encrypted) _protector = RuntimeEncryptionKey.FromEnvironment(_keyEnvironmentVariable);
+        _database.SaveAsync(RuntimeDatabaseMapping.ToDatabase(initial), encrypted, hasLegacyState ? _statePath : null, CancellationToken.None)
+            .GetAwaiter().GetResult();
+        _logger?.LogInformation("Initialized database workspace from {Source}. Legacy files are retained unchanged; the database is now authoritative.",
+            hasLegacyState ? _statePath : "configured seed definitions");
+        return initial;
     }
 
     public RuntimeMulseState GetState()
     {
+        _database?.EnsureAvailable();
         return Clone(_state);
     }
 
@@ -140,6 +166,12 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
 
     private async Task WriteStateAsync(RuntimeMulseState state, IRuntimeStatePayloadProtector protector, bool envelope, CancellationToken cancellationToken)
     {
+        if (_database is not null)
+        {
+            await _database.SaveAsync(RuntimeDatabaseMapping.ToDatabase(state), protector is AesGcmRuntimeStatePayloadProtector,
+                importSource: null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
         var temporaryPath = _statePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
@@ -180,8 +212,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
                 .OrderBy(static candidate => candidate.Id, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally
@@ -200,8 +231,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
             updated.Pipelines.RemoveAll(candidate => string.Equals(candidate.Id, flowId, StringComparison.OrdinalIgnoreCase));
             updated.OrchestrationCheckpoints.RemoveAll(candidate => string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase));
             updated.PendingRetries.RemoveAll(candidate => string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase));
-            _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally
@@ -326,8 +356,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
                 updated.PendingRetries.Add(Clone(retryState));
             }
 
-            _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally
@@ -346,8 +375,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
                 string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(candidate.ExecutionId, executionId, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(candidate.StageId, stageId, StringComparison.OrdinalIgnoreCase));
-            _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally
@@ -365,8 +393,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
             updated.PendingRetries.RemoveAll(candidate =>
                 string.Equals(candidate.FlowId, flowId, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(candidate.ExecutionId, executionId, StringComparison.OrdinalIgnoreCase));
-            _state = updated;
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            await CommitWorkspaceAsync(updated, cancellationToken).ConfigureAwait(false);
             return Clone(_state);
         }
         finally
@@ -431,7 +458,7 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
             _protector = initialProtector ?? RuntimeEncryptionKey.FromConfiguration(options.Encryption);
             var jsonBytes = _protector.Unprotect(protectedBytes);
             return JsonSerializer.Deserialize<RuntimeMulseState>(jsonBytes, SerializerOptions)
-                ?? CreateSeedState(options);
+                ?? throw new InvalidOperationException("The runtime state is empty. Existing state was not reseeded.");
         }
 
         _protector = initialProtector ?? RuntimeEncryptionKey.FromConfiguration(options.Encryption);
@@ -452,9 +479,6 @@ public sealed class RuntimeConfigurationStore : IRuntimeConfigurationStore
             PendingRetries = []
         };
     }
-
-    private Task PersistAsync(CancellationToken cancellationToken)
-        => WriteStateAsync(_state, _protector, _usesEnvelope, cancellationToken);
 
     private static T Clone<T>(T value)
     {

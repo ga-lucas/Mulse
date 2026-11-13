@@ -20,7 +20,7 @@ public sealed class RuntimeConfigurationStoreTests : IDisposable
         }
     }
 
-    private RuntimeConfigurationStore CreateStore(MulseOptions? options = null)
+    private RuntimeConfigurationStore CreateStore(MulseOptions? options = null, IRuntimeStatePayloadProtector? protector = null)
     {
         options ??= new MulseOptions();
         options = new MulseOptions
@@ -29,7 +29,72 @@ public sealed class RuntimeConfigurationStoreTests : IDisposable
             PluginDirectories = options.PluginDirectories,
             Pipelines = options.Pipelines
         };
-        return new RuntimeConfigurationStore(Options.Create(options), new FakeHostEnvironment(), NoOpRuntimeStatePayloadProtector.Instance);
+        return new RuntimeConfigurationStore(Options.Create(options), new FakeHostEnvironment(), protector ?? NoOpRuntimeStatePayloadProtector.Instance);
+    }
+
+    [Theory]
+    [InlineData("add-flow", false)]
+    [InlineData("update-flow", false)]
+    [InlineData("delete-flow", false)]
+    [InlineData("add-retry", false)]
+    [InlineData("update-retry", false)]
+    [InlineData("delete-stage", false)]
+    [InlineData("delete-execution", false)]
+    [InlineData("add-flow", true)]
+    [InlineData("update-flow", true)]
+    [InlineData("delete-flow", true)]
+    [InlineData("add-retry", true)]
+    [InlineData("update-retry", true)]
+    [InlineData("delete-stage", true)]
+    [InlineData("delete-execution", true)]
+    public async Task FailedMutation_DoesNotPublishOrPersistChanges(string operation, bool cancel)
+    {
+        var protector = new FailingProtector();
+        var store = CreateStore(protector: protector);
+        await store.UpsertFlowAsync(new() { Id = "flow-a", Name = "Original" }, default);
+        await store.UpsertRetryStateAsync(new() { FlowId = "flow-a", ExecutionId = "e1", StageId = "augment:0", AttemptsMade = 1 }, default);
+        await store.UpsertRetryStateAsync(new() { FlowId = "flow-a", ExecutionId = "e1", StageId = "augment:1", AttemptsMade = 1 }, default);
+        var original = System.Text.Json.JsonSerializer.Serialize(store.GetState());
+        var path = Path.Combine(_tempDirectory, "mulse-runtime.json");
+        var originalBytes = await File.ReadAllBytesAsync(path);
+        using var cancellation = new CancellationTokenSource();
+        protector.OnProtect = () =>
+        {
+            Assert.Equal(original, System.Text.Json.JsonSerializer.Serialize(store.GetState()));
+            if (cancel) cancellation.Cancel();
+            else throw new IOException("Injected persistence failure.");
+        };
+        Task Mutate() => operation switch
+        {
+            "add-flow" => store.UpsertFlowAsync(new() { Id = "flow-b" }, cancellation.Token),
+            "update-flow" => store.UpsertFlowAsync(new() { Id = "flow-a", Name = "Changed" }, cancellation.Token),
+            "delete-flow" => store.DeleteFlowAsync("flow-a", cancellation.Token),
+            "add-retry" => store.UpsertRetryStateAsync(new() { FlowId = "flow-a", ExecutionId = "e2", StageId = "augment:0" }, cancellation.Token),
+            "update-retry" => store.UpsertRetryStateAsync(new() { FlowId = "flow-a", ExecutionId = "e1", StageId = "augment:0", AttemptsMade = 2 }, cancellation.Token),
+            "delete-stage" => store.DeleteRetryStateAsync("flow-a", "e1", "augment:0", cancellation.Token),
+            "delete-execution" => store.DeleteAllRetryStateForExecutionAsync("flow-a", "e1", cancellation.Token),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation))
+        };
+        if (cancel) await Assert.ThrowsAnyAsync<OperationCanceledException>(Mutate);
+        else await Assert.ThrowsAsync<IOException>(Mutate);
+        Assert.Equal(original, System.Text.Json.JsonSerializer.Serialize(store.GetState()));
+        Assert.Equal(original, System.Text.Json.JsonSerializer.Serialize(CreateStore().GetState()));
+        Assert.Equal(originalBytes, await File.ReadAllBytesAsync(path));
+        Assert.Empty(Directory.GetFiles(_tempDirectory, "*.tmp"));
+
+        protector.OnProtect = null;
+        await store.SetConfigValueAsync("after-failure", "saved", default);
+        var reloaded = CreateStore().GetState();
+        Assert.Equal("saved", reloaded.ConfigValues["after-failure"]);
+        reloaded.ConfigValues.Clear();
+        Assert.Equal(original, System.Text.Json.JsonSerializer.Serialize(reloaded));
+    }
+
+    private sealed class FailingProtector : IRuntimeStatePayloadProtector
+    {
+        public Action? OnProtect { get; set; }
+        public byte[] Protect(byte[] plaintext) { OnProtect?.Invoke(); return plaintext; }
+        public byte[] Unprotect(byte[] protectedPayload) => protectedPayload;
     }
 
     [Fact]

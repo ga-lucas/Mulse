@@ -27,6 +27,10 @@
                 <button type="button" class="secondary-button theme-toggle" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode" aria-pressed="false">
                     <span aria-hidden="true">&#9680;</span><span class="menu-text">Dark mode</span>
                 </button>
+                <form method="post" action="/auth/logout">
+                    <AntiforgeryToken />
+                    <button type="submit" class="secondary-button"><span class="menu-text">Sign out</span></button>
+                </form>
                 <span class="workspace-caption">Mulse orchestration console</span>
             </div>
         </div>

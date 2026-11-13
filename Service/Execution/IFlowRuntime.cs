@@ -8,7 +8,7 @@ public interface IFlowRuntime
 
     Task<FlowExecutionResult> ExecuteAsync(string flowId, CancellationToken cancellationToken);
 
-    /// <summary>Release one eligible persisted timed batch without fetching; returns null when none is safe/due.</summary>
+    /// <summary>Resume one eligible persisted batch, ODX or native deadline without fetching; returns null when none is safe/due.</summary>
     Task<FlowExecutionResult?> ReleaseDueBatchAsync(string flowId, CancellationToken cancellationToken);
 
     /// <summary>Explicit early release of a still-collecting instance at its inspected payload count; never replay released data.</summary>
@@ -17,8 +17,9 @@ public interface IFlowRuntime
     /// <summary>
     /// Resumes a stalled stage from a persisted <see cref="FlowRetryState"/> (called by the background retry
     /// driver once its delay has elapsed, or at service startup to recover in-flight work after a crash).
-    /// Returns <c>null</c> when work was removed, is exhausted, or cannot currently resume. Source-bearing
-    /// processing retries are retained while a flow is disabled; terminal callbacks retain original settings.
+    /// Returns <c>null</c> when work was removed, is exhausted, or cannot currently resume. Processing retries
+    /// use their saved resolved definition and are retained while disabled; terminal callbacks retain original settings.
+    /// Legacy processing retries without a saved definition throw without removing pending state.
     /// </summary>
     Task<FlowExecutionResult?> ResumeRetryAsync(FlowRetryState retryState, CancellationToken cancellationToken);
 

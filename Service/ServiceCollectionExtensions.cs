@@ -9,6 +9,7 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient();
         services.AddSingleton(TimeProvider.System);
         services.Configure<MulseOptions>(configuration.GetSection("Mulse"));
+        services.AddWorkspacePersistence(configuration, contentRootPath);
         services.AddSingleton<IRuntimeConfigurationStore, RuntimeConfigurationStore>();
         services.AddSingleton<WorkspaceBackupService>();
         services.AddSingleton<IModuleCatalog, ModuleCatalog>();

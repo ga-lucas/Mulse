@@ -7,8 +7,8 @@ public sealed partial class FlowRuntime
     /// <summary>
     /// Resumes a previously persisted <see cref="FlowRetryState"/>, either because its delay has elapsed or
     /// because the service is recovering pending work found on disk after a restart. Returns <c>null</c> (after
-    /// deleting stale retry entries) if the flow has been deleted. Source-bearing processing retries stay
-    /// pending while a flow is disabled; terminal source callbacks use their original settings even if it is disabled.
+    /// deleting stale retry entries) if the flow has been deleted. Processing retries use their saved resolved
+    /// definition and stay pending while disabled; terminal source callbacks run even if the flow is disabled.
     /// </summary>
     public Task<FlowExecutionResult?> ResumeRetryAsync(FlowRetryState retryState, CancellationToken cancellationToken)
         => ResumeRetryCoreAsync(retryState, restartSourceNotifications: false, cancellationToken);
@@ -34,16 +34,14 @@ public sealed partial class FlowRuntime
                     Enabled = false,
                     Fetches = retryState.SourceReceipts.Select((receipt, index) => new FetchNodeDefinition { Id = $"receipt-{index}", Fetch = receipt.Step }).ToList()
                 }
-                : GetConfiguredFlow(retryState.FlowId);
+                : GetEnabledRetryFlow(retryState.FlowId);
         }
         catch (Exception exception) when (exception is not FlowMigrationBlockedException && (exception is KeyNotFoundException or InvalidOperationException))
         {
             logger.LogWarning(
                 "Cannot resume pending retry for flow {FlowId} execution {ExecutionId} stage {StageId}: {Reason}",
                 retryState.FlowId, retryState.ExecutionId, retryState.StageId, exception.Message);
-            var hasCollector = flowDefinitionService.GetAll().Any(flow => flow.Id.Equals(retryState.FlowId, StringComparison.OrdinalIgnoreCase)
-                && flow.Augments.Any(step => step.Module.Equals("durable-batch-augment", StringComparison.OrdinalIgnoreCase)));
-            if ((retryState.SourceReceipts.Count == 0 && retryState.CheckpointCorrelationKey is null && !hasCollector) || exception is KeyNotFoundException)
+            if (exception is KeyNotFoundException)
                 await flowRetryStateStore.DeleteAllForExecutionAsync(retryState.FlowId, retryState.ExecutionId, cancellationToken).ConfigureAwait(false);
             return null;
         }
@@ -59,7 +57,15 @@ public sealed partial class FlowRuntime
             if (restartSourceNotifications && current.SourceCompletion?.NotificationsExhausted != true) return null;
             retryState = current;
             if (retryState.SourceCompletion is null)
-                pipeline = GetConfiguredFlow(retryState.FlowId);
+            {
+                _ = GetEnabledRetryFlow(retryState.FlowId);
+                pipeline = retryState.PipelineSnapshot
+                    ?? throw new InvalidOperationException($"Flow '{retryState.FlowId}' execution '{retryState.ExecutionId}' has a legacy processing retry without a saved definition. Automatic resumption is blocked; retain the state and reconcile the original flow and destination outcomes before recovery.");
+                if (!pipeline.Id.Equals(retryState.FlowId, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("The pending retry's saved definition does not match its flow. No stages were resumed.");
+                FlowMigrationReadiness.EnsureReady(pipeline);
+                FlowModuleDependencies.EnsureAvailable(pipeline, moduleCatalog.GetAll());
+            }
             using var moduleUsage = moduleCatalog.PinFlowModules(pipeline);
             var context = new FlowExecutionContext(pipeline.Id, retryState.ExecutionId, retryState.ExecutionStartedAt)
             {
@@ -142,6 +148,15 @@ public sealed partial class FlowRuntime
         {
             gate.Release();
         }
+    }
+
+    private PipelineDefinition GetEnabledRetryFlow(string flowId)
+    {
+        var pipeline = flowDefinitionService.GetById(flowId);
+        FlowMigrationReadiness.EnsureReady(pipeline);
+        if (!pipeline.Enabled)
+            throw new InvalidOperationException($"Flow '{flowId}' is disabled; pending processing retries are retained until it is enabled.");
+        return pipeline;
     }
 
     private static RetryPolicyDefinition EffectiveRetry(PipelineDefinition pipeline, ModuleStepDefinition step)

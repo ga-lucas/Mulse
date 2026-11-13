@@ -37,10 +37,10 @@
                 <ChildContent>
                 <div class="flow-filters">
                     <label>Search flows
-                        <input type="search" @bind="_search" @bind:event="oninput" @bind:after="ResetPage" placeholder="Flow name, ID, category, module, or source" />
+                        <input type="search" @bind="_search" @bind:event="oninput" placeholder="Flow name, ID, category, module, or source" />
                     </label>
                     <label>Category
-                        <select @bind="_categoryFilter" @bind:after="ResetPage">
+                        <select @bind="_categoryFilter">
                             <option value="">All categories</option>
                             <option value="none">Uncategorized</option>
                             @foreach (var category in Categories)
@@ -50,12 +50,12 @@
                         </select>
                     </label>
                     <label>Status
-                        <select @bind="_statusFilter" @bind:after="ResetPage">
+                        <select @bind="_statusFilter">
                             <option value="">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option>
                         </select>
                     </label>
                     <label>Trigger
-                        <select @bind="_triggerFilter" @bind:after="ResetPage">
+                        <select @bind="_triggerFilter">
                             <option value="">All triggers</option>
                             @foreach (var trigger in _flows.Select(flow => flow.TriggerMode).Distinct().Order())
                             {
@@ -64,7 +64,7 @@
                         </select>
                     </label>
                     <label>Module
-                        <select @bind="_moduleFilter" @bind:after="ResetPage">
+                        <select @bind="_moduleFilter">
                             <option value="">All modules</option>
                             @foreach (var module in _flows.SelectMany(FlowListFilter.Modules).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
                             {
@@ -73,9 +73,9 @@
                         </select>
                     </label>
                     <label>Sort by flow ID
-                        <select @bind="_descending" @bind:after="ResetPage"><option value="false">A to Z</option><option value="true">Z to A</option></select>
+                        <select @bind="_descending"><option value="false">A to Z</option><option value="true">Z to A</option></select>
                     </label>
-                    <label class="checkbox-label"><input type="checkbox" @bind="_unresolvedOnly" @bind:after="ResetPage" /> Unresolved configuration only</label>
+                    <label class="checkbox-label"><input type="checkbox" @bind="_unresolvedOnly" /> Unresolved configuration only</label>
                     <button class="secondary-button" @onclick="ClearFilters">Clear filters</button>
                 </div>
                 <p role="status">@FilteredFlows.Count of @_flows.Count flow(s) match</p>
@@ -127,7 +127,7 @@
                 else
                 {
                     <div class="flow-list">
-                        @foreach (var flow in VisibleFlows)
+                        @foreach (var flow in FilteredFlows)
                         {
                             <section class="flow-card dashboard-flow @(flow.Enabled ? "is-enabled" : "is-disabled")" @key="flow.Id" aria-label="@($"Flow {flow.DisplayName}")">
                                 <div class="flow-card-header">
@@ -228,11 +228,6 @@
                             </section>
                         }
                     </div>
-                    <nav class="flow-pagination" aria-label="Flow list pages">
-                        <button class="secondary-button" @onclick="PreviousPage" disabled="@(CurrentPage == 1)">Previous</button>
-                        <span>Page @CurrentPage of @PageCount</span>
-                        <button class="secondary-button" @onclick="NextPage" disabled="@(CurrentPage == PageCount)">Next</button>
-                    </nav>
                 }
                 </ChildContent>
             </Panel>

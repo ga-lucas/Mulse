@@ -12,7 +12,7 @@ namespace Service.Tests;
 public sealed class FlowWorkspaceRenderingTests
 {
     [Fact]
-    public async Task Dashboard_RendersFiltersAndTenFlowsWithoutModuleAdministration()
+    public async Task Dashboard_RendersFiltersAndAllFlowsWithoutPaginationOrModuleAdministration()
     {
         var html = await RenderAsync<Home>();
         Assert.Contains("Search flows", html);
@@ -24,9 +24,13 @@ public sealed class FlowWorkspaceRenderingTests
         Assert.Contains("All modules", html);
         Assert.Contains("Unresolved configuration only", html);
         Assert.Contains("12 of 12 flow(s) match", html);
-        Assert.Contains("Page 1 of 2", html);
-        Assert.Equal(10, html.Split("class=\"flow-card dashboard-flow ").Length - 1);
-        Assert.Equal(10, html.Split("aria-label=\"Pipeline stages\"").Length - 1);
+        Assert.DoesNotContain("Flow list pages", html);
+        Assert.Equal(12, html.Split("class=\"flow-card dashboard-flow ").Length - 1);
+        Assert.Equal(12, html.Split("aria-label=\"Pipeline stages\"").Length - 1);
+        for (var index = 1; index <= 12; index++)
+        {
+            Assert.Contains($"href=\"/designer/flow-{index:00}\"", html);
+        }
         Assert.Contains("stage-augment", html);
         Assert.Contains("stage-render", html);
         Assert.Contains("stage-deliver", html);

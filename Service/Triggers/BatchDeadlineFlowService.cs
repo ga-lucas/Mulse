@@ -10,7 +10,8 @@ public sealed class BatchDeadlineFlowService(IFlowRuntime runtime, ILogger<Batch
             {
                 foreach (var flow in runtime.GetConfiguredFlows().Where(flow => flow.Enabled && flow.Migration is null
                     && flow.Augments.Any(step => step.Module.Equals("durable-batch-augment", StringComparison.OrdinalIgnoreCase)
-                        || step.Module.Equals(Mulse.Modules.BuiltIn.Augment.OdxProgramAugmentModule.ModuleId, StringComparison.OrdinalIgnoreCase))))
+                        || step.Module.Equals(Mulse.Modules.BuiltIn.Augment.OdxProgramAugmentModule.ModuleId, StringComparison.OrdinalIgnoreCase)
+                        || step.Module.Equals(Mulse.Modules.ControlFlow.NativeFlowDefinition.ModuleId, StringComparison.OrdinalIgnoreCase))))
                 {
                     stoppingToken.ThrowIfCancellationRequested();
                     try { await runtime.ReleaseDueBatchAsync(flow.Id, stoppingToken).ConfigureAwait(false); }

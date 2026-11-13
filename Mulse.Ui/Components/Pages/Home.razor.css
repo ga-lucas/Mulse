@@ -1,21 +1,15 @@
 .flow-list {
     gap: 1.75rem;
-    padding: 1rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-lg);
-    background: var(--surface-preview);
 }
 
 .dashboard-flow {
     padding: 0;
     overflow: hidden;
     border: 2px solid var(--text-muted);
-    border-inline-start: 6px solid var(--text-muted);
     background: var(--surface-panel);
     box-shadow: var(--shadow-panel);
 }
 
-.dashboard-flow.is-enabled { border-inline-start-color: var(--success-text); }
 .dashboard-flow:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
 .dashboard-flow > .flow-card-header {
     padding: 1.25rem;
@@ -47,7 +41,6 @@
 .flow-filters .checkbox-label { display: flex; align-items: center; gap: .5rem; }
 
 @media (max-width: 700px) {
-    .flow-list { padding: .5rem; }
     .flow-stage-summary { grid-template-columns: 1fr; }
     .flow-card-actions { flex-basis: 100%; }
 }

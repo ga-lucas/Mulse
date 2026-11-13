@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Mulse.Modules;
 
@@ -79,7 +80,8 @@ public static class HttpInboundEndpoints
             .Produces(StatusCodes.Status202Accepted)
             .Produces(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status504GatewayTimeout);
+            .ProducesProblem(StatusCodes.Status504GatewayTimeout)
+            .AllowAnonymous();
 
         return app;
     }
