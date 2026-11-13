@@ -158,7 +158,8 @@ public sealed class FlowWorkspaceRenderingTests
         Assert.Contains("MULSE_STATE_ENCRYPTION_KEY", html);
         Assert.Contains("Service\\appsettings.json", html);
         Assert.Contains("no live engine switch", html);
-        Assert.Contains("excludes pending execution state and revision history", html);
+        Assert.Contains("Storage migration wizard", html);
+        if (provider != "Json") Assert.Contains("excludes pending execution state and revision history", html);
         Assert.Contains("Changes require a Service restart", html);
         Assert.Contains("Pause and drain flows", html);
         Assert.Contains("<dt>Active executions</dt><dd>2</dd>", html);
@@ -173,7 +174,14 @@ public sealed class FlowWorkspaceRenderingTests
             Assert.Contains("<dt>Unfinished inbox / capacity</dt><dd>9000 / 10000</dd>", html);
         }
         else Assert.DoesNotContain("aria-label=\"Durable work backlog\"", html);
-        Assert.DoesNotContain("<select", html);
+        if (provider == "Json") Assert.DoesNotContain("<select", html);
+        else
+        {
+            Assert.Contains("id=\"migration-provider\"", html);
+            Assert.Contains("id=\"migration-connection\" type=\"password\"", html);
+            Assert.Contains("Preview and validate target", html);
+            Assert.Contains("Stop the Service", html);
+        }
         if (provider is "Sqlite" or "Json") Assert.Contains("C:\\workspace\\data", html);
         else Assert.DoesNotContain("Data file on the Service machine", html);
         Assert.Contains(provider == "Sqlite" ? "<dt>Apply migrations at startup</dt><dd>Yes</dd>"
@@ -619,6 +627,7 @@ public sealed class FlowWorkspaceRenderingTests
                 "/api/config-values/references" => new[] { "db-host" },
                 "/api/config-values" => new[] { new ConfigValueViewModel("db-host", "example.internal") },
                 "/api/workspace/encryption" => new RuntimeEncryptionViewModel(false, false, "MULSE_STATE_ENCRYPTION_KEY", "Set the environment variable and restart the Service."),
+                "/api/workspace/storage/migration" => new StorageMigrationStatusViewModel(storageProvider != "Json", null, null, null),
                 "/api/workspace/processing" => new ProcessingStatusViewModel(processingState, processingState is "Paused" or "Draining", 2, 1,
                     processingState == "Stopping", processingState == "Faulted" ? "Restart required" : null),
                 "/api/workspace/processing/backlog" => storageProvider == "Json"

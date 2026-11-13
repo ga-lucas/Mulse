@@ -372,6 +372,19 @@ namespace Mulse.Persistence.PostgreSql.Migrations
                         .IsRequired()
                         .HasColumnType("bytea");
 
+                    b.Property<Guid?>("StorageMigrationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("StorageMigrationState")
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("StorageMigrationTarget")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<Guid>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("uuid");

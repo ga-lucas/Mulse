@@ -117,16 +117,7 @@
             <p>Encryption protects payloads, not all metadata or old plaintext in journals/backups. Keep the external key backed up separately; changing its value or key ID is not a key-rotation operation.</p>
         </Panel>
 
-        <Panel Title="Changing storage engines" Description="Read-only for now: there is no live engine switch or automatic database-to-database migration.">
-            <p>A provider dropdown alone would point at a different workspace, not move the existing one. Safe switching needs a maintenance-mode migration workflow:</p>
-            <ol>
-                <li>Stop new work and drain active executions; stop the Service before transferring state.</li>
-                <li>Back up the complete source database, external encryption key and plugin binaries.</li>
-                <li>Prepare the target schema and transfer all workspace records, including pending retries/checkpoints and retained flow revisions; validate the result.</li>
-                <li>Update the Service's provider and connection settings, restart against the target, then verify recovery before accepting new work. Keep the old source offline.</li>
-            </ol>
-            <p>That full transfer workflow is not implemented yet. Do not point at an empty target with a stale legacy JSON file: it can import old state. The <a href="/backup-restore">Backup &amp; Restore</a> workspace export excludes pending execution state and revision history, so it is not a complete storage migration or database backup.</p>
-        </Panel>
+        <StorageMigrationWizard Processing="_processing" OnCompleted="LoadProcessingAsync" />
     }
 </div>
 

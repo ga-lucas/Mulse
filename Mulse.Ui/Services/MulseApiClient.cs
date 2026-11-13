@@ -4,7 +4,7 @@ using Mulse.Ui.Models;
 
 namespace Mulse.Ui.Services;
 
-public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
+public sealed class MulseApiClient(HttpClient httpClient, IHttpClientFactory? clientFactory = null) : IMulseApiClient
 {
     public Task<IReadOnlyList<ModuleViewModel>> GetModulesAsync(CancellationToken cancellationToken)
         => GetListAsync<ModuleViewModel>("/api/modules", cancellationToken);
@@ -246,6 +246,20 @@ public sealed class MulseApiClient(HttpClient httpClient) : IMulseApiClient
     {
         using var response = await httpClient.GetAsync("/api/workspace/storage", cancellationToken).ConfigureAwait(false);
         return await ReadRequiredAsync<RuntimeStorageViewModel>(response, cancellationToken, "storage settings").ConfigureAwait(false);
+    }
+
+    public async Task<StorageMigrationStatusViewModel> GetStorageMigrationAsync(CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync("/api/workspace/storage/migration", cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<StorageMigrationStatusViewModel>(response, cancellationToken, "storage migration status").ConfigureAwait(false);
+    }
+
+    public async Task<StorageMigrationReportViewModel> RunStorageMigrationAsync(StorageMigrationRequestViewModel request, bool execute, CancellationToken cancellationToken)
+    {
+        using var migrationClient = clientFactory?.CreateClient("mulse-storage-migration");
+        using var response = await (migrationClient ?? httpClient).PostAsJsonAsync(execute ? "/api/workspace/storage/migration/execute" : "/api/workspace/storage/migration/preview",
+            request, cancellationToken).ConfigureAwait(false);
+        return await ReadRequiredAsync<StorageMigrationReportViewModel>(response, cancellationToken, "storage migration verification").ConfigureAwait(false);
     }
 
     public async Task<ProcessingStatusViewModel> GetProcessingAsync(CancellationToken cancellationToken)

@@ -36,6 +36,9 @@ public sealed partial class WorkspaceDatabase(IDbContextFactory<MulseDbContext> 
         }
         if (workspace.Id != 1 || workspace.Encrypted != (workspace.KeyId is not null))
             throw new InvalidOperationException("Invalid database workspace metadata. State was not reseeded.");
+        if (workspace.StorageMigrationState == "TargetStaged")
+            throw new InvalidOperationException("This database is an unfinalized migration target. Reopen the source Service and finalize the same migration before starting against this target.");
+        Migration = new(workspace.StorageMigrationId, workspace.StorageMigrationState, workspace.StorageMigrationTarget);
         string Decode(byte[] payload, string identity) => codec.Unprotect(payload, identity, workspace.Encrypted, workspace.KeyId);
         var documents = new List<WorkspaceDocument>();
         foreach (var flow in db.Flows.AsNoTracking().Include(row => row.CurrentRevision))
@@ -87,6 +90,7 @@ public sealed partial class WorkspaceDatabase(IDbContextFactory<MulseDbContext> 
             _requiresReload = true;
             throw new DbUpdateConcurrencyException("Another Service changed this workspace. Stop competing instances and restart to reload committed state; no changes were saved.");
         }
+        EnsureWritable(workspace);
         var reencrypt = workspace is not null && workspace.Encrypted != encrypted;
         if (workspace is null)
         {

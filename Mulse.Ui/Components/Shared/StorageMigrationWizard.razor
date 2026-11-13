@@ -1,0 +1,141 @@
+@inject IMulseApiClient ApiClient
+
+<Panel Title="Storage migration wizard" Description="Copy the complete database workspace to SQLite, SQL Server or PostgreSQL. There is no live engine switch.">
+    <StatusBanner Error="@_error" />
+    @if (_status is null)
+    {
+        <p>Migration availability has not been loaded.</p>
+        <button class="secondary-button" disabled="@_busy" @onclick="LoadStatusAsync">Refresh migration status</button>
+    }
+    else if (!_status.Supported)
+    {
+        <p>Legacy JSON storage cannot use the complete-database migration wizard. Its existing one-time startup import can move configuration, retries and checkpoints into an empty database; in-memory messages cannot be transferred.</p>
+    }
+    else
+    {
+        <ol>
+            <li>Pause and drain flows above. Back up the entire source database, external encryption key and plugin files. Workspace export alone is not sufficient.</li>
+            <li>Specify an empty destination on the Service machine/network. Server databases must already exist. Preview tests exclusive ownership and validates the source and schema; optional schema preparation changes only the target.</li>
+            <li>Review counts and confirm the copy. A successful copy seals the old source against all writes and validates every table before making the target usable. Both stay paused.</li>
+            <li>Stop the Service, update its bootstrap settings, restart against the target, inspect recovery/history, and explicitly resume. Keep the old source offline.</li>
+        </ol>
+        @if (_busy)
+        {
+            <p role="status">Migration <code>@_migrationId</code> is running. Processing stays paused. Save this ID and wait for verification; an interrupted response does not prove rollback.</p>
+        }
+        @if (_status.State == "SourceSealed")
+        {
+            <p role="alert">This source is sealed. To finish after interruption, re-enter the original destination and use the persisted migration ID below. Do not select a different empty target or try to resume the source.</p>
+        }
+        <fieldset disabled="@(_busy || _report?.Completed == true)">
+            <legend>Destination and safety checks</legend>
+            <label for="migration-provider">Target engine</label>
+            <select id="migration-provider" @bind="_provider" @bind:after="ResetPreview">
+                <option value="Sqlite">SQLite</option>
+                <option value="SqlServer">SQL Server</option>
+                <option value="PostgreSql">PostgreSQL</option>
+            </select>
+            <label for="migration-connection">Target connection string (sensitive)</label>
+            <input id="migration-connection" type="password" autocomplete="off" spellcheck="false" @bind="_connection" @bind:after="ResetPreview" />
+            <p>Entered details are sent only to the authenticated Service for this operation. They are not saved to bootstrap configuration, returned by diagnostics or included in the verification report. Use a protected connection to both UI and Service.</p>
+            <label><input type="checkbox" @bind="_prepareSchema" @bind:after="ResetPreview" /> Allow applying target schema migrations (requires DDL permission)</label>
+            <label for="migration-id">Migration ID (save for interruption recovery)</label>
+            <input id="migration-id" @bind="_migrationId" @bind:after="ResetPreview" />
+            <label><input type="checkbox" @bind="_backupConfirmed" /> I have complete database, key and plugin backups</label>
+            <button class="secondary-button" disabled="@(!CanPreview)" @onclick="PreviewAsync">Preview and validate target</button>
+            @if (_report is not null)
+            {
+                <h3>Verified source snapshot</h3>
+                <p>Source version: <code>@_report.SourceVersion</code>. Payload encryption: @(_report.Encrypted ? "On (preserved byte-for-byte)" : "Off").</p>
+                <table class="module-table">
+                    <thead><tr><th>Table</th><th>Records</th><th>SHA-256</th></tr></thead>
+                    <tbody>
+                        @foreach (var table in _report.Tables)
+                        {
+                            <tr><td>@table.Table</td><td>@table.Rows</td><td><code>@table.Sha256</code></td></tr>
+                        }
+                    </tbody>
+                </table>
+                <label for="migration-confirmation">Type MIGRATE STORAGE to seal the source and copy/finalize</label>
+                <input id="migration-confirmation" autocomplete="off" @bind="_confirmation" />
+                <button class="primary-button" disabled="@(!_backupConfirmed || _confirmation != "MIGRATE STORAGE")" @onclick="ExecuteAsync">Copy, verify and seal source</button>
+            }
+        </fieldset>
+        @if (_report?.Completed == true)
+        {
+            <div role="status">
+                <h3>Copy verified - restart required</h3>
+                <p>Migration <code>@_report.MigrationId</code> completed. The old source is read-only and cannot resume. No Service configuration was changed and no process was terminated.</p>
+                <p>Stop the Service. Set <code>Persistence__Provider=@_provider</code> and <code>ConnectionStrings__Mulse</code> to the destination connection you entered, using Service user secrets or deployment secret injection. Keep the same history/processing settings and plugin binaries.</p>
+                @if (_report.Encrypted)
+                {
+                    <p>Keep <code>Persistence__Encryption__KeyId=@_report.KeyId</code> and the original external AES key/environment-variable setting. This copy does not rotate keys.</p>
+                }
+                <p>Restart the Service against the target. It remains in maintenance mode: verify the engine, counts, held work and recovery before clicking Resume processing. Do not run both copies or restore the old source into service.</p>
+            </div>
+        }
+        <p>Interrupted or uncertain response? Keep the migration ID and original connection details; preview then execute the same migration to verify/finalize it. An unfinalized target refuses startup. Never assume a lost commit response means rollback. Unrelated or nonempty targets are never overwritten.</p>
+        <p>The <a href="/backup-restore">Backup &amp; Restore</a> workspace export excludes pending execution state and revision history, so it is not a complete storage migration or database backup.</p>
+    }
+</Panel>
+
+@code {
+    [Parameter] public ProcessingStatusViewModel? Processing { get; set; }
+    [Parameter] public EventCallback OnCompleted { get; set; }
+    private StorageMigrationStatusViewModel? _status;
+    private StorageMigrationReportViewModel? _report;
+    private string _provider = "Sqlite";
+    private string _connection = "";
+    private string _migrationId = Guid.NewGuid().ToString();
+    private string _confirmation = "";
+    private bool _prepareSchema;
+    private bool _backupConfirmed;
+    private bool _busy;
+    private string? _error;
+    private bool CanPreview => Processing?.State is "Paused" or "MigrationLocked" && !string.IsNullOrWhiteSpace(_connection);
+
+    protected override Task OnInitializedAsync() => LoadStatusAsync();
+    private void ResetPreview() { _report = null; _confirmation = ""; }
+
+    private async Task LoadStatusAsync()
+    {
+        _error = null;
+        try
+        {
+            _status = await ApiClient.GetStorageMigrationAsync(CancellationToken.None);
+            if (_status.State == "SourceSealed" && _status.MigrationId is { } id) _migrationId = id.ToString();
+        }
+        catch (Exception exception) { _error = $"Unable to load storage migration status: {exception.Message}"; }
+    }
+
+    private StorageMigrationRequestViewModel Request(bool execute)
+    {
+        if (!Guid.TryParse(_migrationId, out var id) || id == Guid.Empty) throw new InvalidOperationException("Enter a valid nonempty migration ID.");
+        return new(_provider, _connection, _prepareSchema, id, execute ? _report?.SourceVersion : null,
+            execute ? _confirmation : null, _backupConfirmed);
+    }
+
+    private Task PreviewAsync() => RunAsync(false);
+    private Task ExecuteAsync() => RunAsync(true);
+    private async Task RunAsync(bool execute)
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            _report = await ApiClient.RunStorageMigrationAsync(Request(execute), execute, CancellationToken.None);
+            if (_report.Completed)
+            {
+                _connection = "";
+                await OnCompleted.InvokeAsync();
+            }
+        }
+        catch (Exception exception)
+        {
+            _error = $"Migration was not confirmed: {exception.Message}";
+            _report = null;
+            await OnCompleted.InvokeAsync();
+        }
+        finally { _busy = false; }
+    }
+}

@@ -67,6 +67,15 @@ builder.Services.AddHttpClient<IMulseApiClient, MulseApiClient>((serviceProvider
     httpClient.BaseAddress = new Uri(baseUrl);
 })
 .AddHttpMessageHandler<MulseApiAccessTokenHandler>();
+var migrationClient = builder.Services.AddHttpClient("mulse-storage-migration", (serviceProvider, httpClient) =>
+{
+    httpClient.BaseAddress = new Uri(serviceProvider.GetRequiredService<IConfiguration>()["MulseApi:BaseUrl"] ?? "http://localhost:5210");
+    httpClient.Timeout = TimeSpan.FromMinutes(30);
+});
+#pragma warning disable EXTEXP0001 // Migration must not inherit automatic retries or short default resilience timeouts.
+migrationClient.RemoveAllResilienceHandlers();
+#pragma warning restore EXTEXP0001
+migrationClient.AddHttpMessageHandler<MulseApiAccessTokenHandler>();
 
 var app = builder.Build();
 

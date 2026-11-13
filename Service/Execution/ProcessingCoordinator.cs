@@ -22,6 +22,7 @@ public sealed class ProcessingCoordinator : IHostedLifecycleService, IDisposable
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ProcessingOptions _options;
     private readonly IWorkspaceOwnershipGuard? _ownership;
+    private readonly WorkspaceDatabase? _database;
     private readonly ILogger<ProcessingCoordinator> _logger;
     private readonly CancellationTokenSource _abort = new();
     private readonly CancellationTokenRegistration _stoppingRegistration;
@@ -34,8 +35,9 @@ public sealed class ProcessingCoordinator : IHostedLifecycleService, IDisposable
     private string? _error;
 
     public ProcessingCoordinator(IRuntimeConfigurationStore store, IHostApplicationLifetime lifetime,
-        IOptions<ProcessingOptions> options, ILogger<ProcessingCoordinator> logger, IWorkspaceOwnershipGuard? ownership = null)
+        IOptions<ProcessingOptions> options, ILogger<ProcessingCoordinator> logger, IWorkspaceOwnershipGuard? ownership = null, WorkspaceDatabase? database = null)
     {
+        _database = database;
         _ownership = ownership;
         _store = store;
         _lifetime = lifetime;
@@ -46,7 +48,7 @@ public sealed class ProcessingCoordinator : IHostedLifecycleService, IDisposable
     }
 
     public CancellationToken ForcedCancellation => _abort.Token;
-    public bool IsAccepting { get { lock (_sync) return !_maintenance && !_stopping && !_transitioning && _error is null; } }
+    public bool IsAccepting { get { lock (_sync) return !_maintenance && !_stopping && !_transitioning && _error is null && _database?.IsMigrationSourceSealed != true; } }
     public bool IsStopping { get { lock (_sync) return _stopping || _lifetime.ApplicationStopping.IsCancellationRequested; } }
 
     public ProcessingStatus GetStatus()
@@ -55,6 +57,8 @@ public sealed class ProcessingCoordinator : IHostedLifecycleService, IDisposable
         {
             var state = _error is not null ? "Faulted" : _stopping ? "Stopping" : _maintenance || _transitioning
                 ? _executions + _admissions == 0 ? "Paused" : "Draining" : "Running";
+            if (_database?.IsMigrationSourceSealed == true && _error is null && !_stopping)
+                return new("MigrationLocked", true, _executions, _admissions, false, "Source sealed for storage migration. Finalize the same migration and restart against the target; this source cannot resume.");
             return new(state, _maintenance, _executions, _admissions, _stopping, _error);
         }
     }
@@ -102,6 +106,7 @@ public sealed class ProcessingCoordinator : IHostedLifecycleService, IDisposable
             lock (_sync)
             {
                 if (_stopping) throw new AdmissionRejectedException("The host is shutting down; maintenance state cannot be changed now.");
+                if (_database?.IsMigrationSourceSealed == true) throw new AdmissionRejectedException("Migration sealed the source. Restart against its verified target; this source cannot resume.");
                 if (_error is not null) throw new AdmissionRejectedException("Processing is faulted. Restart to reload committed state and verify ownership before admitting more work.");
                 _transitioning = true;
             }
@@ -122,9 +127,38 @@ public sealed class ProcessingCoordinator : IHostedLifecycleService, IDisposable
         finally { _transition.Release(); }
     }
 
+    public async Task<IDisposable> EnterMaintenanceOperationAsync(CancellationToken cancellationToken)
+    {
+        await _transition.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _ownership?.EnsureAvailable();
+            lock (_sync)
+            {
+                if (!_maintenance || _stopping || _error is not null || _executions + _admissions != 0)
+                    throw new AdmissionRejectedException("Pause processing and wait until all active work has drained before migrating storage.");
+                _admissions++;
+                _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                return new MaintenanceOperation(this);
+            }
+        }
+        catch { _transition.Release(); throw; }
+    }
+
     public Task WaitForDrainAsync(CancellationToken cancellationToken)
     {
         lock (_sync) return _drained.Task.WaitAsync(cancellationToken);
+    }
+
+    private sealed class MaintenanceOperation(ProcessingCoordinator owner) : IDisposable
+    {
+        private int _disposed;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            owner.Leave(execution: false);
+            owner._transition.Release();
+        }
     }
 
     public async Task StoppingAsync(CancellationToken cancellationToken)

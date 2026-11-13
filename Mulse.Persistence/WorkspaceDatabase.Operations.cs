@@ -21,6 +21,7 @@ public sealed partial class WorkspaceDatabase
             }
             if (write)
             {
+                EnsureWritable(workspace);
                 workspace.Version = Guid.NewGuid();
                 try { await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); }
                 catch (DbUpdateConcurrencyException) { _requiresReload = true; throw; }

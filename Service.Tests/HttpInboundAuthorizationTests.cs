@@ -80,6 +80,16 @@ public sealed class HttpInboundAuthorizationTests
             using var forbiddenHistoryRequest = CreateManagementRequest("other-role", "mulse-service");
             forbiddenHistoryRequest.RequestUri = new Uri("/api/history/messages", UriKind.Relative);
             using var forbiddenHistory = await http.SendAsync(forbiddenHistoryRequest);
+            using var anonymousMigration = await http.GetAsync("/api/workspace/storage/migration");
+            using var anonymousCopy = await http.PostAsync("/api/workspace/storage/migration/execute", new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
+            using var forbiddenMigrationRequest = CreateManagementRequest("other-role", "mulse-service");
+            forbiddenMigrationRequest.Method = HttpMethod.Post;
+            forbiddenMigrationRequest.RequestUri = new Uri("/api/workspace/storage/migration/preview", UriKind.Relative);
+            forbiddenMigrationRequest.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+            using var forbiddenMigration = await http.SendAsync(forbiddenMigrationRequest);
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymousMigration.StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymousCopy.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, forbiddenMigration.StatusCode);
             using var anonymousProcessing = await http.GetAsync("/api/workspace/processing");
             using var anonymousBacklog = await http.GetAsync("/api/workspace/processing/backlog");
             using var anonymousPause = await http.PutAsync("/api/workspace/processing/maintenance", new StringContent("{\"requested\":true}", System.Text.Encoding.UTF8, "application/json"));

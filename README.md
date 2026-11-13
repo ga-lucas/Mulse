@@ -1532,7 +1532,9 @@ with **Retry-After: 5**. Maintenance is checked before reading the body; inbox c
 acceptance transaction before commit. Pending database messages remain durable. JSON queues
 and file-watcher notifications are still process-local; a pause does not make them durable. **Paused does
 not mean database-offline**: management and ownership sessions remain active. Stop the Service after
-draining before copying/migrating its database. There is still no automatic cross-provider transfer wizard.
+draining before an external/offline database migration. The Storage wizard instead holds exclusive ownership
+of both databases and blocks resume throughout its controlled transfer. Shutdown waits for that operation
+within the same drain budget; expiry cancels the copy/finalization and requires explicit interruption recovery.
 
 When the host receives a graceful stop notification (for example Ctrl+C, SIGTERM or a service-manager/OS
 notification), it closes admission immediately and allows active work to finish before worker cancellation.
@@ -1585,10 +1587,55 @@ AppHost alone do not configure the Service unless explicitly forwarded. Restart 
 providers, connections or bootstrap options. The page reports the settings selected at startup even if
 configuration files are subsequently edited.
 
-A safe UI-driven engine swap needs maintenance mode, draining active work, a complete cross-provider
-transfer (including retries, checkpoints and retained revisions), validation and a controlled restart.
-That workflow is not implemented. Merely changing the provider does not migrate state; the workspace
-backup export is not a substitute for a full database transfer.
+#### Storage migration wizard
+
+**Configuration > Storage > Storage migration wizard** transfers a complete database workspace between
+any pair of SQLite, SQL Server and PostgreSQL engines, including same-engine moves. It is not a live
+engine switch and does not change bootstrap credentials or stop/restart processes.
+
+1. Deploy the current source schema first (including the fifth migration, `StorageMigrationSeals`).
+   Pause processing and wait until **Paused**, with zero executions/admissions. Take verified full database,
+   external encryption-key and plugin-file backups. Workspace export alone is not a complete backup.
+2. Enter the target engine and connection on the Storage page. SQLite requires a durable local file;
+   server databases must already exist. The target must have no workspace records and cannot be owned
+   by another Service. **Allow applying target schema migrations** is opt-in and only prepares an empty,
+   table-free database, including during preview. Existing tables are never automatically upgraded by
+   the wizard; deploy their migrations separately before retrying.
+3. Save the **migration ID** and original connection details. **Preview and validate target** checks ownership,
+   schema, all source payloads, and a consistent source snapshot. It reports counts and SHA-256 fingerprints
+   for all 11 workspace tables. Confirm backups and type **MIGRATE STORAGE** to copy, verify and seal the source.
+   If source state changes after preview, preview again; the stale snapshot cannot be executed.
+4. After success, stop the Service, set its `Persistence__Provider` and `ConnectionStrings__Mulse` through
+   Service secrets/deployment configuration, and restart against the destination. Preserve the external AES
+   key, key ID/environment-variable setting, history/processing settings and installed plugin binaries.
+   The destination remains paused. Inspect the engine, history and recovery backlog before explicitly resuming.
+   Keep the retired source offline; do not run both copies.
+
+The transfer includes configuration, retained flow revisions, retry/checkpoint state, executions, events,
+messages and deliveries. Every scalar value and row count is verified independently of provider row ordering.
+Encrypted payloads are validated with the original key and copied byte-for-byte; this is **not key rotation**.
+Rows are copied in batches, but sorted row hashes use memory proportional to each table's row count.
+Allow capacity and time for full validation; the UI migration client permits 30 minutes and never automatically
+retries POSTs. Reverse proxies may impose shorter limits. Connection details are supplied per request,
+not saved to bootstrap configuration, logged or returned in reports. Use protected UI and Service connections.
+
+**Interrupted migration recovery:** the two databases do not share a distributed transaction. The target is
+first committed as **TargetStaged**, which refuses runtime startup. Only then is the source committed as
+**SourceSealed**, blocking all application writes and flow admission. Finally the target becomes **TargetReady**,
+still paused. A sealed source can restart for management/finalization without journal recovery writes, but it
+cannot resume. Re-enter the **same migration ID and original destination**, preview, then execute to reverify
+and finish. Database/file-name case is significant to the destination fingerprint; retain the original spelling.
+A lost commit acknowledgement does not prove rollback; some failures require restarting the source to reload
+committed state before retrying. Unrelated or modified targets are rejected, never overwritten. There is no
+automatic rollback/unseal, bootstrap update or failover. Do not substitute an empty target for a sealed source's
+original staged destination. Restore backups only as an explicit offline recovery operation after establishing
+which database is authoritative.
+
+Legacy **JSON** storage does not support this full-database wizard or migration back from a database.
+The existing one-time startup JSON import is separate and cannot transfer process-local messages/history.
+Merely changing the provider does not migrate state; the workspace backup export is not a substitute.
+
+#### Provider bootstrap settings
 
 Set `Persistence:Provider` to `Sqlite`, `SqlServer` or `PostgreSql`, and supply `ConnectionStrings:Mulse`.
 For deployments, use `Persistence__Provider` and `ConnectionStrings__Mulse` environment variables or a
@@ -1992,6 +2039,7 @@ UI URL. Main surfaces:
 | Config values | `GET /api/config-values`, `GET /api/config-values/references`, `GET /api/config-values/usages`; `PUT`/`DELETE /api/config-values/{reference}`. |
 | Workspace | `GET`/`PUT /api/workspace/encryption`; `POST /api/workspace/backup`, `/api/workspace/restore/preview`, `/api/workspace/restore`, `/api/workspace/flows/delete-all`. |
 | Storage diagnostics | `GET /api/workspace/storage` (no connection strings or keys). |
+| Storage migration | `GET /api/workspace/storage/migration` (credential-free status); `POST /api/workspace/storage/migration/preview`, `POST /api/workspace/storage/migration/execute`. Authenticated; no-store responses; requires drained maintenance. Request: `provider`, `connectionString`, `prepareSchema`, `migrationId`; execute also requires preview `expectedSourceVersion`, `confirmation: "MIGRATE STORAGE"`, `backupConfirmed: true`. |
 | Processing / maintenance | `GET /api/workspace/processing`; `GET /api/workspace/processing/backlog` (metadata counters/capacity); `PUT /api/workspace/processing/maintenance` with `requested: true` to pause/drain or `false` to resume. Authenticated; poll until Paused before maintenance. |
 | History | `GET /api/history/executions?flowId=...&take=50`, `GET /api/history/executions/{executionId}`, `GET /api/history/messages?take=50`, `GET /api/history/messages/{id}` (explicit payload inspection). List `take`: 1-200; execution-detail lists are bounded to 1000 each. |
 | Delivery reconciliation | `POST /api/history/executions/{executionId}/deliveries/{deliveryId}/confirm-delivered` with `confirmation: "CONFIRM DELIVERED"` and independently verified `evidence` (10-4096 characters). Never resends the effect. |

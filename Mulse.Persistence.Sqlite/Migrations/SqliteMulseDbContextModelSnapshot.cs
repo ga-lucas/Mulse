@@ -367,6 +367,19 @@ namespace Mulse.Persistence.Sqlite.Migrations
                         .IsRequired()
                         .HasColumnType("BLOB");
 
+                    b.Property<Guid?>("StorageMigrationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StorageMigrationState")
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StorageMigrationTarget")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("TEXT");

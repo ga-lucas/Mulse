@@ -67,7 +67,7 @@ public sealed class WorkspacePersistenceTests
         Assert.Equal("Original", originalDefinition.RootElement.GetProperty("name").GetString());
         Assert.Equal(retry.NextAttemptAt.UtcTicks, Assert.Single(db.Retries).NextAttemptUtcTicks);
         Assert.Equal(1, db.Workspaces.Count());
-        Assert.Equal(4, db.Database.GetAppliedMigrations().Count());
+        Assert.Equal(5, db.Database.GetAppliedMigrations().Count());
         Assert.False(db.Database.HasPendingModelChanges());
         await store.DeleteRetryStateAsync("ORDERS", "EXECUTION", "FETCH:FETCH", default);
         await store.DeleteOrchestrationCheckpointAsync("orders", "tenant", default);
@@ -349,7 +349,7 @@ public sealed class WorkspacePersistenceTests
     {
         using var fixture = new DatabaseFixture(provider, modelOnly: true);
         using var db = fixture.Factory.CreateDbContext();
-        Assert.Equal(4, db.Database.GetMigrations().Count());
+        Assert.Equal(5, db.Database.GetMigrations().Count());
         Assert.False(db.Database.HasPendingModelChanges());
         var sql = db.GetService<IMigrator>().GenerateScript();
         Assert.Contains("FlowRevisions", sql);

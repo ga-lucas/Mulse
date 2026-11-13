@@ -15,6 +15,7 @@ public static class ServiceCollectionExtensions
         services.AddWorkspacePersistence(configuration, contentRootPath);
         services.AddSingleton<IRuntimeConfigurationStore, RuntimeConfigurationStore>();
         services.AddSingleton<WorkspaceBackupService>();
+        services.AddSingleton<StorageMigrationService>();
         services.AddSingleton<IModuleCatalog, ModuleCatalog>();
         services.AddSingleton<IModuleInvoker, ModuleInvoker>();
         services.AddSingleton<Mulse.Modules.Abstractions.IAugmentModuleInvoker, AugmentModuleInvoker>();

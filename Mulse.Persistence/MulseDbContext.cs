@@ -57,6 +57,8 @@ public abstract class MulseDbContext(DbContextOptions options) : DbContext(optio
         workspace.Property(row => row.Id).ValueGeneratedNever();
         workspace.Property(row => row.Version).IsConcurrencyToken();
         workspace.Property(row => row.KeyId).HasMaxLength(128);
+        workspace.Property(row => row.StorageMigrationState).HasMaxLength(32).IsUnicode(false);
+        workspace.Property(row => row.StorageMigrationTarget).HasMaxLength(64).IsUnicode(false);
 
         var flow = model.Entity<FlowRecord>();
         flow.ToTable("Flows");

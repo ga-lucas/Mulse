@@ -91,6 +91,12 @@ public interface IMulseApiClient
     Task<RuntimeStorageViewModel> GetStorageAsync(CancellationToken cancellationToken)
         => throw new NotSupportedException("This API client does not support storage diagnostics.");
 
+    Task<StorageMigrationStatusViewModel> GetStorageMigrationAsync(CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support storage migration.");
+
+    Task<StorageMigrationReportViewModel> RunStorageMigrationAsync(StorageMigrationRequestViewModel request, bool execute, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This API client does not support storage migration.");
+
     Task<ProcessingStatusViewModel> GetProcessingAsync(CancellationToken cancellationToken)
         => throw new NotSupportedException("This API client does not support processing controls.");
 

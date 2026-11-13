@@ -2,11 +2,13 @@ using Mulse.Persistence;
 
 namespace Service.Triggers;
 
-public sealed class InboxFlowService(FlowJournal journal, IFlowRuntime runtime, TimeProvider timeProvider, ILogger<InboxFlowService> logger, ProcessingCoordinator? processing = null) : BackgroundService
+public sealed class InboxFlowService(FlowJournal journal, IFlowRuntime runtime, TimeProvider timeProvider, ILogger<InboxFlowService> logger,
+    ProcessingCoordinator? processing = null, WorkspaceDatabase? database = null) : BackgroundService
 {
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
-        await journal.RecoverAsync(cancellationToken).ConfigureAwait(false);
+        if (database?.IsMigrationSourceSealed != true) await journal.RecoverAsync(cancellationToken).ConfigureAwait(false);
+        else logger.LogWarning("Migration-sealed source opened for management/finalization only; execution recovery was not performed.");
         await base.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
